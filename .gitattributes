@@ -1,0 +1,8 @@
+# bash·python·템플릿은 LF 고정 — CRLF 로 바뀌면 agent_harness.sh(bash)가 깨지고
+# deploy_live.py 가 깨진 파일을 실행 중 설치본으로 복사하게 된다.
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+templates/** text eol=lf
+*.ps1 text eol=crlf
