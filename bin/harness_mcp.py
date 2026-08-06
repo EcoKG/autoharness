@@ -470,6 +470,8 @@ def tool_task_add(a):
         argv += ["--deps", str(deps)]
     if a.get("priority") is not None:
         argv += ["--priority", str(int(a["priority"]))]
+    if a.get("test_cmd"):
+        argv += ["--test-cmd", str(a["test_cmd"])]
     code, out, err = run_engine_argv(argv)
     if code != 0:
         raise ToolError("add-task 실패 (exit %d): %s" % (code, (err or out).strip()))
@@ -488,6 +490,8 @@ def tool_task_set(a):
         argv += ["--status", str(a["status"])]   # 엔진이 pending/blocked 만 허용
     if a.get("note"):
         argv += ["--note", str(a["note"])]
+    if a.get("test_cmd") is not None:
+        argv += ["--test-cmd", str(a["test_cmd"])]  # 빈 문자열이면 해제(전역 test 복귀)
     code, out, err = run_engine_argv(argv)
     if code != 0:
         raise ToolError("set-task 실패 (exit %d): %s" % (code, (err or out).strip()))
@@ -693,6 +697,8 @@ TOOLS = [
          "deps": {"type": "array", "items": {"type": "string"},
                   "description": "선행 작업 id 목록(선택)"},
          "priority": {"type": "integer", "description": "우선순위 — 낮을수록 먼저(기본 100)"},
+         "test_cmd": {"type": "string",
+                      "description": "이 작업 전용 test 명령 — 전역 commands.test 대신 실행, {path} 치환 지원(선택)"},
      }, ["repo_path", "id", "title"])},
     {"name": "task_set",
      "description": "작업 상태의 제한적 조작 — pending/blocked 만 허용됩니다(done 은 harness_run 성공으로만 기록).",
@@ -702,6 +708,8 @@ TOOLS = [
          "status": {"type": "string", "enum": ["pending", "blocked"],
                     "description": "설정할 상태(선택)"},
          "note": {"type": "string", "description": "last_error 로 기록할 메모(선택)"},
+         "test_cmd": {"type": "string",
+                      "description": "작업 전용 test 명령 설정 — 빈 문자열이면 해제(전역 test 복귀, 선택)"},
      }, ["repo_path", "id"])},
     {"name": "harness_pause",
      "description": "자율 주행 일시정지 — .claude/HARNESS_PAUSED 플래그 생성 + 레지스트리 status=paused.",

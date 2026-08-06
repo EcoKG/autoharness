@@ -272,10 +272,10 @@ def detect(repo):
 
 # ---------------------------------------------------------------- 장부 조작
 
-def new_task(id_, title, path=None, deps=None, priority=100):
+def new_task(id_, title, path=None, deps=None, priority=100, test_cmd=None):
     return {"id": id_, "title": title, "path": path, "deps": deps or [], "priority": priority,
             "status": "pending", "attempts": 0, "last_error": None, "last_log_file": None,
-            "commit": None, "started_at": None, "finished_at": None, "test_cmd": None}
+            "commit": None, "started_at": None, "finished_at": None, "test_cmd": test_cmd or None}
 
 
 def cmd_init(a):
@@ -341,7 +341,7 @@ def cmd_add_task(a):
     if deps_reach(by_id, deps, a.id):
         # 손편집 등으로 기존 작업이 이 id 를 이미 참조하는 경우 — 추가하면 순환이 완성된다
         die("순환 의존이 생깁니다: 기존 작업이 %s 를 (간접) 의존하고 있습니다" % a.id)
-    tracker["tasks"].append(new_task(a.id, a.title, a.path, deps, a.priority))
+    tracker["tasks"].append(new_task(a.id, a.title, a.path, deps, a.priority, a.test_cmd))
     save_tracker(a.repo, tracker)
     render(a.repo)
     print(json.dumps({"ok": True, "id": a.id}, ensure_ascii=False))
@@ -361,6 +361,8 @@ def cmd_set_task(a):
             task["last_error"] = None
     if a.note:
         task["last_error"] = a.note[:LAST_ERROR_CAP]
+    if a.test_cmd is not None:
+        task["test_cmd"] = a.test_cmd or None  # 빈 문자열이면 해제 → 전역 test 로 복귀
     save_tracker(a.repo, tracker)
     render(a.repo)
     print(json.dumps({"ok": True, "task": task}, ensure_ascii=False))
@@ -1037,9 +1039,13 @@ def main(argv=None):
     sp.add_argument("--id", required=True); sp.add_argument("--title", required=True)
     sp.add_argument("--path", default=None); sp.add_argument("--deps", default="")
     sp.add_argument("--priority", type=int, default=100)
+    sp.add_argument("--test-cmd", dest="test_cmd", default=None,
+                    help="이 작업 전용 test 명령 — 전역 commands.test 대신 실행({path} 치환 지원)")
     sp = sub.add_parser("set-task"); common(sp)
     sp.add_argument("--id", required=True); sp.add_argument("--status", default=None)
     sp.add_argument("--note", default=None)
+    sp.add_argument("--test-cmd", dest="test_cmd", default=None,
+                    help="작업 전용 test 명령 설정 (빈 문자열이면 해제 → 전역 test 복귀)")
     sp = sub.add_parser("next"); common(sp)
     sp = sub.add_parser("run"); common(sp)
     sp.add_argument("--task", default=None); sp.add_argument("--cmd", default=None)

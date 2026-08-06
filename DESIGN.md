@@ -66,8 +66,8 @@ autoharness/
 |---|---|---|
 | `detect [--repo P]` | 스택 실측 JSON 출력 | 0/2 |
 | `init --repo P --project N --objective O --source S --target T --test CMD [--build CMD] [--lint CMD] [--model M] [--max-attempts 5]` | 장부·예시·로그 디렉토리 생성 | 0/2 |
-| `add-task --id I --title T [--path P] [--deps a,b] [--priority 100]` | 작업 추가 | 0/2 |
-| `set-task --id I [--status pending\|blocked] [--note ...]` | 제한적 상태 조작 (`done` 설정 불가) | 0/2 |
+| `add-task --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` | 작업 추가 (자기/순환/미존재 의존 거부) | 0/2 |
+| `set-task --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` | 제한적 상태 조작 (`done` 설정 불가). `--test-cmd ""` 는 작업 전용 test 해제 | 0/2 |
 | `next` | 의존성 게이팅 통과한 다음 작업 JSON | 0/3 |
 | `run [--task I] [--cmd C]` | build→test→lint 실행, 로그·요약·장부 갱신, PROGRESS.md 재렌더 | 0/1/2/3/4 |
 | `sync-commit` | commit 없는 최신 done 작업에 HEAD SHA 기록 | 0 |
@@ -141,8 +141,8 @@ autoharness/
 | `harness_init` | repo_path*, project*, objective*, source_stack*, target_stack*, test_cmd*, build_cmd, lint_cmd, model, max_attempts, permission_mode("bypass"\|"acceptEdits") | 장부/예시/로그 생성 + 엔진 사본·래퍼 설치 + settings.json 훅·권한 병합(원본 `.bak-<ts>` 백업) + 레지스트리 등록 |
 | `harness_status` | repo_path* | 장부·하트비트·레지스트리 요약 |
 | `harness_run` | repo_path*, task_id, cmd | 러너 실행, `{exit_code, summary, task}` 반환 |
-| `task_add` | repo_path*, id*, title*, path, deps, priority | 작업 추가 |
-| `task_set` | repo_path*, id*, status, note | pending/blocked 만 허용 |
+| `task_add` | repo_path*, id*, title*, path, deps, priority, test_cmd | 작업 추가 (completed 프로젝트면 레지스트리 active 복귀+백오프 리셋) |
+| `task_set` | repo_path*, id*, status, note, test_cmd("" 로 해제) | pending/blocked 만 허용 |
 | `harness_pause` | repo_path* | PAUSED 플래그 생성 + 레지스트리 paused |
 | `harness_resume_project` | repo_path* | 플래그 제거 + active + 백오프 리셋 |
 | `model_recommend` | repo_path, source_stack, target_stack, notes | 추천+근거 (§9 휴리스틱) |
