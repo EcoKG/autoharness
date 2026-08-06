@@ -291,15 +291,37 @@ def cmd_init(a):
                      ensure_ascii=False))
 
 
+def deps_reach(tasks_by_id, start_ids, target_id):
+    """deps 그래프를 따라 start_ids 에서 target_id 에 닿는지 검사(순환 탐지용)."""
+    seen, stack = set(), list(start_ids)
+    while stack:
+        cur = stack.pop()
+        if cur == target_id:
+            return True
+        if cur in seen:
+            continue
+        seen.add(cur)
+        t = tasks_by_id.get(cur)
+        if t:
+            stack.extend(t.get("deps", []))
+    return False
+
+
 def cmd_add_task(a):
     tracker = load_tracker(a.repo)
     if any(t["id"] == a.id for t in tracker["tasks"]):
         die("이미 존재하는 작업 id: " + a.id)
     deps = [d.strip() for d in (a.deps or "").split(",") if d.strip()]
+    if a.id in deps:
+        die("자기 자신에 의존할 수 없습니다: %s (영구 교착 작업이 됩니다)" % a.id)
     known = {t["id"] for t in tracker["tasks"]}
-    unknown = [d for d in deps if d not in known and d != a.id]
+    unknown = [d for d in deps if d not in known]
     if unknown:
         die("존재하지 않는 의존 id: %s (선행 작업을 먼저 add-task 하십시오)" % unknown)
+    by_id = {t["id"]: t for t in tracker["tasks"]}
+    if deps_reach(by_id, deps, a.id):
+        # 손편집 등으로 기존 작업이 이 id 를 이미 참조하는 경우 — 추가하면 순환이 완성된다
+        die("순환 의존이 생깁니다: 기존 작업이 %s 를 (간접) 의존하고 있습니다" % a.id)
     tracker["tasks"].append(new_task(a.id, a.title, a.path, deps, a.priority))
     save_tracker(a.repo, tracker)
     render(a.repo)
@@ -351,14 +373,40 @@ def eligible_next(tracker):
     return fresh
 
 
+def deadlocked_pending(tracker):
+    """충족 불가능한 pending — 의존이 미존재·blocked·순환이라 영영 실행될 수 없는 작업.
+
+    고정점 계산: done 이거나, blocked 가 아니면서 의존 전부가 '언젠가 done 가능'인
+    작업을 반복 확장한다. 확장이 끝난 뒤에도 집합 밖에 남은 pending 이 교착이다.
+    """
+    doable = {t["id"] for t in tracker["tasks"] if t["status"] == "done"}
+    changed = True
+    while changed:
+        changed = False
+        for t in tracker["tasks"]:
+            if t["id"] in doable or t["status"] == "blocked":
+                continue
+            if all(d in doable for d in t.get("deps", [])):
+                doable.add(t["id"])
+                changed = True
+    return [t for t in tracker["tasks"] if t["status"] == "pending" and t["id"] not in doable]
+
+
 def cmd_next(a):
     tracker = load_tracker(a.repo)
     t = eligible_next(tracker)
+    dead = [d["id"] for d in deadlocked_pending(tracker)]
     if t is None:
         counts = status_counts(tracker)
-        print(json.dumps({"next": None, "counts": counts}, ensure_ascii=False))
+        out = {"next": None, "counts": counts}
+        if dead:
+            out["deadlocked"] = dead
+        print(json.dumps(out, ensure_ascii=False))
         sys.exit(EXIT_NO_TASK)
-    print(json.dumps({"next": t}, ensure_ascii=False, indent=2))
+    out = {"next": t}
+    if dead:
+        out["deadlocked"] = dead
+    print(json.dumps(out, ensure_ascii=False, indent=2))
 
 
 def status_counts(tracker):
@@ -567,10 +615,14 @@ def cmd_brief(a):
         return
     c = status_counts(tracker)
     nxt = eligible_next(tracker)
+    dead = deadlocked_pending(tracker)
     print("[AutoHarness] project=%s model=%s" % (tracker.get("project"), tracker.get("model")))
     print("목표: %s" % tracker.get("objective", ""))
     print("현황: done %d/%d, in_progress %d, failed %d, blocked %d, pending %d"
           % (c["done"], len(tracker["tasks"]), c["in_progress"], c["failed"], c["blocked"], c["pending"]))
+    if dead:
+        print("교착 pending %d건(의존이 미존재·blocked·순환 — 영영 실행 불가): %s"
+              % (len(dead), ", ".join(t["id"] for t in dead)))
     if nxt:
         print("다음 작업: %s — %s (attempts %d/%d)"
               % (nxt["id"], nxt["title"], nxt.get("attempts", 0), tracker.get("max_attempts", 5)))
@@ -587,6 +639,7 @@ def cmd_status(a):
     hb = load_json(rp(a.repo)["heartbeat"])
     print(json.dumps({"project": tracker.get("project"), "model": tracker.get("model"),
                       "counts": status_counts(tracker), "next": eligible_next(tracker),
+                      "deadlocked": [t["id"] for t in deadlocked_pending(tracker)],
                       "heartbeat": hb, "paused": os.path.exists(rp(a.repo)["paused_flag"])},
                      ensure_ascii=False, indent=2))
 
