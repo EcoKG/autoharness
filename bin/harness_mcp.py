@@ -440,6 +440,23 @@ def tool_harness_run(a):
             "task": task}
 
 
+def registry_reactivate_if_completed(repo):
+    """completed 프로젝트에 새 작업이 들어오면 다시 워치독 기동 대상(active)으로 되돌린다.
+
+    completed 만 대상이다 — paused(사용자 의사)·needs_human(사람 판단 대기)·
+    error(진단 필요)는 새 작업 추가만으로 자동 재개하지 않는다.
+    되돌릴 때는 백오프 카운터(consecutive_errors·limit_hits·next_retry_at)도 리셋한다.
+    """
+    reg = registry_load()
+    entry = registry_find(reg, repo)
+    if entry is None or entry.get("status") != "completed":
+        return None
+    entry.update({"status": "active", "consecutive_errors": 0, "limit_hits": 0,
+                  "next_retry_at": None, "updated_at": now_iso()})
+    registry_save(reg)
+    return entry
+
+
 def tool_task_add(a):
     repo = os.path.abspath(require(a, "repo_path"))
     deps = a.get("deps")
@@ -456,7 +473,12 @@ def tool_task_add(a):
     code, out, err = run_engine_argv(argv)
     if code != 0:
         raise ToolError("add-task 실패 (exit %d): %s" % (code, (err or out).strip()))
-    return safe_json(out) or {"ok": True, "raw": out.strip()}
+    result = safe_json(out) or {"ok": True, "raw": out.strip()}
+    # 주행 완료(completed) 후의 작업 추가 — 워치독이 다시 집게 재활성화한다
+    reactivated = registry_reactivate_if_completed(repo)
+    if reactivated is not None:
+        result["registry_reactivated"] = True
+    return result
 
 
 def tool_task_set(a):
