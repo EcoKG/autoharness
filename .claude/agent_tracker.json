@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-06T06:58:10.212809+00:00",
+  "updated_at": "2026-08-06T07:00:49.051030+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -141,13 +141,13 @@
       "path": "tests",
       "deps": [],
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/tests-watchdog-20260806T070010Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-06T07:00:10.627118+00:00",
+      "finished_at": "2026-08-06T07:00:49.051030+00:00",
       "test_cmd": null
     },
     {
