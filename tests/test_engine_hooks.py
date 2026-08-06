@@ -181,21 +181,76 @@ class PostBashSyncTest(HookSandboxTest):
             r = self.git(*args)
             self.assertEqual(r.returncode, 0, "git %s 실패: %s" % (args, r.stderr))
 
+    def head_sha(self):
+        return self.git("rev-parse", "--short", "HEAD").stdout.strip()
+
     def test_non_commit_command_does_not_sync(self):
         r = self.hook("hook-postbash", command="ls -la")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(eng.find_task(self.read_tracker(), "t1")["commit"])
 
-    def test_commit_command_records_head_sha(self):
-        r = self.hook("hook-postbash", command='git commit -m "작업 완료"')
+    def test_successful_commit_records_new_head(self):
+        # 실제 배선 순서: prebash(마커 기록) → 커밋 성공 → postbash(HEAD 변화 확인 후 기록)
+        commit_cmd = 'git commit -m "작업 완료"'
+        baseline = self.head_sha()
+        r = self.hook("hook-prebash", command=commit_cmd)
         self.assertEqual(r.returncode, 0, r.stderr)
-        sha = self.git("rev-parse", "--short", "HEAD").stdout.strip()
-        self.assertTrue(sha)
-        self.assertEqual(eng.find_task(self.read_tracker(), "t1")["commit"], sha)
+        r = self.git("commit", "--allow-empty", "-q", "-m", "작업 커밋")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.hook("hook-postbash", command=commit_cmd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        recorded = eng.find_task(self.read_tracker(), "t1")["commit"]
+        self.assertEqual(recorded, self.head_sha())
+        self.assertNotEqual(recorded, baseline)
+
+    def test_failed_commit_does_not_misattribute(self):
+        # 커밋이 실패해(HEAD 불변, nothing to commit 등) 직전 커밋이 오귀속되면 안 된다
+        commit_cmd = 'git commit -m "빈 커밋 시도"'
+        r = self.hook("hook-prebash", command=commit_cmd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.hook("hook-postbash", command=commit_cmd)  # 사이에 새 커밋 없음
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsNone(eng.find_task(self.read_tracker(), "t1")["commit"])
+        # 마커는 1회용 — 소진돼 있어야 다음 커밋 판정이 오염되지 않는다
+        self.assertNotIn("head_before_commit", self.read_state())
+
+    def test_postbash_without_marker_fails_open(self):
+        # prebash 없이 postbash 만 오면(수동 sync·부분 설치) 종전대로 기록한다
+        r = self.hook("hook-postbash", command='git commit -m "수동 경로"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(eng.find_task(self.read_tracker(), "t1")["commit"], self.head_sha())
 
     def test_fail_open_on_malformed_stdin(self):
         r = self.hook("hook-postbash", raw_stdin="not json at all")
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class PostBashFirstCommitTest(HookSandboxTest):
+    """저장소 최초 커밋(직전 HEAD 없음) 경로 — 마커가 None 이어도 새 커밋은 기록된다."""
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", self.sandbox, "-c", "user.name=hooktest",
+             "-c", "user.email=hooktest@example.com", "-c", "commit.gpgsign=false"]
+            + list(args),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    def test_first_commit_is_recorded(self):
+        self.init_tracker(["t1"])
+        r = self.engine("run", "--task", "t1", "--cmd", OK_CMD)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.git("init", "-q").returncode, 0)
+        commit_cmd = 'git commit -m "최초 커밋"'
+        r = self.hook("hook-prebash", command=commit_cmd)  # HEAD 없음 → 마커 None
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.git("add", "-A")
+        r = self.git("commit", "-q", "-m", "최초 커밋")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.hook("hook-postbash", command=commit_cmd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sha = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        self.assertTrue(sha)
+        self.assertEqual(eng.find_task(self.read_tracker(), "t1")["commit"], sha)
 
 
 class StopGateTest(HookSandboxTest):

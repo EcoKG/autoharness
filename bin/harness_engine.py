@@ -649,13 +649,27 @@ def cmd_heartbeat(a):
     print(json.dumps({"ok": True}, ensure_ascii=False))
 
 
-def sync_commit(repo):
+def sync_commit(repo, require_new_head=False):
+    """최신 done 작업에 HEAD SHA 를 기록.
+
+    require_new_head=True(hook-postbash 경로): hook-prebash 가 커밋 직전에 남긴
+    1회용 마커(head_before_commit)와 현재 HEAD 를 대조해, 커밋이 실패해 HEAD 가
+    변하지 않았으면(nothing to commit 등) 직전 커밋을 오귀속하지 않는다.
+    마커가 없으면(수동 sync-commit·부분 설치) 종전대로 기록한다(fail-open).
+    """
     tracker = load_tracker(repo, required=False)
     if tracker is None:
         return None
     sha = _git(repo, "rev-parse", "--short", "HEAD")
     if not sha:
-        return None
+        return None  # HEAD 없음 — 커밋 미생성. 마커는 다음 시도를 위해 남긴다
+    if require_new_head:
+        state = load_state(repo)
+        if "head_before_commit" in state:
+            prev = state.pop("head_before_commit")
+            save_state(repo, state)  # 마커는 1회용 — 소진해 재사용 오귀속을 막는다
+            if sha == prev:
+                return None  # 커밋 명령이 새 커밋을 만들지 못함 — 기록하지 않는다
     cands = [t for t in tracker["tasks"] if t["status"] == "done" and not t.get("commit")]
     if not cands:
         return None
@@ -786,6 +800,10 @@ def cmd_hook_prebash(a):
                         "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오.\n"
                         % (active[0]["id"], active[0]["id"]))
                     sys.exit(2)
+            # 커밋 허용 — 직전 HEAD 를 1회용 마커로 남겨 postbash 가 '새 커밋 생성'을 검증한다
+            state = load_state(a.repo)
+            state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
+            save_state(a.repo, state)
         sys.exit(0)
     except SystemExit:
         raise
@@ -799,7 +817,7 @@ def cmd_hook_postbash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         if GIT_COMMIT_RE.search(command):
-            sync_commit(a.repo)
+            sync_commit(a.repo, require_new_head=True)
     except Exception:
         pass
     sys.exit(0)
