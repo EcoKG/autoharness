@@ -4,13 +4,13 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-06T06:32:10.626483+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-06T06:40:41.492651+00:00
 
-## 현황: done 0 / 12  (in_progress 0, failed 0, blocked 0, pending 12)
+## 현황: done 1 / 12  (in_progress 0, failed 0, blocked 0, pending 11)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
-| tests-engine-hooks | 엔진 훅 단위 테스트 구축 — hook-prebash(금지 명령 차단·커밋 게이트)·hook-stop(6단계 게이트·진전 가드)·hook-postbash(SHA 동기화)를 stdin JSON 실측으로 검증하는 tests/test_engine_hooks.py 작성. 임시 샌드박스 저장소 사용, 실제 저장소·사용자 상태 오염 금지 | ⏳ pending | 0/5 | - | - |
+| tests-engine-hooks | 엔진 훅 단위 테스트 구축 — hook-prebash(금지 명령 차단·커밋 게이트)·hook-stop(6단계 게이트·진전 가드)·hook-postbash(SHA 동기화)를 stdin JSON 실측으로 검증하는 tests/test_engine_hooks.py 작성. 임시 샌드박스 저장소 사용, 실제 저장소·사용자 상태 오염 금지 | ✅ done | 0/5 | - | - |
 | fix-add-task-self-dep | add-task 자기/순환 의존 결함 수정 — cmd_add_task 의 `d != a.id` 조건이 자기 의존을 오히려 허용해 영구 교착 작업이 생김. 자기 의존·순환 의존을 add-task 시점에 거부하고, next/brief/status 가 '충족 불가능한 pending(교착)'을 구분해 알리도록 개선 + tests/ 회귀 테스트 | ⏳ pending | 0/5 | - | - |
 | fix-sync-commit-guard | sync_commit 오귀속 방지 — git commit 이 실패해 HEAD 가 변하지 않은 경우(예: nothing to commit)에도 직전 커밋 SHA 를 최신 done 작업에 기록하는 결함. hook-postbash/sync_commit 에서 HEAD 변화(또는 커밋 성공)를 검증한 뒤에만 기록하도록 수정 + 회귀 테스트 | ⏳ pending | 0/5 | - | - |
 | fix-model-recommend-lang | model_recommend 언어 전환 오탐 수정 — 스택명이 비ASCII(한글 등)면 lang() 이 빈 문자열을 반환해 '언어 간 이식(+3)' 이 잘못 가산됨(이번 init 에서 실측). 한쪽 언어 토큰이 비어 있으면 가산하지 않도록 수정 + 회귀 테스트 | ⏳ pending | 0/5 | - | - |
