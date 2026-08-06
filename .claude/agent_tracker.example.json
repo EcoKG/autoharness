@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "project": "autoharness",
+  "objective": "결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영",
+  "source_stack": "Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL)",
+  "target_stack": "동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화",
+  "model": "claude-fable-5",
+  "commands": {
+    "build": null,
+    "test": "python scripts/run_checks.py",
+    "lint": null,
+    "timeout_sec": 1800
+  },
+  "max_attempts": 5,
+  "created_at": "2026-08-06T06:29:46.439356+00:00",
+  "updated_at": "2026-08-06T06:29:46.439356+00:00",
+  "tasks": [
+    {
+      "id": "mod-core",
+      "title": "core 모듈 서비스 계층 이식",
+      "path": "core",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 2,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/mod-core-20260101T000000Z.log",
+      "commit": "0123abc",
+      "started_at": "2026-01-01T00:00:00+00:00",
+      "finished_at": "2026-01-01T01:00:00+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "mod-api",
+      "title": "api 모듈 컨트롤러 이식",
+      "path": "api",
+      "deps": [
+        "mod-core"
+      ],
+      "priority": 20,
+      "status": "failed",
+      "attempts": 1,
+      "last_error": "[ERROR] cannot find symbol: UserDto (…최대 4000자)",
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    }
+  ]
+}
