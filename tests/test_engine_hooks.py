@@ -48,14 +48,18 @@ class HookSandboxTest(unittest.TestCase):
         shutil.rmtree(self.sandbox, ignore_errors=True)
 
     def engine(self, *args, **kw):
-        """엔진 CLI 호출. stdin=문자열(훅 JSON), autoharness=CLAUDE_AUTOHARNESS 값."""
+        """엔진 CLI 호출. stdin=문자열(훅 JSON), autoharness=CLAUDE_AUTOHARNESS 값,
+        env_extra=추가 환경변수 dict."""
         stdin = kw.pop("stdin", "")
         autoharness = kw.pop("autoharness", None)
+        env_extra = kw.pop("env_extra", None)
         assert not kw, kw
         env = os.environ.copy()
         env.pop("CLAUDE_AUTOHARNESS", None)  # 헤드리스 부모 세션의 값이 새지 않게 항상 명시 제어
         if autoharness is not None:
             env["CLAUDE_AUTOHARNESS"] = autoharness
+        if env_extra:
+            env.update(env_extra)
         return subprocess.run(
             [PY, ENGINE] + list(args) + ["--repo", self.sandbox],
             input=stdin, capture_output=True, text=True, encoding="utf-8",

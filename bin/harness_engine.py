@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -459,6 +460,44 @@ def decode_output(b):
             return b.decode("utf-8", errors="replace")
 
 
+HEARTBEAT_PUMP_SEC = 300  # 장시간 스테이지 중 주기 갱신 — 워치독 stale(30분) 오판·이중 기동 방지
+
+
+class HeartbeatPump:
+    """run 스테이지 실행 중 주기적으로 하트비트를 갱신하는 데몬 스레드.
+
+    단일 스테이지가 timeout_sec(기본 1800초)까지 걸리면 하트비트 공백이
+    워치독 stale 판정(30분)에 근접한다 — 스테이지가 살아 있는 동안 interval 마다
+    갱신해 세션 사망 오판을 막는다. write_heartbeat 은 예외를 삼키므로 안전하다.
+    """
+
+    def __init__(self, repo, interval=HEARTBEAT_PUMP_SEC, source="run"):
+        self.repo, self.interval, self.source = repo, interval, source
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def _loop(self):
+        while not self._stop.wait(self.interval):
+            write_heartbeat(self.repo, self.source)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=5)
+        return False
+
+
+def heartbeat_pump_interval():
+    """환경변수 AUTOHARNESS_HEARTBEAT_PUMP_SEC 로 재정의 가능(테스트·특수 운영)."""
+    try:
+        return float(os.environ.get("AUTOHARNESS_HEARTBEAT_PUMP_SEC", "") or HEARTBEAT_PUMP_SEC)
+    except ValueError:
+        return HEARTBEAT_PUMP_SEC
+
+
 def run_stage(repo, name, cmd, log_f, timeout):
     log_f.write("\n===== stage: %s =====\n$ %s\n" % (name, cmd))
     log_f.flush()
@@ -546,11 +585,12 @@ def cmd_run(a):
     failed_stage, fail_out = None, ""
     with open(log_path, "w", encoding="utf-8", errors="replace") as log_f:
         log_f.write("task=%s title=%s time=%s\n" % (task["id"], task["title"], now_iso()))
-        for name, cmd in stages:
-            rc, out = run_stage(p["repo"], name, cmd, log_f, timeout)
-            if rc != 0:
-                failed_stage, fail_out = name, out
-                break
+        with HeartbeatPump(a.repo, interval=heartbeat_pump_interval()):
+            for name, cmd in stages:
+                rc, out = run_stage(p["repo"], name, cmd, log_f, timeout)
+                if rc != 0:
+                    failed_stage, fail_out = name, out
+                    break
 
     tracker = load_tracker(a.repo)          # 스테이지 실행 중 외부 변경 방어: 재로드 후 갱신
     task = find_task(tracker, task["id"])
