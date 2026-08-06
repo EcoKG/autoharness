@@ -88,13 +88,16 @@ python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo . --p
 ### ⑤ 마이그레이션 계획 적재
 소스 코드를 분석해 작업을 분해하고, 각 작업을 `mcp__autoharness__task_add` 로 장부에 넣는다.
 - 필수: id(짧고 안정적), title. 권장: path(스코프 테스트용 상대경로), **deps**(선행 작업 id 들 —
-  코어→상위 계층 순), **priority**(낮을수록 먼저; 10 단위 간격 권장).
-- 의존 대상은 먼저 추가돼 있어야 한다(엔진이 미존재 dep 를 거부한다).
+  코어→상위 계층 순), **priority**(낮을수록 먼저; 10 단위 간격 권장). 작업 전용 검증이
+  필요하면 **test_cmd**(전역 test 대신 실행, `{path}` 치환, `""` 로 해제).
+- 의존 대상은 먼저 추가돼 있어야 한다(엔진이 미존재·자기·순환 의존을 거부한다). 이미 장부에
+  있는 교착 pending 은 next/brief/status 가 `deadlocked` 로 알린다 — 발견 시 의존을 정리한다.
 
 ### ⑥ 자가 검증
-대상 저장소에서 `python scripts/harness_engine.py selftest` 를 실행한다. 7종(장부 초기화/실패
-경로 exit1+attempts/성공 경로 exit0+done/한도 exit4+blocked/의존성 게이팅/PROGRESS.md 렌더/더미
-정리)이 전부 PASS 인지 확인하고 **출력 전문을 보고에 첨부**한다. FAIL 이 있으면 중단·보고.
+대상 저장소에서 `python scripts/harness_engine.py selftest` 를 실행한다. 7종 15항목(장부
+초기화/실패 경로 exit1+attempts/성공 경로 exit0+done/한도 exit4+blocked/의존성 게이팅/
+PROGRESS.md 렌더/더미 정리)이 전부 PASS 인지 확인하고 **출력 전문을 보고에 첨부**한다.
+FAIL 이 있으면 중단·보고.
 
 ### ⑦ 워치독 등록
 `mcp__autoharness__watchdog_install` 를 호출한다(interval_minutes 기본 15). 세션이 죽어도
@@ -182,8 +185,8 @@ init 전이라 `scripts/harness_engine.py` 사본이 없으면
 | `mcp__autoharness__harness_init` | `python scripts/harness_engine.py init --repo . --project N --objective O --source S --target T --test CMD [--build C] [--lint C] [--model M]` ※ 이후 사본·훅 병합·레지스트리는 `python3 <스킬폴더>/bin/harness_mcp.py finish-init --repo .` 한 줄로 마무리(분류기 차단 시 사용자 실행 요청) |
 | `mcp__autoharness__harness_status` | `python scripts/harness_engine.py status --repo .` |
 | `mcp__autoharness__harness_run` | `python scripts/harness_engine.py run --repo . [--task I] [--cmd C]` 또는 `bash scripts/agent_harness.sh --task I` |
-| `mcp__autoharness__task_add` | `python scripts/harness_engine.py add-task --repo . --id I --title T [--path P] [--deps a,b] [--priority 100]` |
-| `mcp__autoharness__task_set` | `python scripts/harness_engine.py set-task --repo . --id I [--status pending\|blocked] [--note ...]` |
+| `mcp__autoharness__task_add` | `python scripts/harness_engine.py add-task --repo . --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` |
+| `mcp__autoharness__task_set` | `python scripts/harness_engine.py set-task --repo . --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` |
 | `mcp__autoharness__harness_pause` | `.claude/HARNESS_PAUSED` 빈 파일 생성 (워치독·Stop 게이트가 플래그를 존중한다. 레지스트리 status 는 active 로 남으므로 완전 정지는 MCP 경로 권장) |
 | `mcp__autoharness__harness_resume_project` | `.claude/HARNESS_PAUSED` 파일 삭제 (레지스트리 백오프 리셋은 안 됨) |
 | `mcp__autoharness__model_recommend` | `python scripts/harness_engine.py model-recommend --repo . [--source S] [--target T] [--notes ...]` |

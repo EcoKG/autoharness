@@ -71,7 +71,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog -Int
      추천하고, 사용자가 질문 창(AskUserQuestion)에서 최종 결정합니다.
    - 결정된 모델은 장부·레지스트리에 기록되며, 워치독도 그 모델로 재기동합니다.
 3. 하네스가 구축되고(장부·훅·엔진 사본·CLAUDE.md), 마이그레이션 계획이 작업 단위로 장부에
-   적재된 뒤, `selftest` 자가검증(7종)과 워치독 등록까지 자동으로 이어집니다.
+   적재된 뒤, `selftest` 자가검증(7종 15항목)과 워치독 등록까지 자동으로 이어집니다.
+   - 작업마다 전용 검증 명령이 필요하면 `task_add`/`task_set` 의 `test_cmd` 로 지정할 수
+     있습니다(전역 test 대신 실행, `{path}` 치환 지원, `""` 로 해제).
 4. 자율 주행: 세션이 "코드 수정 → `bash scripts/agent_harness.sh --task <id>` → 종료 코드 분기 →
    커밋" 루프를 반복합니다. Stop 훅이 진행 가능한 작업이 남아 있는 한 세션을 놓아주지 않습니다.
 5. 세션이 죽으면(사용량 초과 포함) 워치독이 15분 주기 판독에서 감지해 자동 부활시킵니다.
@@ -80,7 +82,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog -Int
 ## 사용량 초과 방어 동작
 
 워치독이 재기동 직후 90초 안에 세션이 죽고 출력에 사용량 패턴(`usage limit`, `rate limit`,
-`limit reached`, `429`, `overloaded`, `quota`, `credit balance`)이 보이면 **limit** 으로 분류합니다.
+`limit reached`, `overloaded`, `quota`, `credit balance`, 그리고 `429` 는 API 오류 문맥에
+인접할 때만 — "collected 429 items" 같은 우연 문자열 오탐 방지)이 보이면 **limit** 으로 분류합니다.
 
 - **limit**: 지수 백오프 **30 → 60 → 120 → 240 → 360분** 후 재시도합니다(이후에도 360분 간격
   반복). **영구 포기는 없습니다** — 한도가 풀리면 자동으로 다시 달립니다.
@@ -109,7 +112,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog -Int
 | `.claude/agent_tracker.example.json` | 장부 스키마 예시 |
 | `.claude/harness-logs/` | 작업별 빌드·테스트 전체 로그 |
 | `.claude/harness-state.json` | 러너·Stop 훅 내부 상태(직전 실행, 진전 가드) |
-| `.claude/harness-heartbeat.json` | 하트비트 — 워치독의 이중 기동 방지 근거 |
+| `.claude/harness-heartbeat.json` | 하트비트 — 워치독의 이중 기동 방지 근거 (검증 실행 중에는 5분 주기 자동 갱신) |
 | `.claude/HARNESS_PAUSED` | 존재하면 일시정지 (플래그 파일) |
 | `.claude/settings.json` | 훅 4종·권한이 **병합**됩니다 (원본은 `.bak-<시각>` 백업) |
 | `scripts/harness_engine.py` | 엔진 사본 — 훅·러너가 호출 (단독 동작, stdlib만) |
@@ -125,7 +128,7 @@ CLAUDE.md 는 강제층이 아니므로, "특정 시점 무조건 실행" 규칙
 |---|---|
 | SessionStart | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입해 진행을 복구합니다 |
 | PreToolUse(Bash) | `git push`·`--force`·`reset --hard`·`clean -f` 차단, **커밋 게이트**(하네스 검증 통과 없이는 `git commit` 차단) |
-| PostToolUse(Bash) | `git commit` 직후 done 작업에 커밋 SHA 자동 기록 + 하트비트 |
+| PostToolUse(Bash) | `git commit` 직후 done 작업에 커밋 SHA 자동 기록 + 하트비트. 커밋이 실제로 새 커밋을 만든 경우에만 기록합니다(nothing to commit 오귀속 방지) |
 | Stop | 자율 주행 게이트 — 남은 작업이 있으면 세션 종료를 막고 다음 작업을 지시. 대화형 세션(`CLAUDE_AUTOHARNESS` 미설정)·일시정지·무진전 3회 초과 시에는 개입하지 않습니다 |
 
 ## 일시정지 · 재개 · 제거
@@ -157,7 +160,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
    직접 실행하므로 주행 자체는 계속됩니다.
 4. **세션이 계속 안 뜰 때** — 레지스트리(`~/.claude/autoharness/registry.json`)의 프로젝트
    `status` 를 확인하십시오. `error`(설정성 오류 5연속)·`needs_human`(blocked 작업 존재)은
-   사람 확인 후 `/autoharness resume-project` 로 재개하시면 됩니다.
+   사람 확인 후 `/autoharness resume-project` 로 재개하시면 됩니다. `completed` 는 새 작업을
+   `task_add` 로 추가하는 것만으로 자동 재활성화됩니다(백오프 리셋 포함).
 5. **일시 점검이 필요할 때** — `/autoharness pause` 후 작업하고, 끝나면 resume-project 하십시오.
    워치독 자체를 멈추려면 `schtasks /Delete /TN AutoHarnessWatchdog /F` 를 실행하시면 됩니다.
 6. **auto 모드 분류기가 `harness_init` 을 차단할 때** — settings.json 훅 주입과 권한 우회

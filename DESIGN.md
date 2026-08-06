@@ -53,7 +53,9 @@ autoharness/
   (훅 stdin 이 cp949 로 디코드되면 한글 명령이 surrogate 로 오염되어 차단 로직이 fail-open
   으로 뒤집힌다 — 적대 검증에서 실측된 critical). 모든 `open()` 에 `encoding="utf-8"`.
   자식 프로세스 출력 디코드는 utf-8 → 로케일 코드페이지 → utf-8 replace 순 폴백.
-- JSON 쓰기는 전부 **원자적**: 같은 디렉토리에 `.tmp` 작성 → `os.replace`.
+- JSON 쓰기는 전부 **원자적**: 같은 디렉토리에 `.tmp` 작성 → `os.replace`. replace 가
+  일시적 `PermissionError`(OneDrive 동기화·백신 잠금)를 맞으면 지수 백오프
+  0.1→0.2→0.4→0.8초, 총 5회 시도 후 실패 처리한다(다른 OSError 는 즉시 전파).
 - 훅 서브커맨드는 **fail-open**: 내부 예외 시 exit 0 (일반 작업을 깨지 않는다). 러너·MCP는 fail-loud.
 - 타임스탬프는 `datetime.now(timezone.utc).isoformat()`.
 
@@ -68,18 +70,18 @@ autoharness/
 | `init --repo P --project N --objective O --source S --target T --test CMD [--build CMD] [--lint CMD] [--model M] [--max-attempts 5]` | 장부·예시·로그 디렉토리 생성 | 0/2 |
 | `add-task --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` | 작업 추가 (자기/순환/미존재 의존 거부) | 0/2 |
 | `set-task --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` | 제한적 상태 조작 (`done` 설정 불가). `--test-cmd ""` 는 작업 전용 test 해제 | 0/2 |
-| `next` | 의존성 게이팅 통과한 다음 작업 JSON | 0/3 |
-| `run [--task I] [--cmd C]` | build→test→lint 실행, 로그·요약·장부 갱신, PROGRESS.md 재렌더 | 0/1/2/3/4 |
+| `next` | 의존성 게이팅 통과한 다음 작업 JSON(교착 pending 은 `deadlocked` 로 병기) | 0/3 |
+| `run [--task I] [--cmd C]` | build→test→lint 실행, 로그·요약·장부 갱신, PROGRESS.md 재렌더. 스테이지 실행 중 5분 주기 하트비트 자동 갱신 | 0/1/2/3/4 |
 | `sync-commit` | commit 없는 최신 done 작업에 HEAD SHA 기록 | 0 |
 | `render` | PROGRESS.md 재렌더 | 0 |
-| `brief` | 15줄 이하 상태 요약(SessionStart 훅용) | 0 |
-| `status` | 장부 요약 JSON | 0/2 |
+| `brief` | 15줄 이하 상태 요약(SessionStart 훅용) — 교착 pending 이 있으면 경고 줄 추가 | 0 |
+| `status` | 장부 요약 JSON(`deadlocked` 목록 포함) | 0/2 |
 | `heartbeat` | 하트비트 갱신 | 0 |
 | `model-recommend [--source S] [--target T] [--notes ...]` | 모델 추천 JSON | 0 |
 | `hook-prebash` | stdin=훅 JSON. 금지 명령 차단(exit 2+stderr), 커밋 게이트, 하트비트 | 0/2 |
 | `hook-postbash` | stdin=훅 JSON. `git commit` 후 sync-commit, 하트비트 | 0 |
 | `hook-stop` | stdin=훅 JSON. 자율 주행 게이트(아래 §8) | 0 |
-| `selftest` | 7종 자가 검증을 임시 샌드박스에서 실행, PASS/FAIL 출력 | 0/1 |
+| `selftest` | 7종 15항목 자가 검증을 임시 샌드박스에서 실행, PASS/FAIL 출력 | 0/1 |
 
 **run 의 종료 코드 계약** (상위 에이전트 분기 신호 — 절대 변경 금지):
 
@@ -119,9 +121,13 @@ autoharness/
 }
 ```
 
-- 명령 문자열 안의 `{path}` 는 task.path 로 치환된다. task.test_cmd 가 있으면 test 를 대체.
+- 명령 문자열 안의 `{path}` 는 task.path 로 치환된다. task.test_cmd 가 있으면 test 를 대체
+  (설정: `add-task/set-task --test-cmd`, MCP `task_add/task_set` 의 `test_cmd`. `""` 로 해제).
 - 선택 규칙(`next`): ① `in_progress` ② attempts<max 인 `failed` ③ deps 전부 `done` 인
   `pending` — 각 그룹 내 priority 낮은 값 우선, 그다음 id 순.
+- `add-task` 는 자기 의존·순환 의존·미존재 의존을 거부한다(exit 2). 손편집 등으로 이미
+  들어간 교착 pending(의존이 미존재·blocked·순환이라 영영 실행 불가)은 `next`/`brief`/
+  `status` 가 `deadlocked` 로 구분해 알린다 — 종료 코드 계약은 그대로다(next 는 여전히 0/3).
 - `PROGRESS.md` 는 장부에서 렌더되는 산출물이다. 손 편집 금지 문구를 머리에 박는다.
 
 ## 6. MCP 서버 (`bin/harness_mcp.py`)
@@ -174,6 +180,11 @@ autoharness/
 }
 ```
 
+status 전이 규칙: `completed` 는 종점이 아니다 — MCP `task_add` 로 새 작업이 들어오면
+active 로 복귀하고 백오프 카운터(consecutive_errors·limit_hits·next_retry_at)가 리셋된다.
+`paused`(사용자 의사)·`needs_human`(사람 판단 대기)·`error`(진단 필요)는 작업 추가만으로
+자동 재개하지 않는다 — `harness_resume_project` 가 명시적 복귀 수단이다.
+
 ## 8. 훅 계약 (대상 저장소 `.claude/settings.json` 에 병합)
 
 CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙은 전부 훅으로 구현한다.
@@ -182,8 +193,8 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 | 훅 | 명령 | 강제하는 규칙 |
 |---|---|---|
 | SessionStart | `... brief` | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입(진행 복구) |
-| PreToolUse(Bash) | `... hook-prebash` | ① `git push`/`--force`/`reset --hard`/`clean -fd` 차단(exit 2) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` 차단 |
-| PostToolUse(Bash) | `... hook-postbash` | `git commit` 직후 done 작업에 SHA 자동 기록 + 하트비트 |
+| PreToolUse(Bash) | `... hook-prebash` | ① `git push`/`--force`/`reset --hard`/`clean -fd` 차단(exit 2) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` 차단 ③ 커밋 허용 시 직전 HEAD 를 1회용 마커(`head_before_commit`)로 상태 파일에 기록 |
+| PostToolUse(Bash) | `... hook-postbash` | `git commit` 직후 done 작업에 SHA 자동 기록 + 하트비트. **오귀속 방지**: prebash 마커와 대조해 HEAD 가 실제로 변한 경우에만 기록(nothing to commit 등 실패 커밋이 직전 SHA 를 가로채지 않는다). 마커 부재 시(수동 sync-commit·부분 설치)는 종전대로 기록 |
 | Stop | `... hook-stop` | 자율 주행 게이트(아래) + 하트비트 |
 
 **hook-stop 로직** (fail-open):
@@ -219,7 +230,9 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
    일시정지도 존중한다).
 3. 장부 읽기 실패/부재 → error 처리(연속 오류 집계).
 4. 진행 가능 작업 없음: 전부 done → `completed`. blocked 존재 → `needs_human`. → 스킵.
-5. 하트비트가 `stale_minutes` 이내 → 스킵 (세션 살아 있음 — 이중 기동 방지).
+5. 하트비트가 `stale_minutes` 이내 → 스킵 (세션 살아 있음 — 이중 기동 방지). run 이
+   스테이지 실행 중 5분 주기로 하트비트를 갱신하므로(엔진 HeartbeatPump) timeout_sec
+   상한(기본 1800초)까지 걸리는 장시간 검증도 사망으로 오판하지 않는다.
 6. **기동**: `claude -p <bootstrap_prompt> --model <model> <permission_args...>`,
    cwd=repo, env 에 `CLAUDE_AUTOHARNESS=1` 추가, stdout+stderr → `logs/<project>-<ts>.log`.
    `probe_sec`(90초) 동안 5초 간격 폴링. **분류 우선순위 고정**:
@@ -246,7 +259,7 @@ frontmatter `name: autoharness`, description 은 트리거 문구 포함(하네�
 - **init**: ① `harness_detect` + 실제 테스트 명령 1회 실행(실측 표 출력, 테스트 부재 시 중단·보고)
   ② `model_recommend` → AskUserQuestion(사용자 결정) ③ `harness_init` ④ CLAUDE.md 를
   `templates/CLAUDE.md.tmpl` 기반으로 작성(200줄 미만, 기존 파일은 병합+백업) ⑤ 마이그레이션
-  계획을 task_add 로 장부에 적재 ⑥ `selftest` 로 7종 검증(출력 첨부) ⑦ `watchdog_install`
+  계획을 task_add 로 장부에 적재 ⑥ `selftest` 로 7종 15항목 검증(출력 첨부) ⑦ `watchdog_install`
   ⑧ 보고(실측 표/생성 파일 표/훅 이관 목록/검증 로그/사람 판단 필요 항목/다음 세션 시작 명령)
 - **resume**: 장부 읽기 → heartbeat → 루프(다음 작업 구현 → `bash scripts/agent_harness.sh
   --task <id>` → 종료 코드 분기표 → 커밋 → 반복). 검증 무결성 조항(테스트 약화 금지 등),
@@ -274,8 +287,8 @@ MCP 서버가 안 잡히는 환경(등록 전)을 위한 폴백: `python scripts
 전부 **실행으로 증명**한다. 샌드박스는 스크래치패드 아래에 만들고 실제 레지스트리/스케줄러를
 건드리는 검증은 dry-run 또는 임시 이름을 쓴다.
 
-1. selftest 7종(장부 초기화/실패 경로 exit1+attempts/성공 경로 exit0+done/한도 exit4+blocked/
-   의존성 게이팅/PROGRESS.md 렌더/더미 정리) 통과
+1. selftest 7종 15항목(장부 초기화/실패 경로 exit1+attempts/성공 경로 exit0+done/한도
+   exit4+blocked/의존성 게이팅/PROGRESS.md 렌더/더미 정리) 통과
 2. MCP 핸드셰이크: initialize→initialized→tools/list→tools/call(harness_detect)→미지 메서드
    -32601 을 파이프로 실측
 3. 훅 3종: hook-prebash 차단/허용/커밋 게이트, hook-stop 게이트 6단계(env 미설정 통과·PAUSED
