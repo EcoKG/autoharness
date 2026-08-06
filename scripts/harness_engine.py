@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 
 for _s in (sys.stdout, sys.stderr):
@@ -72,6 +74,23 @@ def rp(repo):
     }
 
 
+REPLACE_RETRIES = 5          # os.replace 총 시도 횟수
+REPLACE_BACKOFF_SEC = 0.1    # 첫 대기 — 이후 0.2→0.4→0.8초로 지수 증가
+
+
+def replace_with_retry(src, dst):
+    """os.replace — OneDrive 동기화·백신 검사가 잡은 일시적 잠금(PermissionError)을
+    지수 백오프로 재시도한다. 다른 OSError 는 즉시, 마지막 시도 실패는 그대로 던진다."""
+    for i in range(REPLACE_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == REPLACE_RETRIES - 1:
+                raise
+            time.sleep(REPLACE_BACKOFF_SEC * (2 ** i))
+
+
 def atomic_write_json(path, obj):
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
@@ -82,7 +101,7 @@ def atomic_write_json(path, obj):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     finally:
         if os.path.exists(tmp):
             try:
@@ -100,7 +119,7 @@ def atomic_write_text(path, text):
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     finally:
         if os.path.exists(tmp):
             try:
@@ -253,10 +272,10 @@ def detect(repo):
 
 # ---------------------------------------------------------------- 장부 조작
 
-def new_task(id_, title, path=None, deps=None, priority=100):
+def new_task(id_, title, path=None, deps=None, priority=100, test_cmd=None):
     return {"id": id_, "title": title, "path": path, "deps": deps or [], "priority": priority,
             "status": "pending", "attempts": 0, "last_error": None, "last_log_file": None,
-            "commit": None, "started_at": None, "finished_at": None, "test_cmd": None}
+            "commit": None, "started_at": None, "finished_at": None, "test_cmd": test_cmd or None}
 
 
 def cmd_init(a):
@@ -291,16 +310,38 @@ def cmd_init(a):
                      ensure_ascii=False))
 
 
+def deps_reach(tasks_by_id, start_ids, target_id):
+    """deps 그래프를 따라 start_ids 에서 target_id 에 닿는지 검사(순환 탐지용)."""
+    seen, stack = set(), list(start_ids)
+    while stack:
+        cur = stack.pop()
+        if cur == target_id:
+            return True
+        if cur in seen:
+            continue
+        seen.add(cur)
+        t = tasks_by_id.get(cur)
+        if t:
+            stack.extend(t.get("deps", []))
+    return False
+
+
 def cmd_add_task(a):
     tracker = load_tracker(a.repo)
     if any(t["id"] == a.id for t in tracker["tasks"]):
         die("이미 존재하는 작업 id: " + a.id)
     deps = [d.strip() for d in (a.deps or "").split(",") if d.strip()]
+    if a.id in deps:
+        die("자기 자신에 의존할 수 없습니다: %s (영구 교착 작업이 됩니다)" % a.id)
     known = {t["id"] for t in tracker["tasks"]}
-    unknown = [d for d in deps if d not in known and d != a.id]
+    unknown = [d for d in deps if d not in known]
     if unknown:
         die("존재하지 않는 의존 id: %s (선행 작업을 먼저 add-task 하십시오)" % unknown)
-    tracker["tasks"].append(new_task(a.id, a.title, a.path, deps, a.priority))
+    by_id = {t["id"]: t for t in tracker["tasks"]}
+    if deps_reach(by_id, deps, a.id):
+        # 손편집 등으로 기존 작업이 이 id 를 이미 참조하는 경우 — 추가하면 순환이 완성된다
+        die("순환 의존이 생깁니다: 기존 작업이 %s 를 (간접) 의존하고 있습니다" % a.id)
+    tracker["tasks"].append(new_task(a.id, a.title, a.path, deps, a.priority, a.test_cmd))
     save_tracker(a.repo, tracker)
     render(a.repo)
     print(json.dumps({"ok": True, "id": a.id}, ensure_ascii=False))
@@ -320,6 +361,8 @@ def cmd_set_task(a):
             task["last_error"] = None
     if a.note:
         task["last_error"] = a.note[:LAST_ERROR_CAP]
+    if a.test_cmd is not None:
+        task["test_cmd"] = a.test_cmd or None  # 빈 문자열이면 해제 → 전역 test 로 복귀
     save_tracker(a.repo, tracker)
     render(a.repo)
     print(json.dumps({"ok": True, "task": task}, ensure_ascii=False))
@@ -351,14 +394,40 @@ def eligible_next(tracker):
     return fresh
 
 
+def deadlocked_pending(tracker):
+    """충족 불가능한 pending — 의존이 미존재·blocked·순환이라 영영 실행될 수 없는 작업.
+
+    고정점 계산: done 이거나, blocked 가 아니면서 의존 전부가 '언젠가 done 가능'인
+    작업을 반복 확장한다. 확장이 끝난 뒤에도 집합 밖에 남은 pending 이 교착이다.
+    """
+    doable = {t["id"] for t in tracker["tasks"] if t["status"] == "done"}
+    changed = True
+    while changed:
+        changed = False
+        for t in tracker["tasks"]:
+            if t["id"] in doable or t["status"] == "blocked":
+                continue
+            if all(d in doable for d in t.get("deps", [])):
+                doable.add(t["id"])
+                changed = True
+    return [t for t in tracker["tasks"] if t["status"] == "pending" and t["id"] not in doable]
+
+
 def cmd_next(a):
     tracker = load_tracker(a.repo)
     t = eligible_next(tracker)
+    dead = [d["id"] for d in deadlocked_pending(tracker)]
     if t is None:
         counts = status_counts(tracker)
-        print(json.dumps({"next": None, "counts": counts}, ensure_ascii=False))
+        out = {"next": None, "counts": counts}
+        if dead:
+            out["deadlocked"] = dead
+        print(json.dumps(out, ensure_ascii=False))
         sys.exit(EXIT_NO_TASK)
-    print(json.dumps({"next": t}, ensure_ascii=False, indent=2))
+    out = {"next": t}
+    if dead:
+        out["deadlocked"] = dead
+    print(json.dumps(out, ensure_ascii=False, indent=2))
 
 
 def status_counts(tracker):
@@ -391,6 +460,44 @@ def decode_output(b):
             return b.decode(locale.getpreferredencoding(False))
         except (UnicodeDecodeError, LookupError):
             return b.decode("utf-8", errors="replace")
+
+
+HEARTBEAT_PUMP_SEC = 300  # 장시간 스테이지 중 주기 갱신 — 워치독 stale(30분) 오판·이중 기동 방지
+
+
+class HeartbeatPump:
+    """run 스테이지 실행 중 주기적으로 하트비트를 갱신하는 데몬 스레드.
+
+    단일 스테이지가 timeout_sec(기본 1800초)까지 걸리면 하트비트 공백이
+    워치독 stale 판정(30분)에 근접한다 — 스테이지가 살아 있는 동안 interval 마다
+    갱신해 세션 사망 오판을 막는다. write_heartbeat 은 예외를 삼키므로 안전하다.
+    """
+
+    def __init__(self, repo, interval=HEARTBEAT_PUMP_SEC, source="run"):
+        self.repo, self.interval, self.source = repo, interval, source
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def _loop(self):
+        while not self._stop.wait(self.interval):
+            write_heartbeat(self.repo, self.source)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=5)
+        return False
+
+
+def heartbeat_pump_interval():
+    """환경변수 AUTOHARNESS_HEARTBEAT_PUMP_SEC 로 재정의 가능(테스트·특수 운영)."""
+    try:
+        return float(os.environ.get("AUTOHARNESS_HEARTBEAT_PUMP_SEC", "") or HEARTBEAT_PUMP_SEC)
+    except ValueError:
+        return HEARTBEAT_PUMP_SEC
 
 
 def run_stage(repo, name, cmd, log_f, timeout):
@@ -480,11 +587,12 @@ def cmd_run(a):
     failed_stage, fail_out = None, ""
     with open(log_path, "w", encoding="utf-8", errors="replace") as log_f:
         log_f.write("task=%s title=%s time=%s\n" % (task["id"], task["title"], now_iso()))
-        for name, cmd in stages:
-            rc, out = run_stage(p["repo"], name, cmd, log_f, timeout)
-            if rc != 0:
-                failed_stage, fail_out = name, out
-                break
+        with HeartbeatPump(a.repo, interval=heartbeat_pump_interval()):
+            for name, cmd in stages:
+                rc, out = run_stage(p["repo"], name, cmd, log_f, timeout)
+                if rc != 0:
+                    failed_stage, fail_out = name, out
+                    break
 
     tracker = load_tracker(a.repo)          # 스테이지 실행 중 외부 변경 방어: 재로드 후 갱신
     task = find_task(tracker, task["id"])
@@ -567,10 +675,14 @@ def cmd_brief(a):
         return
     c = status_counts(tracker)
     nxt = eligible_next(tracker)
+    dead = deadlocked_pending(tracker)
     print("[AutoHarness] project=%s model=%s" % (tracker.get("project"), tracker.get("model")))
     print("목표: %s" % tracker.get("objective", ""))
     print("현황: done %d/%d, in_progress %d, failed %d, blocked %d, pending %d"
           % (c["done"], len(tracker["tasks"]), c["in_progress"], c["failed"], c["blocked"], c["pending"]))
+    if dead:
+        print("교착 pending %d건(의존이 미존재·blocked·순환 — 영영 실행 불가): %s"
+              % (len(dead), ", ".join(t["id"] for t in dead)))
     if nxt:
         print("다음 작업: %s — %s (attempts %d/%d)"
               % (nxt["id"], nxt["title"], nxt.get("attempts", 0), tracker.get("max_attempts", 5)))
@@ -587,6 +699,7 @@ def cmd_status(a):
     hb = load_json(rp(a.repo)["heartbeat"])
     print(json.dumps({"project": tracker.get("project"), "model": tracker.get("model"),
                       "counts": status_counts(tracker), "next": eligible_next(tracker),
+                      "deadlocked": [t["id"] for t in deadlocked_pending(tracker)],
                       "heartbeat": hb, "paused": os.path.exists(rp(a.repo)["paused_flag"])},
                      ensure_ascii=False, indent=2))
 
@@ -596,13 +709,27 @@ def cmd_heartbeat(a):
     print(json.dumps({"ok": True}, ensure_ascii=False))
 
 
-def sync_commit(repo):
+def sync_commit(repo, require_new_head=False):
+    """최신 done 작업에 HEAD SHA 를 기록.
+
+    require_new_head=True(hook-postbash 경로): hook-prebash 가 커밋 직전에 남긴
+    1회용 마커(head_before_commit)와 현재 HEAD 를 대조해, 커밋이 실패해 HEAD 가
+    변하지 않았으면(nothing to commit 등) 직전 커밋을 오귀속하지 않는다.
+    마커가 없으면(수동 sync-commit·부분 설치) 종전대로 기록한다(fail-open).
+    """
     tracker = load_tracker(repo, required=False)
     if tracker is None:
         return None
     sha = _git(repo, "rev-parse", "--short", "HEAD")
     if not sha:
-        return None
+        return None  # HEAD 없음 — 커밋 미생성. 마커는 다음 시도를 위해 남긴다
+    if require_new_head:
+        state = load_state(repo)
+        if "head_before_commit" in state:
+            prev = state.pop("head_before_commit")
+            save_state(repo, state)  # 마커는 1회용 — 소진해 재사용 오귀속을 막는다
+            if sha == prev:
+                return None  # 커밋 명령이 새 커밋을 만들지 못함 — 기록하지 않는다
     cands = [t for t in tracker["tasks"] if t["status"] == "done" and not t.get("commit")]
     if not cands:
         return None
@@ -634,7 +761,9 @@ def model_recommend(repo=None, source=None, target=None, notes=None):
         m = re.match(r"[A-Za-z#+.]+", (s or "").strip())
         return m.group(0).lower() if m else ""
 
-    if source and target and lang(source) and lang(source) != lang(target):
+    src_lang, tgt_lang = lang(source), lang(target)
+    # 비ASCII 스택명(한글 등)은 언어 토큰이 비어 판정 불능 — 양쪽 토큰이 있을 때만 가산
+    if source and target and src_lang and tgt_lang and src_lang != tgt_lang:
         score += 3
         rationale.append("언어 간 이식(%s → %s): 구조 재설계 판단이 많음 (+3)" % (source, target))
     if det is not None:
@@ -733,6 +862,10 @@ def cmd_hook_prebash(a):
                         "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오.\n"
                         % (active[0]["id"], active[0]["id"]))
                     sys.exit(2)
+            # 커밋 허용 — 직전 HEAD 를 1회용 마커로 남겨 postbash 가 '새 커밋 생성'을 검증한다
+            state = load_state(a.repo)
+            state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
+            save_state(a.repo, state)
         sys.exit(0)
     except SystemExit:
         raise
@@ -746,7 +879,7 @@ def cmd_hook_postbash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         if GIT_COMMIT_RE.search(command):
-            sync_commit(a.repo)
+            sync_commit(a.repo, require_new_head=True)
     except Exception:
         pass
     sys.exit(0)
@@ -906,9 +1039,13 @@ def main(argv=None):
     sp.add_argument("--id", required=True); sp.add_argument("--title", required=True)
     sp.add_argument("--path", default=None); sp.add_argument("--deps", default="")
     sp.add_argument("--priority", type=int, default=100)
+    sp.add_argument("--test-cmd", dest="test_cmd", default=None,
+                    help="이 작업 전용 test 명령 — 전역 commands.test 대신 실행({path} 치환 지원)")
     sp = sub.add_parser("set-task"); common(sp)
     sp.add_argument("--id", required=True); sp.add_argument("--status", default=None)
     sp.add_argument("--note", default=None)
+    sp.add_argument("--test-cmd", dest="test_cmd", default=None,
+                    help="작업 전용 test 명령 설정 (빈 문자열이면 해제 → 전역 test 복귀)")
     sp = sub.add_parser("next"); common(sp)
     sp = sub.add_parser("run"); common(sp)
     sp.add_argument("--task", default=None); sp.add_argument("--cmd", default=None)
