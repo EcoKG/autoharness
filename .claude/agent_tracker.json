@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-06T07:00:49.051030+00:00",
+  "updated_at": "2026-08-06T07:02:50.993347+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -156,13 +156,13 @@
       "path": "tests",
       "deps": [],
       "priority": 90,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/tests-mcp-protocol-20260806T070212Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-06T07:02:12.019259+00:00",
+      "finished_at": "2026-08-06T07:02:50.993347+00:00",
       "test_cmd": null
     },
     {
