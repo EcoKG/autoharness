@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 
 for _s in (sys.stdout, sys.stderr):
@@ -72,6 +73,23 @@ def rp(repo):
     }
 
 
+REPLACE_RETRIES = 5          # os.replace 총 시도 횟수
+REPLACE_BACKOFF_SEC = 0.1    # 첫 대기 — 이후 0.2→0.4→0.8초로 지수 증가
+
+
+def replace_with_retry(src, dst):
+    """os.replace — OneDrive 동기화·백신 검사가 잡은 일시적 잠금(PermissionError)을
+    지수 백오프로 재시도한다. 다른 OSError 는 즉시, 마지막 시도 실패는 그대로 던진다."""
+    for i in range(REPLACE_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == REPLACE_RETRIES - 1:
+                raise
+            time.sleep(REPLACE_BACKOFF_SEC * (2 ** i))
+
+
 def atomic_write_json(path, obj):
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
@@ -82,7 +100,7 @@ def atomic_write_json(path, obj):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     finally:
         if os.path.exists(tmp):
             try:
@@ -100,7 +118,7 @@ def atomic_write_text(path, text):
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        replace_with_retry(tmp, path)
     finally:
         if os.path.exists(tmp):
             try:
