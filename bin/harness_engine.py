@@ -701,7 +701,9 @@ def model_recommend(repo=None, source=None, target=None, notes=None):
         m = re.match(r"[A-Za-z#+.]+", (s or "").strip())
         return m.group(0).lower() if m else ""
 
-    if source and target and lang(source) and lang(source) != lang(target):
+    src_lang, tgt_lang = lang(source), lang(target)
+    # 비ASCII 스택명(한글 등)은 언어 토큰이 비어 판정 불능 — 양쪽 토큰이 있을 때만 가산
+    if source and target and src_lang and tgt_lang and src_lang != tgt_lang:
         score += 3
         rationale.append("언어 간 이식(%s → %s): 구조 재설계 판단이 많음 (+3)" % (source, target))
     if det is not None:
