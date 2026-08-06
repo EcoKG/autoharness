@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.claude/harness-logs/
+.claude/harness-state.json
+.claude/harness-heartbeat.json
+.claude/HARNESS_PAUSED
+.claude/settings.json.bak-*
+CLAUDE.md.bak-*
