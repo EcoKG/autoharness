@@ -814,5 +814,77 @@ def serve():
     log("stdin 종료 — 서버를 내립니다")
 
 
+def cli_finish_init(argv):
+    """CLI 모드: 권한 분류기(auto mode)가 harness_init 을 차단한 환경에서, 사용자가 터미널에서
+    직접 실행해 남은 설치 절차를 마무리한다 — 엔진·래퍼 사본 보완 + settings.json 훅 병합 +
+    레지스트리 등록. (엔진 init 으로 장부가 이미 만들어져 있어야 한다.)
+
+    사용: python3 harness_mcp.py finish-init [--repo .] [--project N]
+          [--permission-mode bypass|acceptEdits] [--model claude-...-5]
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="harness_mcp.py finish-init")
+    ap.add_argument("--repo", default=".")
+    ap.add_argument("--project", default=None)
+    ap.add_argument("--permission-mode", dest="permission_mode",
+                    choices=sorted(PERMISSION_ARGS.keys()), default="bypass")
+    ap.add_argument("--model", default=None)
+    a = ap.parse_args(argv)
+
+    repo = os.path.abspath(a.repo)
+    tracker = eng.load_json(eng.rp(repo)["tracker"])
+    if not isinstance(tracker, dict):
+        sys.stderr.write("[finish-init] 장부가 없습니다: %s\n"
+                         "먼저 엔진 init 을 실행하십시오: python3 scripts/harness_engine.py init ... "
+                         "(또는 스킬 폴더의 bin/harness_engine.py)\n" % eng.rp(repo)["tracker"])
+        sys.exit(2)
+
+    model = a.model or tracker.get("model") or eng.MODEL_OPUS
+    if model not in eng.ALLOWED_MODELS:
+        sys.stderr.write("[finish-init] model 은 %s 중 하나여야 합니다\n" % (eng.ALLOWED_MODELS,))
+        sys.exit(2)
+    project = a.project or tracker.get("project") or os.path.basename(repo)
+
+    done = {"repo": repo, "project": project, "model": model}
+
+    # ① 엔진·래퍼 사본 보완 (이미 있으면 최신으로 덮어씀 — 단독 동작 사본)
+    scripts_dir = os.path.join(repo, "scripts")
+    os.makedirs(scripts_dir, exist_ok=True)
+    engine_dst = os.path.join(scripts_dir, "harness_engine.py")
+    shutil.copyfile(ENGINE_SRC, engine_dst)
+    wrapper_dst = os.path.join(scripts_dir, "agent_harness.sh")
+    wrapper_tmpl = os.path.join(TEMPLATES_DIR, "agent_harness.sh")
+    if os.path.exists(wrapper_tmpl):
+        shutil.copyfile(wrapper_tmpl, wrapper_dst)
+    else:
+        write_text_lf(wrapper_dst, FALLBACK_WRAPPER)
+    try:
+        os.chmod(wrapper_dst, 0o755)
+    except OSError:
+        pass
+    done["scripts"] = [rel(engine_dst, repo), rel(wrapper_dst, repo)]
+
+    # ② settings.json 훅 4종 + permissions.allow 병합 (원본은 .bak-<ts> 백업)
+    done["settings"] = merge_settings(repo)
+
+    # ③ 레지스트리 등록 (워치독이 이 항목을 보고 자동 부활시킨다)
+    done["registry"] = {"path": REGISTRY_PATH,
+                        "project": registry_upsert(project, repo, model,
+                                                   PERMISSION_ARGS[a.permission_mode])}
+
+    done["next_steps"] = [
+        "워치독 미등록이면: Windows `install.ps1 -Watchdog` / WSL `bash ~/.claude/skills/autoharness/install.sh --watchdog`",
+        "검증: python3 scripts/harness_engine.py status --repo " + repo,
+    ]
+    print(json.dumps(done, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
-    serve()
+    if len(sys.argv) > 1 and sys.argv[1] == "finish-init":
+        cli_finish_init(sys.argv[2:])
+    elif len(sys.argv) > 1:
+        sys.stderr.write("알 수 없는 인자입니다. MCP 서버는 인자 없이 실행되며, "
+                         "CLI 는 finish-init 만 지원합니다.\n")
+        sys.exit(2)
+    else:
+        serve()

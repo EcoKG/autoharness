@@ -160,3 +160,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
    사람 확인 후 `/autoharness resume-project` 로 재개하시면 됩니다.
 5. **일시 점검이 필요할 때** — `/autoharness pause` 후 작업하고, 끝나면 resume-project 하십시오.
    워치독 자체를 멈추려면 `schtasks /Delete /TN AutoHarnessWatchdog /F` 를 실행하시면 됩니다.
+6. **auto 모드 분류기가 `harness_init` 을 차단할 때** — settings.json 훅 주입과 권한 우회
+   등록은 분류기가 막도록 설계된 패턴이라 정상 동작입니다. 에이전트가 엔진 init(장부 생성)까지
+   진행한 뒤, 나머지(사본 보완·훅 병합·레지스트리 등록)는 **직접 터미널에서** 한 줄로 마무리하십시오:
+
+   ```bash
+   python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo <저장소경로> --permission-mode bypass
+   ```
+
+   또는 해당 세션의 권한 모드를 auto 에서 default/acceptEdits 로 바꾸면(Shift+Tab) 차단 대신
+   승인 프롬프트를 받게 됩니다.
