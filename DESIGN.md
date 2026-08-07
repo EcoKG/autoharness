@@ -78,7 +78,7 @@ autoharness/
 | `status` | 장부 요약 JSON(`deadlocked` 목록, `hooks` 배선 상태 포함) | 0/2 |
 | `heartbeat` | 하트비트 갱신 | 0 |
 | `model-recommend [--source S] [--target T] [--notes ...]` | 모델 추천 JSON | 0 |
-| `hook-prebash` | stdin=훅 JSON. 금지 명령 차단(exit 2+stderr), 커밋 게이트, 하트비트 | 0/2 |
+| `hook-prebash` | stdin=훅 JSON. 금지 명령 게이트·커밋 게이트·하트비트. 게이트 처리는 컨텍스트가 정한다(§8): 헤드리스=exit 2+stderr, 대화형·일시정지=exit 0+`permissionDecision:"ask"` | 0/2 |
 | `hook-postbash` | stdin=훅 JSON. `git commit` 후 sync-commit, 하트비트 | 0 |
 | `hook-stop` | stdin=훅 JSON. 자율 주행 게이트(아래 §8) | 0 |
 | `selftest` | 7종 15항목 자가 검증을 임시 샌드박스에서 실행, PASS/FAIL 출력 | 0/1 |
@@ -220,8 +220,8 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 | 훅 | 명령 | 강제하는 규칙 |
 |---|---|---|
 | SessionStart | `... brief` | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입(진행 복구) |
-| PreToolUse(Bash) | `... hook-prebash` | ① 금지 명령 게이트(`push`/`--force`/`reset --hard`/`clean -f`) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` ③ 커밋이 일어날 수 있는 경로에서 직전 HEAD 를 1회용 마커(`head_before_commit`)로 기록. ①②의 **처리 방식은 컨텍스트가 정한다**(아래) |
-| PostToolUse(Bash) | `... hook-postbash` | `git commit` 직후 done 작업에 SHA 자동 기록 + 하트비트. **오귀속 방지**: prebash 마커와 대조해 HEAD 가 실제로 변한 경우에만 기록(nothing to commit 등 실패 커밋이 직전 SHA 를 가로채지 않는다). 마커 부재 시(수동 sync-commit·부분 설치)는 종전대로 기록 |
+| PreToolUse(`Bash\|PowerShell`) | `... hook-prebash` | ① 금지 명령 게이트(`push`/`--force`/`reset --hard`/`clean -f`) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` ③ 커밋이 일어날 수 있는 경로에서 직전 HEAD 를 1회용 마커(`head_before_commit`)로 기록. ①②의 **처리 방식은 컨텍스트가 정한다**(아래) |
+| PostToolUse(`Bash\|PowerShell`) | `... hook-postbash` | `git commit` 직후 done 작업에 SHA 자동 기록 + 하트비트. **오귀속 방지**: prebash 마커와 대조해 HEAD 가 실제로 변한 경우에만 기록(nothing to commit 등 실패 커밋이 직전 SHA 를 가로채지 않는다). 마커 부재 시(수동 sync-commit·부분 설치)는 종전대로 기록 |
 | Stop | `... hook-stop` | 자율 주행 게이트(아래) + 하트비트 |
 
 **게이트 처리 방식은 컨텍스트가 정한다** (`gate_decision`) — 금지 명령 게이트와 커밋 게이트가

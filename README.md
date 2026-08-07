@@ -260,8 +260,8 @@ CLAUDE.md 는 강제층이 아니므로, "특정 시점 무조건 실행" 규칙
 | 훅 | 강제하는 규칙 |
 |---|---|
 | SessionStart | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입해 진행을 복구합니다 |
-| PreToolUse(Bash) | `git push`·`--force`·`reset --hard`·`clean -f` 차단, **커밋 게이트**(하네스 검증 통과 없이는 `git commit` 차단) |
-| PostToolUse(Bash) | `git commit` 직후 done 작업에 커밋 SHA 자동 기록 + 하트비트. 커밋이 실제로 새 커밋을 만든 경우에만 기록합니다(nothing to commit 오귀속 방지) |
+| PreToolUse(`Bash\|PowerShell`) | `git push`·`--force`·`reset --hard`·`clean -f` 차단, **커밋 게이트**(하네스 검증 통과 없이는 `git commit` 차단) |
+| PostToolUse(`Bash\|PowerShell`) | `git commit` 직후 done 작업에 커밋 SHA 자동 기록 + 하트비트. 커밋이 실제로 새 커밋을 만든 경우에만 기록합니다(nothing to commit 오귀속 방지) |
 | Stop | 자율 주행 게이트 — 남은 작업이 있으면 세션 종료를 막고 다음 작업을 지시. 대화형 세션(`CLAUDE_AUTOHARNESS` 미설정)·일시정지·무진전 3회 초과 시에는 개입하지 않습니다 |
 
 **훅은 저장소 `.claude/settings.json` 이 로드될 때만 동작합니다.** 프로젝트 루트가 저장소 밖이면

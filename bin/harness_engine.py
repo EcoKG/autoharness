@@ -189,6 +189,10 @@ WIRING_INACTIVE = "inactive"               # 등록됐으나 한 번도 발화�
 HOOK_RUNTIME_KEYS = ("session_id", "hook_event_name", "transcript_path")
 # 발화 마커를 남기는 훅 op — SessionStart(brief)는 stdin 을 읽지 않으므로 제외한다
 MARKER_HOOK_OPS = ("hook-prebash", "hook-postbash", "hook-stop")
+# matcher 로 도구 범위가 정해지는 훅(hook-stop 은 Stop 이벤트라 도구 무관)
+MATCHER_SCOPED_OPS = ("hook-prebash", "hook-postbash")
+# 명령을 실행하는 도구 — 이 중 matcher 에서 빠진 것이 있으면 게이트가 우회된다
+COMMAND_TOOLS = ("Bash", "PowerShell")
 SETTINGS_FILES = ("settings.json", "settings.local.json")
 
 
@@ -223,7 +227,7 @@ def record_hook_fire(repo, op, data):
 
 
 def _iter_hook_commands(settings):
-    """settings 의 hooks 트리를 방어적으로 훑어 (이벤트, 명령) 쌍을 내놓는다."""
+    """settings 의 hooks 트리를 방어적으로 훑어 (이벤트, 명령, matcher) 를 내놓는다."""
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
     if not isinstance(hooks, dict):
         return
@@ -236,25 +240,39 @@ def _iter_hook_commands(settings):
             items = entry.get("hooks")
             if not isinstance(items, list):
                 continue
+            matcher = entry.get("matcher")
             for item in items:
                 if isinstance(item, dict) and isinstance(item.get("command"), str):
-                    yield event, item["command"]
+                    yield event, item["command"], (matcher if isinstance(matcher, str) else "")
 
 
 def registered_marker_hooks(repo):
     """저장소 설정에 등록된 하네스 훅 중 발화 마커를 남길 수 있는 op 목록(정렬).
 
     비어 있으면 이 저장소는 훅을 쓰지 않는 수동 운용 — 경고 대상이 아니다(오탐 금지)."""
-    found = set()
+    return sorted(registered_hook_matchers(repo))
+
+
+def registered_hook_matchers(repo):
+    """등록된 하네스 훅 op → 그 훅이 걸린 matcher 문자열(없으면 "")."""
+    found = {}
     for name in SETTINGS_FILES:
         settings = load_json(os.path.join(rp(repo)["claude_dir"], name))
-        for _event, command in _iter_hook_commands(settings):
+        for _event, command, matcher in _iter_hook_commands(settings):
             if "harness_engine" not in command:
                 continue
             for op in MARKER_HOOK_OPS:
                 if op in command:
-                    found.add(op)
-    return sorted(found)
+                    found.setdefault(op, matcher or "")
+    return found
+
+
+def matcher_covers(matcher, tool):
+    """matcher 문자열이 해당 도구를 덮는가 — 정확 일치 목록(`|`·`,` 구분) 기준."""
+    if not matcher:
+        return False
+    parts = [p.strip() for p in re.split(r"[|,]", matcher) if p.strip()]
+    return tool in parts
 
 
 def hook_wiring_status(repo, tracker=None):
@@ -280,7 +298,15 @@ def hook_wiring_status(repo, tracker=None):
     else:
         state = WIRING_INACTIVE
 
+    # matcher 커버리지 — 명령 실행 도구 중 게이트가 걸리지 않는 것이 있으면 드러낸다.
+    # matcher 가 "Bash" 뿐이면 다른 실행 도구로 게이트가 통째로 우회된다(실측).
+    matchers = registered_hook_matchers(repo)
+    uncovered = sorted({tool for tool in COMMAND_TOOLS
+                        for op, m in matchers.items()
+                        if op in MATCHER_SCOPED_OPS and not matcher_covers(m, tool)})
+
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
+            "matchers": matchers, "uncovered_tools": uncovered,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
     if state == WIRING_INACTIVE:
         info["warning"] = _wiring_warning(repo, info)

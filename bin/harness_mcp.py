@@ -232,10 +232,15 @@ def registry_upsert(project_id, repo, model, permission_args):
 # 훅 인터프리터: Windows 는 python, Linux/WSL 은 python3 (python 별칭이 없는 배포판이 많다)
 HOOK_PY = "python" if os.name == "nt" else "python3"
 
+# 명령을 실행하는 도구 전부. matcher 가 "Bash" 뿐이면 다른 실행 도구로 게이트가 통째로
+# 우회된다(실측: PowerShell 경로로 원격 반영·커밋 게이트가 무검사 통과). 훅 계약상
+# matcher 는 `|` 로 구분한 정확 일치 목록을 받는다.
+COMMAND_TOOL_MATCHER = "Bash|PowerShell"
+
 HOOK_DEFS = [
     ("SessionStart", None, HOOK_PY + " scripts/harness_engine.py brief"),
-    ("PreToolUse", "Bash", HOOK_PY + " scripts/harness_engine.py hook-prebash"),
-    ("PostToolUse", "Bash", HOOK_PY + " scripts/harness_engine.py hook-postbash"),
+    ("PreToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " scripts/harness_engine.py hook-prebash"),
+    ("PostToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " scripts/harness_engine.py hook-postbash"),
     ("Stop", None, HOOK_PY + " scripts/harness_engine.py hook-stop"),
 ]
 
@@ -243,6 +248,19 @@ PERMISSION_ALLOW = [
     "Bash(bash scripts/agent_harness.sh:*)",
     "Bash(" + HOOK_PY + " scripts/harness_engine.py:*)",
 ]
+
+
+def _is_harness_hook_item(item, op):
+    """settings 의 훅 항목이 이 하네스의 <op> 훅인가 — 항목 단위 판정."""
+    if not isinstance(item, dict):
+        return False
+    for h in item.get("hooks") or []:
+        if not isinstance(h, dict):
+            continue
+        cmd = h.get("command")
+        if isinstance(cmd, str) and "harness_engine" in cmd and op in cmd.split():
+            return True
+    return False
 
 
 def merge_settings(repo):
@@ -271,14 +289,23 @@ def merge_settings(repo):
         hooks = {}
         settings["hooks"] = hooks
 
-    merged_events, skipped_events = [], []
+    merged_events, skipped_events, migrated_events = [], [], []
     for event, matcher, command in HOOK_DEFS:
+        op = command.split()[-1]
         entries = hooks.get(event)
         if not isinstance(entries, list):
             entries = []
             hooks[event] = entries
-        if "harness_engine.py" in json.dumps(entries, ensure_ascii=False):
-            skipped_events.append(event)  # 이미 하네스 훅 존재 — 중복 추가 금지
+        # 항목 단위로 본다. 이벤트 전체를 json.dumps 해서 harness_engine 포함 여부만 보면
+        # matcher 가 낡아도 '이미 있음'으로 건너뛰어, 기존 설치가 영영 갱신되지 않는다.
+        existing = [e for e in entries if _is_harness_hook_item(e, op)]
+        if existing:
+            changed = False
+            for item in existing:
+                if matcher and item.get("matcher") != matcher:
+                    item["matcher"] = matcher     # 커버리지 확대 마이그레이션
+                    changed = True
+            (migrated_events if changed else skipped_events).append(event)
             continue
         item = {"hooks": [{"type": "command", "command": command}]}
         if matcher:
@@ -303,6 +330,7 @@ def merge_settings(repo):
     eng.atomic_write_json(settings_path, settings)
     return {"path": settings_path, "backup": backup_path,
             "merged_hooks": merged_events, "skipped_hooks": skipped_events,
+            "migrated_hooks": migrated_events, "matcher": COMMAND_TOOL_MATCHER,
             "added_permissions": added_permissions}
 
 
