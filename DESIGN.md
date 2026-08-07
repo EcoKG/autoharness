@@ -26,7 +26,7 @@ Claude Code 프롬프트로만 존재하던 "자율 주행 마이그레이션 �
 | 개발 사본(이 폴더) | `...\Claude Harnes\autoharness\` |
 | 설치 위치(스킬+코드) | `%USERPROFILE%\.claude\skills\autoharness\` (SKILL.md, bin\, templates\) |
 | 런타임 상태 | `%USERPROFILE%\.claude\autoharness\` (registry.json, logs\, watchdog.lock) |
-| 대상 저장소 내 생성물 | `.claude/agent_tracker.json`, `.claude/agent_tracker.example.json`, `.claude/harness-logs/`, `.claude/harness-state.json`, `.claude/harness-heartbeat.json`, `.claude/HARNESS_PAUSED`(플래그), `scripts/harness_engine.py`(엔진 사본), `scripts/agent_harness.sh`, `PROGRESS.md` |
+| 대상 저장소 내 생성물 | `.claude/agent_tracker.json`, `.claude/agent_tracker.example.json`, `.claude/harness-logs/`, `.claude/harness-state.json`, `.claude/harness-heartbeat.json`, `.claude/harness-hooks-seen.json`(훅 발화 마커), `.claude/HARNESS_PAUSED`(플래그), `scripts/harness_engine.py`(엔진 사본), `scripts/agent_harness.sh`, `PROGRESS.md` |
 | Python | 3.8+ (stdlib만 사용; Windows 는 `python`, Linux/WSL 은 `python3`) |
 | claude CLI | `%USERPROFILE%\.local\bin\claude.exe` 또는 PATH (2.1.183 실측; `-p`, `--model`, `--permission-mode`, `--dangerously-skip-permissions` 확인됨. `--max-turns` 미확인 → 사용 금지) |
 
@@ -74,8 +74,8 @@ autoharness/
 | `run [--task I] [--cmd C]` | build→test→lint 실행, 로그·요약·장부 갱신, PROGRESS.md 재렌더. 스테이지 실행 중 5분 주기 하트비트 자동 갱신 | 0/1/2/3/4 |
 | `sync-commit` | commit 없는 최신 done 작업에 HEAD SHA 기록 | 0 |
 | `render` | PROGRESS.md 재렌더 | 0 |
-| `brief` | 15줄 이하 상태 요약(SessionStart 훅용) — 교착 pending 이 있으면 경고 줄 추가 | 0 |
-| `status` | 장부 요약 JSON(`deadlocked` 목록 포함) | 0/2 |
+| `brief` | 15줄 이하 상태 요약(SessionStart 훅용) — 교착 pending·훅 배선 비활성이면 경고 줄 추가 | 0 |
+| `status` | 장부 요약 JSON(`deadlocked` 목록, `hooks` 배선 상태 포함) | 0/2 |
 | `heartbeat` | 하트비트 갱신 | 0 |
 | `model-recommend [--source S] [--target T] [--notes ...]` | 모델 추천 JSON | 0 |
 | `hook-prebash` | stdin=훅 JSON. 금지 명령 차단(exit 2+stderr), 커밋 게이트, 하트비트 | 0/2 |
@@ -206,6 +206,26 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 5. **진전 가드**: 장부 파일 해시가 직전 블록 때와 같으면 `stop_blocks++`, 다르면 1로 리셋.
    `stop_blocks >= 3` 이면 exit 0 (제자리걸음 — 토큰 방어를 위해 세션을 놓아주고 워치독에 맡긴다).
 6. 그 외 → stdout 에 `{"decision":"block","reason":"다음 작업 <id> <title> 진행 지시…"}` 출력, exit 0.
+
+**훅 배선 비활성 감지** (경고 전용 — 주행을 막지 않는다):
+
+세션 프로젝트 루트가 저장소 밖(상위 폴더)이면 저장소 `.claude/settings.json` 이 로드되지 않아
+훅 4종이 전부 조용히 죽는다. 커밋 게이트·금지 명령 차단·Stop 게이트가 모두 무력인데 주행은
+정상처럼 보이는 **조용한 실패**라, 엔진이 스스로 드러낸다.
+
+- **발화 마커**: `hook-prebash`/`hook-postbash`/`hook-stop` 은 stdin 페이로드에 Claude Code
+  런타임 필드(`session_id`·`hook_event_name`·`transcript_path`)가 있을 때만
+  `.claude/harness-hooks-seen.json` 에 `{op: {ts, event, session_id}}` 를 남긴다.
+  **하트비트의 `source=="hook"` 은 판정 근거가 될 수 없다** — 사람이 손으로 stdin 을 먹여도
+  같은 기록이 남아 배선이 끊긴 저장소를 정상으로 오판한다(실측 확인된 허점).
+- **판정**(`hook_wiring_status`): 저장소 설정(`settings.json` + `settings.local.json`)에
+  마커를 남길 수 있는 하네스 훅이 등록돼 있는가 × 마커가 하나라도 있는가 →
+  `not_registered`(수동 운용 — **경고 대상 아님**) / `active` / `inactive`(경고).
+  SessionStart(`brief`)는 stdin 을 읽지 않으므로 등록 집계에서 제외한다 — 영구 오탐 방지.
+- **보조 신호**: `done` 인데 커밋 SHA 가 비어 있는 작업 수(PostToolUse 미발화의 흔적)를 함께
+  보고한다. 판정 자체는 마커만으로 내린다.
+- **출력**: `run` 시작 시 stderr 경고 1줄(종료 코드·주행에는 영향 없음), `status` 의 `hooks`
+  필드, `brief` 는 `inactive` 일 때만 경고 줄(정상·미등록 저장소에는 잡음을 더하지 않는다).
 
 ## 9. 모델 추천 휴리스틱 (추천은 도구가, 결정은 사용자가)
 

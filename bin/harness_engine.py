@@ -69,6 +69,7 @@ def rp(repo):
         "logs": os.path.join(dc, "harness-logs"),
         "state": os.path.join(dc, "harness-state.json"),
         "heartbeat": os.path.join(dc, "harness-heartbeat.json"),
+        "hooks_seen": os.path.join(dc, "harness-hooks-seen.json"),
         "paused_flag": os.path.join(dc, "HARNESS_PAUSED"),
         "progress": os.path.join(repo, "PROGRESS.md"),
     }
@@ -166,6 +167,137 @@ def write_heartbeat(repo, source):
         atomic_write_json(rp(repo)["heartbeat"], {"ts": now_iso(), "pid": os.getpid(), "source": source})
     except Exception:
         pass
+
+
+# ------------------------------------------------------- 훅 배선 감지 (경고 전용)
+#
+# 세션 프로젝트 루트가 저장소 밖(상위 폴더)이면 저장소의 .claude/settings.json 이
+# 로드되지 않아 훅 4종이 전부 조용히 비활성화된다 — 커밋 게이트·금지 명령 차단·
+# Stop 게이트가 모두 무력인데 주행은 정상처럼 보인다. 아래 판정은 그 상태를 드러낸다.
+#
+# 판정은 '발화 마커' 기준이다. 하트비트의 source=="hook" 은 근거가 될 수 없다 —
+# 사람이 손으로 stdin 을 먹여도(echo JSON | harness_engine.py hook-prebash) 같은
+# 기록이 남아 배선이 끊긴 저장소를 정상으로 오판한다. 실제 훅 호출에는 Claude Code
+# 런타임이 채우는 필드(session_id 등)가 있으므로 그때만 마커를 남긴다.
+
+WIRING_NOT_REGISTERED = "not_registered"   # 훅 미등록(수동 운용) — 경고 대상 아님
+WIRING_ACTIVE = "active"                   # 등록 + 실제 발화 기록 있음
+WIRING_INACTIVE = "inactive"               # 등록됐으나 한 번도 발화한 적 없음 — 경고
+
+# Claude Code 가 훅 stdin 페이로드에 채우는 필드 — 사람이 흉내 낸 호출에는 없다
+HOOK_RUNTIME_KEYS = ("session_id", "hook_event_name", "transcript_path")
+# 발화 마커를 남기는 훅 op — SessionStart(brief)는 stdin 을 읽지 않으므로 제외한다
+MARKER_HOOK_OPS = ("hook-prebash", "hook-postbash", "hook-stop")
+SETTINGS_FILES = ("settings.json", "settings.local.json")
+
+
+def hook_payload_is_genuine(data):
+    """훅 페이로드가 Claude Code 런타임에서 온 것인가 — 런타임 전용 필드 유무로 본다."""
+    if not isinstance(data, dict):
+        return False
+    for k in HOOK_RUNTIME_KEYS:
+        v = data.get(k)
+        if isinstance(v, str) and v.strip():
+            return True
+    return False
+
+
+def record_hook_fire(repo, op, data):
+    """실제 훅 호출일 때만 `.claude/harness-hooks-seen.json` 에 발화 시각을 남긴다.
+
+    반환값은 기록 여부(bool). 어떤 실패도 훅을 죽이지 않는다(fail-open)."""
+    if not hook_payload_is_genuine(data):
+        return False
+    try:
+        path = rp(repo)["hooks_seen"]
+        seen = load_json(path, {})
+        if not isinstance(seen, dict):
+            seen = {}
+        seen[op] = {"ts": now_iso(), "event": data.get("hook_event_name"),
+                    "session_id": data.get("session_id")}
+        atomic_write_json(path, seen)
+        return True
+    except Exception:
+        return False
+
+
+def _iter_hook_commands(settings):
+    """settings 의 hooks 트리를 방어적으로 훑어 (이벤트, 명령) 쌍을 내놓는다."""
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    if not isinstance(hooks, dict):
+        return
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            items = entry.get("hooks")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get("command"), str):
+                    yield event, item["command"]
+
+
+def registered_marker_hooks(repo):
+    """저장소 설정에 등록된 하네스 훅 중 발화 마커를 남길 수 있는 op 목록(정렬).
+
+    비어 있으면 이 저장소는 훅을 쓰지 않는 수동 운용 — 경고 대상이 아니다(오탐 금지)."""
+    found = set()
+    for name in SETTINGS_FILES:
+        settings = load_json(os.path.join(rp(repo)["claude_dir"], name))
+        for _event, command in _iter_hook_commands(settings):
+            if "harness_engine" not in command:
+                continue
+            for op in MARKER_HOOK_OPS:
+                if op in command:
+                    found.add(op)
+    return sorted(found)
+
+
+def hook_wiring_status(repo, tracker=None):
+    """훅 배선 상태 판정 — 경고만 하고 주행은 막지 않는다."""
+    registered = registered_marker_hooks(repo)
+    seen = load_json(rp(repo)["hooks_seen"], {})
+    if not isinstance(seen, dict):
+        seen = {}
+    fired = sorted(k for k, v in seen.items()
+                   if k in MARKER_HOOK_OPS and isinstance(v, dict) and v.get("ts"))
+    last_fire = max((seen[k].get("ts") or "") for k in fired) if fired else None
+
+    if tracker is None:
+        tracker = load_tracker(repo, required=False)
+    tasks = (tracker or {}).get("tasks") or []
+    done = [t for t in tasks if isinstance(t, dict) and t.get("status") == "done"]
+    no_commit = [t for t in done if not t.get("commit")]
+
+    if not registered:
+        state = WIRING_NOT_REGISTERED
+    elif fired:
+        state = WIRING_ACTIVE
+    else:
+        state = WIRING_INACTIVE
+
+    info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
+            "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
+    if state == WIRING_INACTIVE:
+        info["warning"] = _wiring_warning(repo, info)
+    return info
+
+
+def _wiring_warning(repo, info):
+    # 보조 신호: done 인데 commit 이 비어 있음 = PostToolUse 미발화의 흔적
+    extra = ""
+    if info["done_total"] and info["done_without_commit"] == info["done_total"]:
+        extra = (" 보조 신호: done %d건 전부 커밋 SHA 기록 없음(PostToolUse 미발화 흔적)."
+                 % info["done_total"])
+    return ("[AutoHarness 경고] 훅 배선 비활성 의심 — 저장소 설정에 하네스 훅(%s)이 등록돼 "
+            "있으나 실제 발화 기록이 한 번도 없습니다. 세션 프로젝트 루트가 저장소 밖이면 "
+            ".claude/settings.json 이 로드되지 않아 커밋 게이트·금지 명령 차단·Stop 게이트가 "
+            "모두 무력화됩니다 — 저장소 루트(%s)에서 claude 를 실행하십시오.%s "
+            "(경고일 뿐 주행은 계속합니다)"
+            % (", ".join(info["registered"]), rp(repo)["repo"], extra))
 
 
 # ---------------------------------------------------------------- 스택 실측
@@ -521,6 +653,11 @@ def cmd_run(a):
     tracker = load_tracker(a.repo)
     max_att = tracker.get("max_attempts", 5)
 
+    # 훅 배선이 끊겼으면 경고만 하고 계속 진행한다(fail-open — 주행을 막지 않는다)
+    wiring = hook_wiring_status(a.repo, tracker)
+    if wiring["warning"]:
+        sys.stderr.write(wiring["warning"] + "\n")
+
     if a.task:
         task = find_task(tracker, a.task)
         if task is None:
@@ -680,6 +817,10 @@ def cmd_brief(a):
     print("목표: %s" % tracker.get("objective", ""))
     print("현황: done %d/%d, in_progress %d, failed %d, blocked %d, pending %d"
           % (c["done"], len(tracker["tasks"]), c["in_progress"], c["failed"], c["blocked"], c["pending"]))
+    # 배선이 끊겼을 때만 알린다 — 정상·미등록 저장소에 잡음을 더하지 않는다(brief 는 15줄 이하)
+    wiring = hook_wiring_status(a.repo, tracker)
+    if wiring["warning"]:
+        print(wiring["warning"])
     if dead:
         print("교착 pending %d건(의존이 미존재·blocked·순환 — 영영 실행 불가): %s"
               % (len(dead), ", ".join(t["id"] for t in dead)))
@@ -700,7 +841,8 @@ def cmd_status(a):
     print(json.dumps({"project": tracker.get("project"), "model": tracker.get("model"),
                       "counts": status_counts(tracker), "next": eligible_next(tracker),
                       "deadlocked": [t["id"] for t in deadlocked_pending(tracker)],
-                      "heartbeat": hb, "paused": os.path.exists(rp(a.repo)["paused_flag"])},
+                      "heartbeat": hb, "hooks": hook_wiring_status(a.repo, tracker),
+                      "paused": os.path.exists(rp(a.repo)["paused_flag"])},
                      ensure_ascii=False, indent=2))
 
 
@@ -846,6 +988,7 @@ def cmd_hook_prebash(a):
         data = read_hook_input()
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
+        record_hook_fire(a.repo, "hook-prebash", data)
         for pat, msg in DENY_PATTERNS:
             if pat.search(command):
                 sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (msg, command[:200]))
@@ -878,6 +1021,7 @@ def cmd_hook_postbash(a):
         data = read_hook_input()
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
+        record_hook_fire(a.repo, "hook-postbash", data)
         if GIT_COMMIT_RE.search(command):
             sync_commit(a.repo, require_new_head=True)
     except Exception:
@@ -888,6 +1032,7 @@ def cmd_hook_postbash(a):
 def cmd_hook_stop(a):
     try:
         write_heartbeat(a.repo, "hook")
+        record_hook_fire(a.repo, "hook-stop", read_hook_input())
         if os.environ.get("CLAUDE_AUTOHARNESS") != "1":
             sys.exit(0)
         if os.path.exists(rp(a.repo)["paused_flag"]):

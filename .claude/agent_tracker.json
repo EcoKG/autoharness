@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:13:11.944839+00:00",
+  "updated_at": "2026-08-07T03:43:53.711473+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -286,6 +286,36 @@
       "commit": null,
       "started_at": "2026-08-07T03:11:38.079831+00:00",
       "finished_at": "2026-08-07T03:12:14.532440+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "detect-inactive-hooks",
+      "title": "훅 비활성 상태 무감지 결함 — 세션 프로젝트 루트가 저장소 밖(상위 폴더)이면 저장소의 .claude/settings.json 이 로드되지 않아 훅 4종이 전부 조용히 비활성화되는데 아무도 감지하지 못한다. 이번 세션 실측 증거: 장부 17건 전부 commit=null(PostToolUse 미발화), git push 가 차단 없이 통과, 반면 엔진에 stdin 을 직접 먹이면 정상 차단(exit 2) — 즉 엔진이 아니라 배선이 끊긴 상태이고 커밋 게이트·금지 명령 차단·Stop 게이트가 모두 무력인데 주행은 정상처럼 보인다. 요구사항: ① 감지 근거는 '저장소에 harness_engine 훅이 등록돼 있음' AND '하트비트에 source=hook 기록이 한 번도 없음'(훅이 발화하면 write_heartbeat(source=hook)가 남는다) ② run 시작 시 stderr 경고, status/brief 출력에 상태 필드 추가 ③ 훅을 등록하지 않은 저장소(수동 운용)는 경고 대상이 아니다 — 오탐 금지 ④ 경고만 하고 주행은 막지 않는다(훅 fail-open 원칙 유지) ⑤ 감지 로직·오탐 경계·출력 반영을 tests/ 회귀 테스트로 고정",
+      "path": "bin/harness_engine.py",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/detect-inactive-hooks-20260807T034305Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T03:43:05.504690+00:00",
+      "finished_at": "2026-08-07T03:43:53.711473+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "detect-dead-watchdog",
+      "title": "워치독 '등록만 되고 실행 안 됨'을 감지하지 못하는 결함 — 이 PC 에서 실측: 작업은 Ready 로 등록돼 있으나 스케줄러가 매 기동을 0x800710E0(요청 거부)로 반려해 설치 이후 단 한 번도 실행되지 않았다. 증거는 logs/watchdog.log 파일 자체의 부재와 레지스트리 전 프로젝트 last_launch=null 이었고, 그 사이 status/watchdog_status 는 '등록됨(Ready)'만 보고해 정상처럼 보였다. 즉 자동 부활 보장이 두 프로젝트(autoharness·LieDetectorOCR)에서 내내 무효였는데 아무도 몰랐다. 요구사항: ① watchdog_status 가 스케줄러 등록 여부와 '실제 실행 이력'을 분리해 보고하고, 등록됨 + (watchdog.log 부재 또는 마지막 기록이 기대 주기의 3배 이상 경과)면 명시적으로 경고할 것 ② 스케줄러의 LastTaskResult 가 0 이 아니면 코드와 함께 보고할 것(0x800710E0=거부, 0x41303=미실행 등 흔한 값은 해석 문구 포함) ③ 레지스트리 last_launch 가 전 프로젝트 null 인 상태를 '한 번도 기동된 적 없음' 신호로 함께 제시 ④ 감지·경고 로직과 오탐 경계(설치 직후 아직 주기가 안 온 경우는 경고 대상 아님)를 tests/ 회귀 테스트로 고정",
+      "path": "bin/harness_mcp.py",
+      "deps": [],
+      "priority": 15,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]
