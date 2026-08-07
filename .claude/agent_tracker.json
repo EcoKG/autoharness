@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:04:49.216016+00:00",
+  "updated_at": "2026-08-07T03:09:32.601514+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -256,6 +256,21 @@
       "commit": null,
       "started_at": null,
       "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "skill-routing-hardening",
+      "title": "라우팅 개정의 후속 빈틈 보강(적대 검증 10에이전트 실측 도출) — ① 안전: 폴백으로 도달한 init 은 훅·권한 우회·워치독을 설치하는 비가역 변경이므로 고지 후 진행(명시 요청은 종전대로), init ⓪단계에 장부 실존 확인 게이트 추가 ② 조용한 실패 차단: resume 0단계에 task_add 적재를 명시하고, 신규 요청 진입 직후 next 가 곧바로 exit 3 이면 정상 종료가 아니라 적재 누락으로 규정 ③ 대상 저장소 절대경로 확정을 resume 절에도 명시(\"이 프로젝트도\" 요청에서 현재 cwd 장부 오독 방지) ④ 오분기 해소: resume vs resume-project 를 HARNESS_PAUSED 플래그로 분기, status 행에 진단성 질의 포함, ops 행 신설(watchdog_uninstall·model_set·task_set — \"그만 돌려\"가 resume 으로 뒤집히는 정반대 오분기 차단) ⑤ 원칙 3(direct) 명명 및 원칙 3→2 평가 순서 고정, 단계 수 미상 요청(버그·CI 수정)의 승격 기준, git push 훅 차단으로 배포는 검증·로컬 커밋까지라는 한계선 명시 + 회귀 테스트 확충",
+      "path": "skill/SKILL.md",
+      "deps": [],
+      "priority": 25,
+      "status": "done",
+      "attempts": 1,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/skill-routing-hardening-20260807T030855Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T03:07:57.624929+00:00",
+      "finished_at": "2026-08-07T03:09:32.601514+00:00",
       "test_cmd": null
     }
   ]

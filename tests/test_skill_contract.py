@@ -99,8 +99,10 @@ class ModeRoutingContractTest(unittest.TestCase):
     def setUp(self):
         self.text = read_skill()
 
-    def test_all_four_modes_present_in_table(self):
-        for mode in ("**init**", "**resume**", "**status**", "**pause / resume-project**"):
+    def test_all_modes_present_in_table(self):
+        # pause 와 resume-project 는 한 칸에 묶여 있으면 발화만으로 갈리지 않아 행을 분리했다
+        for mode in ("**init**", "**resume**", "**status**", "**pause**",
+                     "**resume-project**", "**ops**"):
             self.assertIn(mode, self.text, "모드 표에 누락: %s" % mode)
 
     def test_outcome_phrased_requests_are_routed(self):
@@ -134,6 +136,77 @@ class ModeRoutingContractTest(unittest.TestCase):
     def test_reinit_over_existing_ledger_is_warned(self):
         # 장부가 있는데 init 재실행하면 진행 상태가 날아간다는 경고
         self.assertRegex(self.text, r"장부가 있는데 init.*날아간다")
+
+
+class RoutingHardeningTest(unittest.TestCase):
+    """적대 검증(독립 에이전트 10명)이 찾아낸 후속 빈틈에 대한 회귀 고정.
+
+    라우팅을 의도 기반으로 넓히면서 새로 생긴 위험 — 특히 폴백이 무조건 init 으로
+    떨어져 훅·권한 우회·워치독이 비가역 설치되는 문제 — 를 문서가 계속 막는지 검사한다.
+    """
+
+    def setUp(self):
+        self.text = read_skill()
+
+    def test_fallback_init_requires_notice(self):
+        # 최대 위험: 확신 없는 폴백이 비가역 환경 변경(훅·bypass·스케줄러)을 설치하는 것
+        self.assertRegex(self.text, r"폴백으로\s*\n?\s*도달한 init 은 즉시 실행하지 않는다")
+        self.assertIn("비가역", self.text)
+        self.assertIn("고지", self.text)
+
+    def test_init_has_ledger_existence_gate(self):
+        idx = self.text.find("### ⓪")
+        self.assertGreater(idx, 0, "init ⓪ 장부 실존 확인 단계가 없습니다")
+        gate = self.text[idx:idx + 400]
+        self.assertIn("agent_tracker.json", gate)
+        self.assertIn("중단", gate)
+
+    def test_resume_has_task_add_step_zero(self):
+        idx = self.text.find("## 모드 2: resume")
+        self.assertGreater(idx, 0)
+        section = self.text[idx:self.text.find("## 모드 3", idx)]
+        self.assertRegex(section, r"0\.\s*\*\*신규 결과 요청")
+        self.assertIn("task_add", section)
+
+    def test_exit3_right_after_entry_is_treated_as_missing_load(self):
+        # 조용한 실패가 옮겨간 자리: 적재 없이 next → exit 3 → "완료" 오보고
+        self.assertRegex(self.text, r"첫 `next` 가 곧바로 3 이면 정상 종료가 아니라")
+
+    def test_direct_path_is_named_and_ordered(self):
+        section = self.text[self.text.find("모드 판정 원칙"):]
+        self.assertIn("direct", section)
+        self.assertRegex(section, r"평가 순서 고정")
+        # direct 는 금지된 '맨손'이 아니라는 구분이 명시돼야 한다
+        self.assertRegex(section, r"4번이 금지하는 \"맨손\"이 아니다")
+
+    def test_ops_row_exists_for_teardown_requests(self):
+        # "그만 돌려"(영구 해제)가 폴백을 타고 resume 으로 뒤집히면 정반대 오분기다
+        self.assertIn("**ops**", self.text)
+        for tool in ("watchdog_uninstall", "model_set", "task_set"):
+            self.assertIn(tool, self.text, "ops 행에 %s 누락" % tool)
+
+    def test_status_row_covers_diagnostic_queries(self):
+        self.assertRegex(self.text, r"왜 멈췄어")
+        self.assertRegex(self.text, r"읽기만 하는 요청")
+
+    def test_resume_vs_resume_project_disambiguated_by_flag(self):
+        section = self.text[self.text.find("모드 판정 원칙"):]
+        self.assertIn("HARNESS_PAUSED", section)
+        self.assertRegex(section, r"없으면 \*\*resume\*\*")
+
+    def test_target_repo_must_be_resolved_first(self):
+        self.assertRegex(self.text, r"대상 저장소를? (절대경로를 )?먼저 확정")
+        self.assertRegex(self.text, r"경로를? (특정|확정)하기 전에는 어떤 도구도 호출하지 않는다")
+
+    def test_deploy_boundary_is_stated(self):
+        # description 이 "배포 준비"를 트리거로 광고하므로 한계선이 없으면 오보고가 난다
+        self.assertRegex(self.text, r"배포 완료로 (\*\*)?오보고하지 않는다")
+        self.assertIn("git push", self.text)
+
+    def test_push_is_actually_blocked_by_engine(self):
+        # 문서의 한계선 주장이 엔진 차단 규칙과 실제로 일치하는지 대조
+        self.assertTrue(any(pat.search("git push origin main") for pat, _ in eng.DENY_PATTERNS),
+                        "엔진이 git push 를 차단하지 않는데 문서는 차단된다고 적혀 있습니다")
 
 
 class ExitCodeTableTest(unittest.TestCase):

@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-07T03:04:49.238537+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-07T03:09:32.635533+00:00
 
-## 현황: done 14 / 15  (in_progress 0, failed 0, blocked 0, pending 1)
+## 현황: done 15 / 16  (in_progress 0, failed 0, blocked 0, pending 1)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -14,6 +14,7 @@
 | tests-engine-hooks | 엔진 훅 단위 테스트 구축 — hook-prebash(금지 명령 차단·커밋 게이트)·hook-stop(6단계 게이트·진전 가드)·hook-postbash(SHA 동기화)를 stdin JSON 실측으로 검증하는 tests/test_engine_hooks.py 작성. 임시 샌드박스 저장소 사용, 실제 저장소·사용자 상태 오염 금지 | ✅ done | 0/5 | - | - |
 | docs-skill-routing-sync | 라우팅 계약 문서 반영 — DESIGN.md §11(스킬 절)에 모드 판정 원칙·폴백 규칙을 계약으로 명시하고, README 사용 흐름에 "하네스가 이미 있는 저장소에 새 목표를 줄 때는 init 재실행이 아니라 task_add + resume" 경로를 추가 | ✅ done | 0/5 | - | - |
 | fix-add-task-self-dep | add-task 자기/순환 의존 결함 수정 — cmd_add_task 의 `d != a.id` 조건이 자기 의존을 오히려 허용해 영구 교착 작업이 생김. 자기 의존·순환 의존을 add-task 시점에 거부하고, next/brief/status 가 '충족 불가능한 pending(교착)'을 구분해 알리도록 개선 + tests/ 회귀 테스트 | ✅ done | 0/5 | - | - |
+| skill-routing-hardening | 라우팅 개정의 후속 빈틈 보강(적대 검증 10에이전트 실측 도출) — ① 안전: 폴백으로 도달한 init 은 훅·권한 우회·워치독을 설치하는 비가역 변경이므로 고지 후 진행(명시 요청은 종전대로), init ⓪단계에 장부 실존 확인 게이트 추가 ② 조용한 실패 차단: resume 0단계에 task_add 적재를 명시하고, 신규 요청 진입 직후 next 가 곧바로 exit 3 이면 정상 종료가 아니라 적재 누락으로 규정 ③ 대상 저장소 절대경로 확정을 resume 절에도 명시("이 프로젝트도" 요청에서 현재 cwd 장부 오독 방지) ④ 오분기 해소: resume vs resume-project 를 HARNESS_PAUSED 플래그로 분기, status 행에 진단성 질의 포함, ops 행 신설(watchdog_uninstall·model_set·task_set — "그만 돌려"가 resume 으로 뒤집히는 정반대 오분기 차단) ⑤ 원칙 3(direct) 명명 및 원칙 3→2 평가 순서 고정, 단계 수 미상 요청(버그·CI 수정)의 승격 기준, git push 훅 차단으로 배포는 검증·로컬 커밋까지라는 한계선 명시 + 회귀 테스트 확충 | ✅ done | 1/5 | - | - |
 | fix-sync-commit-guard | sync_commit 오귀속 방지 — git commit 이 실패해 HEAD 가 변하지 않은 경우(예: nothing to commit)에도 직전 커밋 SHA 를 최신 done 작업에 기록하는 결함. hook-postbash/sync_commit 에서 HEAD 변화(또는 커밋 성공)를 검증한 뒤에만 기록하도록 수정 + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | refresh-loop-engine-routing | 주행용 엔진 사본 재갱신 — build_parser() 추출이 반영된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작 확인(개발 원본과 주행 사본의 드리프트 해소) | ⏳ pending | 0/5 | - | - |
 | fix-model-recommend-lang | model_recommend 언어 전환 오탐 수정 — 스택명이 비ASCII(한글 등)면 lang() 이 빈 문자열을 반환해 '언어 간 이식(+3)' 이 잘못 가산됨(이번 init 에서 실측). 한쪽 언어 토큰이 비어 있으면 가산하지 않도록 수정 + 회귀 테스트 | ✅ done | 0/5 | - | - |
