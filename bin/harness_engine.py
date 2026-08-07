@@ -138,10 +138,32 @@ def load_json(path, default=None):
         return default
 
 
+TRACKER_OK, TRACKER_MISSING, TRACKER_CORRUPT = "ok", "missing", "corrupt"
+
+
+def load_tracker_checked(repo):
+    """(장부, 상태) — 상태는 ok|missing|corrupt.
+
+    **부재와 파손을 구분한다.** 둘 다 None 으로 뭉개면 장부가 깨졌을 때 커밋 게이트도
+    Stop 게이트도 '장부 없음(수동 운용)'으로 보고 조용히 통과한다 — 게이트가 통째로
+    무력해지는데 아무 신호도 없다(적대 검증에서 확인)."""
+    path = rp(repo)["tracker"]
+    if not os.path.exists(path):
+        return None, TRACKER_MISSING
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None, TRACKER_CORRUPT
+    if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+        return None, TRACKER_CORRUPT
+    return data, TRACKER_OK
+
+
 def load_tracker(repo, required=True):
-    t = load_json(rp(repo)["tracker"])
+    t, _state = load_tracker_checked(repo)
     if t is None and required:
-        die("장부(.claude/agent_tracker.json)가 없습니다. 먼저 init 을 실행하십시오.")
+        die("장부(.claude/agent_tracker.json)가 없거나 파손됐습니다. 먼저 init 을 실행하십시오.")
     return t
 
 
@@ -166,8 +188,10 @@ def die(msg, code=EXIT_USAGE):
 def write_heartbeat(repo, source):
     try:
         atomic_write_json(rp(repo)["heartbeat"], {"ts": now_iso(), "pid": os.getpid(), "source": source})
-    except Exception:
-        pass
+    except Exception as e:
+        # 삼키되 조용히는 아니다 — 하트비트가 안 써지면 워치독의 이중 기동 방지 근거가
+        # 사라지는데, 종전에는 아무 흔적도 남지 않아 알 방법이 없었다.
+        sys.stderr.write("[AutoHarness] 하트비트 기록 실패(%s): %r\n" % (source, e))
 
 
 # ------------------------------------------------------- 훅 배선 감지 (경고 전용)
@@ -770,7 +794,7 @@ def cmd_run(a):
         state = load_state(a.repo)
         state["last_run"] = {"task": task["id"], "ok": True, "ts": now_iso()}
         save_state(a.repo, state)
-        render(a.repo)
+        render_safe(a.repo)
         print("HARNESS RESULT task=%s exit=0 통과 (다음: 커밋 후 다음 작업) log=%s" % (task["id"], rel_log))
         sys.exit(EXIT_OK)
 
@@ -781,7 +805,7 @@ def cmd_run(a):
     if task["attempts"] >= max_att:
         task["status"] = "blocked"
         save_tracker(a.repo, tracker)
-        render(a.repo)
+        render_safe(a.repo)
         print("HARNESS RESULT task=%s exit=4 시도 한도 도달(%d/%d) — 작업 봉인(blocked). "
               "남은 작업이 있으면 다음 작업 계속, 없으면 보고 log=%s"
               % (task["id"], task["attempts"], max_att, rel_log))
@@ -826,6 +850,19 @@ def render(repo):
         + "\n".join(rows) + "\n"
     )
     atomic_write_text(rp(repo)["progress"], text)
+
+
+def render_safe(repo):
+    """run 의 마무리 렌더 — 실패가 **검증 결과 판정을 뒤집지 않게** 격리한다.
+
+    PROGRESS.md 는 장부에서 파생된 표시물이다. 그 쓰기가 실패했다고 통과한 검증이
+    실패로 보고되면(예외가 전파돼 비정상 종료) 결과가 거짓이 된다."""
+    try:
+        render(repo)
+        return True
+    except Exception as e:
+        sys.stderr.write("[AutoHarness] PROGRESS.md 렌더 실패(검증 결과에는 영향 없음): %r\n" % (e,))
+        return False
 
 
 def cmd_render(a):
@@ -1355,7 +1392,11 @@ def emit_gate(decision, reason, command=""):
 
 def commit_gate_reason(repo):
     """커밋 게이트가 걸리는 사유 — 통과면 None."""
-    tracker = load_tracker(repo, required=False)
+    tracker, state = load_tracker_checked(repo)
+    if state == TRACKER_CORRUPT:
+        # 파손을 '장부 없음(수동 운용)'으로 보고 통과시키면 게이트가 조용히 사라진다
+        return ("장부가 파손돼 검증 상태를 확인할 수 없습니다: %s — 복구 후 커밋하십시오."
+                % rp(repo)["tracker"])
     if not tracker or not tracker.get("tasks"):
         return None
     if os.path.exists(rp(repo)["paused_flag"]):
