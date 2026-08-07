@@ -319,7 +319,12 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
 2.5. 저장소에 `.claude/HARNESS_PAUSED` 플래그 존재 → 스킵 (MCP 없이 플래그만 만든 폴백
    일시정지도 존중한다).
 3. 장부 읽기 실패/부재 → error 처리(연속 오류 집계).
-4. 진행 가능 작업 없음: 전부 done → `completed`. blocked 존재 → `needs_human`. → 스킵.
+4. 진행 가능 작업 없음 — **세 상태를 구분한다**(뭉개면 자동 부활이 조용히 무효가 된다):
+   - **장부에 작업이 아예 없음**(init 직후) → 전이하지 않고 스킵. `completed` 로 봉인하면
+     이후 작업을 적재해도 1단계에서 `status!=active` 로 스킵돼 다시는 기동하지 않는다.
+   - **blocked 또는 교착 pending 존재** → `needs_human`. 교착 pending 은 엔진이
+     `next`/`brief`/`status` 에서 1급 개념으로 다루므로 종점 판정도 같은 기준을 쓴다.
+   - **그 외(전부 done)** → `completed`.
 5. 하트비트가 `stale_minutes` 이내 → 스킵 (세션 살아 있음 — 이중 기동 방지). run 이
    스테이지 실행 중 5분 주기로 하트비트를 갱신하므로(엔진 HeartbeatPump) timeout_sec
    상한(기본 1800초)까지 걸리는 장시간 검증도 사망으로 오판하지 않는다.

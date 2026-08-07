@@ -443,8 +443,24 @@ def handle_project(proj, settings, runtime_dir, probe_sec, dry_run, log):
     nxt = eng.eligible_next(tracker)
     if nxt is None:
         counts = eng.status_counts(tracker)
-        if counts.get("blocked"):
-            new_status, detail = "needs_human", "blocked %d건 — 사람 판단 필요" % counts["blocked"]
+        tasks = tracker.get("tasks") or []
+        # ① 작업이 아직 적재되지 않은 상태(init 직후 빈 장부)를 '완료'로 마감하면 안 된다.
+        #    init 과 첫 task_add 사이에 틱이 한 번만 돌아도 프로젝트가 봉인돼, 이후 작업을
+        #    넣어도 워치독이 status!=active 로 스킵해 다시는 기동하지 않는다(실측).
+        if not tasks:
+            log(name, "skip", "장부에 작업이 아직 없음 — 적재 대기(완료 전이하지 않음)")
+            return False
+        # ② 교착 pending(의존이 미존재·순환이라 영영 실행 불가)은 '완료'가 아니라 사람 판단이다.
+        #    엔진은 next/brief/status 에서 1급 개념으로 다루는데 종점 판정만 이를 보지 않았다.
+        dead = eng.deadlocked_pending(tracker)
+        if counts.get("blocked") or dead:
+            reasons = []
+            if counts.get("blocked"):
+                reasons.append("blocked %d건" % counts["blocked"])
+            if dead:
+                reasons.append("교착 pending %d건(%s)"
+                               % (len(dead), ", ".join(t["id"] for t in dead[:3])))
+            new_status, detail = "needs_human", " / ".join(reasons) + " — 사람 판단 필요"
         else:
             new_status, detail = "completed", "진행 가능 작업 없음(done %d건) — 완료 전이" % counts.get("done", 0)
         if dry_run:

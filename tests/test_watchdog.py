@@ -239,6 +239,38 @@ class HandleProjectTest(unittest.TestCase):
         self.assertTrue(self.handle(proj, dry_run=False))
         self.assertEqual(proj["status"], "needs_human")
 
+    def test_step4_empty_tracker_does_not_complete(self):
+        """init 직후 빈 장부를 '완료' 로 봉인하면 이후 작업을 넣어도 영영 안 뜬다(실측 결함)."""
+        self.write_tracker([])
+        proj = self.project()
+        self.assertFalse(self.handle(proj, dry_run=False))
+        self.assertEqual(proj["status"], "active", "빈 장부가 completed 로 봉인됐습니다")
+        self.assertIn("적재 대기", self.msgs[0][2])
+
+    def test_step4_deadlocked_pending_is_needs_human(self):
+        """엔진이 1급 개념으로 다루는 교착 pending 을 종점 판정도 봐야 한다."""
+        self.write_tracker([dict(eng.new_task("t1", "교착 작업"), deps=["없는작업"])])
+        proj = self.project()
+        self.assertTrue(self.handle(proj, dry_run=False))
+        self.assertEqual(proj["status"], "needs_human")
+        self.assertIn("교착", self.msgs[0][2])
+
+    def test_step4_deadlock_with_done_still_needs_human(self):
+        self.write_tracker([
+            dict(eng.new_task("t1", "완료"), status="done"),
+            dict(eng.new_task("t2", "교착"), deps=["없는작업"]),
+        ])
+        proj = self.project()
+        self.assertTrue(self.handle(proj, dry_run=False))
+        self.assertEqual(proj["status"], "needs_human")
+
+    def test_step4_all_done_still_completes(self):
+        """대조군 — 진짜 완료는 종전대로 completed 다."""
+        self.write_tracker([dict(eng.new_task("t1", "완료"), status="done")])
+        proj = self.project()
+        self.assertTrue(self.handle(proj, dry_run=False))
+        self.assertEqual(proj["status"], "completed")
+
     def test_step5_fresh_heartbeat_is_skipped(self):
         self.write_tracker([eng.new_task("t1", "작업")])
         eng.write_heartbeat(self.repo, "test")  # 현재 시각 — 신선
