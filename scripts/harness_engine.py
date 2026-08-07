@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -188,6 +189,10 @@ WIRING_INACTIVE = "inactive"               # 등록됐으나 한 번도 발화�
 HOOK_RUNTIME_KEYS = ("session_id", "hook_event_name", "transcript_path")
 # 발화 마커를 남기는 훅 op — SessionStart(brief)는 stdin 을 읽지 않으므로 제외한다
 MARKER_HOOK_OPS = ("hook-prebash", "hook-postbash", "hook-stop")
+# matcher 로 도구 범위가 정해지는 훅(hook-stop 은 Stop 이벤트라 도구 무관)
+MATCHER_SCOPED_OPS = ("hook-prebash", "hook-postbash")
+# 명령을 실행하는 도구 — 이 중 matcher 에서 빠진 것이 있으면 게이트가 우회된다
+COMMAND_TOOLS = ("Bash", "PowerShell")
 SETTINGS_FILES = ("settings.json", "settings.local.json")
 
 
@@ -222,7 +227,7 @@ def record_hook_fire(repo, op, data):
 
 
 def _iter_hook_commands(settings):
-    """settings 의 hooks 트리를 방어적으로 훑어 (이벤트, 명령) 쌍을 내놓는다."""
+    """settings 의 hooks 트리를 방어적으로 훑어 (이벤트, 명령, matcher) 를 내놓는다."""
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
     if not isinstance(hooks, dict):
         return
@@ -235,25 +240,39 @@ def _iter_hook_commands(settings):
             items = entry.get("hooks")
             if not isinstance(items, list):
                 continue
+            matcher = entry.get("matcher")
             for item in items:
                 if isinstance(item, dict) and isinstance(item.get("command"), str):
-                    yield event, item["command"]
+                    yield event, item["command"], (matcher if isinstance(matcher, str) else "")
 
 
 def registered_marker_hooks(repo):
     """저장소 설정에 등록된 하네스 훅 중 발화 마커를 남길 수 있는 op 목록(정렬).
 
     비어 있으면 이 저장소는 훅을 쓰지 않는 수동 운용 — 경고 대상이 아니다(오탐 금지)."""
-    found = set()
+    return sorted(registered_hook_matchers(repo))
+
+
+def registered_hook_matchers(repo):
+    """등록된 하네스 훅 op → 그 훅이 걸린 matcher 문자열(없으면 "")."""
+    found = {}
     for name in SETTINGS_FILES:
         settings = load_json(os.path.join(rp(repo)["claude_dir"], name))
-        for _event, command in _iter_hook_commands(settings):
+        for _event, command, matcher in _iter_hook_commands(settings):
             if "harness_engine" not in command:
                 continue
             for op in MARKER_HOOK_OPS:
                 if op in command:
-                    found.add(op)
-    return sorted(found)
+                    found.setdefault(op, matcher or "")
+    return found
+
+
+def matcher_covers(matcher, tool):
+    """matcher 문자열이 해당 도구를 덮는가 — 정확 일치 목록(`|`·`,` 구분) 기준."""
+    if not matcher:
+        return False
+    parts = [p.strip() for p in re.split(r"[|,]", matcher) if p.strip()]
+    return tool in parts
 
 
 def hook_wiring_status(repo, tracker=None):
@@ -279,7 +298,15 @@ def hook_wiring_status(repo, tracker=None):
     else:
         state = WIRING_INACTIVE
 
+    # matcher 커버리지 — 명령 실행 도구 중 게이트가 걸리지 않는 것이 있으면 드러낸다.
+    # matcher 가 "Bash" 뿐이면 다른 실행 도구로 게이트가 통째로 우회된다(실측).
+    matchers = registered_hook_matchers(repo)
+    uncovered = sorted({tool for tool in COMMAND_TOOLS
+                        for op, m in matchers.items()
+                        if op in MATCHER_SCOPED_OPS and not matcher_covers(m, tool)})
+
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
+            "matchers": matchers, "uncovered_tools": uncovered,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
     if state == WIRING_INACTIVE:
         info["warning"] = _wiring_warning(repo, info)
@@ -970,17 +997,192 @@ def read_hook_input():
         return {}
 
 
-DENY_PATTERNS = [
-    (re.compile(r"\bgit\b[^\n&|;]*\bpush\b", re.IGNORECASE), "git push 금지 — 로컬 커밋만 허용됩니다"),
-    (re.compile(r"\bgit\b[^\n&|;]*(--force\b|-f\b[^\n]*\b(push|branch|checkout)\b|--force-with-lease)",
-                re.IGNORECASE), "git --force 계열 금지"),
-    (re.compile(r"\bgit\s+reset\s+[^\n]*--hard", re.IGNORECASE), "git reset --hard 금지"),
-    # 플래그 재배치(-d -f)·--force 표기까지 잡는다
-    (re.compile(r"\bgit\s+clean\b[^\n]*(\s-[A-Za-z]*f|\s--force\b)", re.IGNORECASE),
-     "git clean 강제 삭제 금지"),
-]
+# ------------------------------------------------------- 명령 판정 (토큰 기반)
+#
+# 명령 문자열 전체를 정규식으로 훑으면 인용부호 안의 단어까지 명령으로 오인한다.
+# 실측된 오탐: `git log --grep=push`, `grep -r "git push" docs/`,
+# `git commit -m "push 준비 완료"`(허용해야 할 로컬 커밋), `echo "git push 하지 마세요"`.
+# 반대로 `bash -c '...'` 같은 래퍼 안의 실제 명령은 구조를 모르므로 놓쳤다.
+#
+# 그래서 셸 구분자로 세그먼트를 나누고 shlex 로 토큰화한 뒤, **첫 토큰이 무엇이고
+# git 서브커맨드가 무엇인가**로 판정한다. 인용은 shlex 가 존중하므로 문자열 안의
+# 단어는 애초에 명령 위치에 오지 않는다.
 
-GIT_COMMIT_RE = re.compile(r"\bgit\b[^\n&|;]*\bcommit\b", re.IGNORECASE)
+SHELL_SPLIT_RE = re.compile(r"&&|\|\||[;\n|]")
+ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 값을 하나 더 먹는 git 전역 옵션 — 인자까지 건너뛰어야 서브커맨드를 정확히 찾는다
+GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                       "--exec-path", "--super-prefix"}
+NEUTRAL_PREFIXES = {"env", "command", "nohup", "time", "builtin", "exec"}
+POSIX_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "ash"}
+PWSH_SHELLS = {"powershell", "pwsh"}
+WRAPPER_MAX_DEPTH = 3          # 래퍼 재귀 상한 — 무한 중첩 방어
+FORCE_SUBCOMMANDS = {"branch", "checkout", "switch", "restore"}
+
+
+def _command_segments(command):
+    return [s.strip() for s in SHELL_SPLIT_RE.split(command or "") if s.strip()]
+
+
+def _shell_tokens(segment):
+    """shlex 토큰화. 따옴표 불균형 등 파싱 실패는 None → 호출자가 fail-open."""
+    try:
+        return shlex.split(segment, posix=True)
+    except ValueError:
+        return None
+
+
+def _strip_neutral_prefix(tokens):
+    """선행 환경변수 대입(`FOO=1 git …`)과 중립 수식어를 걷어낸다."""
+    i = 0
+    while i < len(tokens) and (ENV_ASSIGN_RE.match(tokens[i]) or tokens[i] in NEUTRAL_PREFIXES):
+        i += 1
+    return tokens[i:]
+
+
+def _exe_name(token):
+    name = os.path.basename(token.replace("\\", "/")).lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _git_subcommand(args):
+    """git 뒤 전역 옵션을 건너뛰고 (서브커맨드, 나머지 인자)를 돌려준다."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in GIT_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        return a, args[i + 1:]
+    return None, []
+
+
+def _has_force_flag(rest):
+    for a in rest:
+        if a == "--force" or a.startswith("--force-with-lease"):
+            return True
+        if re.match(r"^-[A-Za-z]*f[A-Za-z]*$", a):   # -f · 결합 플래그(-fd) · 재배치(-d -f)
+            return True
+    return False
+
+
+def _wrapper_payload(tokens, flags):
+    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열."""
+    for i, t in enumerate(tokens):
+        if t.lower() in flags and i + 1 < len(tokens):
+            return tokens[i + 1]
+    return None
+
+
+def _walk_git_invocations(command, depth=0):
+    """명령 안에서 실제로 실행되는 git 호출을 (서브커맨드, 나머지 인자)로 내놓는다.
+
+    래퍼(`bash -c "…"`)는 페이로드를 재귀 분석한다 — 래퍼로 감싸 우회하는 것을 막는다."""
+    if depth > WRAPPER_MAX_DEPTH:
+        return
+    for seg in _command_segments(command):
+        tokens = _shell_tokens(seg)
+        if tokens is None:
+            continue                       # 파싱 실패 — 이 세그먼트는 판단 보류(fail-open)
+        tokens = _strip_neutral_prefix(tokens)
+        if not tokens:
+            continue
+        exe = _exe_name(tokens[0])
+        if exe in POSIX_SHELLS or exe in PWSH_SHELLS:
+            flags = {"-c"} if exe in POSIX_SHELLS else {"-command", "-c"}
+            payload = _wrapper_payload(tokens, flags)
+            if payload:
+                for item in _walk_git_invocations(payload, depth + 1):
+                    yield item
+            continue
+        if exe != "git":
+            continue
+        sub, rest = _git_subcommand(tokens[1:])
+        if sub is not None:
+            yield sub, rest
+
+
+def deny_reason(command):
+    """차단 사유 문자열, 없으면 None. 판정 불가는 None(fail-open)."""
+    for sub, rest in _walk_git_invocations(command):
+        if sub == "push":
+            return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
+        if sub == "reset" and "--hard" in rest:
+            return "git reset --hard 금지"
+        if sub == "clean" and _has_force_flag(rest):
+            return "git clean 강제 삭제 금지"
+        if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
+            return "git --force 계열 금지"
+    return None
+
+
+def invokes_git_commit(command):
+    """명령이 실제로 `git commit` 을 실행하는가 — 커밋 게이트 판정용.
+
+    문자열 매칭이면 `echo "git commit"` 같은 언급까지 게이트를 켜 버린다."""
+    return any(sub == "commit" for sub, _ in _walk_git_invocations(command))
+
+
+# ------------------------------------------------- 게이트 판정 (컨텍스트 인지)
+#
+# 위험 모델은 "사람이 없을 때 에이전트가 되돌릴 수 없는 일을 하는 것"이다. 그런데
+# 종전 구현은 금지 명령을 무조건 exit 2 로 막아, **사람이 눈앞에서 지시한 경우까지**
+# 덮었다 — 사용자가 승인해도 실행이 불가능했다. 같은 파일의 hook-stop 은
+# CLAUDE_AUTOHARNESS 로 헤드리스를 식별해 대화형을 건드리지 않는데 여기만 달랐다.
+#
+# 그래서 두 게이트(금지 명령·커밋)가 같은 판정 함수를 쓰게 통일한다:
+#   헤드리스(무인)          → deny  : 물어볼 사람이 없으므로 하드 차단
+#   대화형 / 일시정지 중     → ask   : 사용자 승인 창으로 승격 — 사람이 결정한다
+#
+# ask 는 Claude Code 훅 계약의 hookSpecificOutput.permissionDecision 값이다.
+
+GATE_DENY = "deny"
+GATE_ASK = "ask"
+
+
+def is_headless_session():
+    """워치독이 띄운 무인 세션인가 — hook-stop 과 동일한 식별 기준."""
+    return os.environ.get("CLAUDE_AUTOHARNESS") == "1"
+
+
+def gate_decision(repo):
+    """게이트가 걸렸을 때의 처리 방식 — 사람이 개입할 수 있는 자리인가로 정한다."""
+    if os.path.exists(rp(repo)["paused_flag"]):
+        return GATE_ASK          # 일시정지 = 사람이 직접 운전 중
+    return GATE_DENY if is_headless_session() else GATE_ASK
+
+
+def emit_gate(decision, reason, command=""):
+    """게이트 결과를 훅 계약대로 내보내고 종료한다."""
+    if decision == GATE_DENY:
+        sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (reason, command[:200]))
+        sys.exit(2)
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": "[AutoHarness] " + reason,
+    }}, ensure_ascii=False))
+    sys.exit(0)
+
+
+def commit_gate_reason(repo):
+    """커밋 게이트가 걸리는 사유 — 통과면 None."""
+    tracker = load_tracker(repo, required=False)
+    if not tracker or not tracker.get("tasks"):
+        return None
+    if os.path.exists(rp(repo)["paused_flag"]):
+        return None                      # 일시정지 중에는 게이트를 걸지 않는다
+    active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
+    if not active:
+        return None
+    if ((load_state(repo).get("last_run")) or {}).get("ok"):
+        return None
+    return ("커밋 게이트: 진행 중 작업(%s)의 harness 검증 통과 기록이 없습니다. "
+            "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오."
+            % (active[0]["id"], active[0]["id"]))
 
 
 def cmd_hook_prebash(a):
@@ -989,26 +1191,22 @@ def cmd_hook_prebash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         record_hook_fire(a.repo, "hook-prebash", data)
-        for pat, msg in DENY_PATTERNS:
-            if pat.search(command):
-                sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (msg, command[:200]))
-                sys.exit(2)
-        if GIT_COMMIT_RE.search(command):
-            tracker = load_tracker(a.repo, required=False)
-            if tracker and tracker["tasks"] and not os.path.exists(rp(a.repo)["paused_flag"]):
-                active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
+        decision = gate_decision(a.repo)
+
+        reason = deny_reason(command)
+        if reason:
+            emit_gate(decision, reason, command)
+
+        if invokes_git_commit(command):
+            gate = commit_gate_reason(a.repo)
+            # 커밋이 실제로 일어날 수 있는 경로에서는 직전 HEAD 를 1회용 마커로 남긴다
+            # (postbash 가 '새 커밋 생성'을 검증한다). 하드 차단이면 커밋이 없으므로 생략.
+            if not (gate and decision == GATE_DENY):
                 state = load_state(a.repo)
-                lr = state.get("last_run") or {}
-                if active and not lr.get("ok"):
-                    sys.stderr.write(
-                        "[AutoHarness 차단] 커밋 게이트: 진행 중 작업(%s)의 harness 검증 통과 기록이 없습니다. "
-                        "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오.\n"
-                        % (active[0]["id"], active[0]["id"]))
-                    sys.exit(2)
-            # 커밋 허용 — 직전 HEAD 를 1회용 마커로 남겨 postbash 가 '새 커밋 생성'을 검증한다
-            state = load_state(a.repo)
-            state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
-            save_state(a.repo, state)
+                state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
+                save_state(a.repo, state)
+            if gate:
+                emit_gate(decision, gate, command)
         sys.exit(0)
     except SystemExit:
         raise
@@ -1022,7 +1220,7 @@ def cmd_hook_postbash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         record_hook_fire(a.repo, "hook-postbash", data)
-        if GIT_COMMIT_RE.search(command):
+        if invokes_git_commit(command):
             sync_commit(a.repo, require_new_head=True)
     except Exception:
         pass
