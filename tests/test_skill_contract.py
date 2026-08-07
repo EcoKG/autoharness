@@ -204,9 +204,14 @@ class RoutingHardeningTest(unittest.TestCase):
         self.assertIn("git push", self.text)
 
     def test_push_is_actually_blocked_by_engine(self):
-        # 문서의 한계선 주장이 엔진 차단 규칙과 실제로 일치하는지 대조
-        self.assertTrue(any(pat.search("git push origin main") for pat, _ in eng.DENY_PATTERNS),
-                        "엔진이 git push 를 차단하지 않는데 문서는 차단된다고 적혀 있습니다")
+        # 문서의 한계선 주장이 엔진 차단 규칙과 실제로 일치하는지 대조.
+        # 판정이 정규식 목록에서 토큰 기반 함수로 바뀌었으므로 호출 방식만 바꾸고
+        # 검사 의도(문서 주장 ↔ 엔진 실제 동작 일치)는 그대로 유지한다.
+        self.assertIsNotNone(eng.deny_reason("git push origin main"),
+                             "엔진이 git push 를 차단하지 않는데 문서는 차단된다고 적혀 있습니다")
+        # 문서가 "로컬 커밋은 허용"이라고 적었으므로 그것도 함께 대조한다
+        self.assertIsNone(eng.deny_reason('git commit -m "작업 완료"'),
+                          "문서는 로컬 커밋을 허용한다고 적었는데 엔진이 차단합니다")
 
 
 class ExitCodeTableTest(unittest.TestCase):

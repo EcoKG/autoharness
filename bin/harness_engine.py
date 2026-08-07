@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -970,17 +971,133 @@ def read_hook_input():
         return {}
 
 
-DENY_PATTERNS = [
-    (re.compile(r"\bgit\b[^\n&|;]*\bpush\b", re.IGNORECASE), "git push 금지 — 로컬 커밋만 허용됩니다"),
-    (re.compile(r"\bgit\b[^\n&|;]*(--force\b|-f\b[^\n]*\b(push|branch|checkout)\b|--force-with-lease)",
-                re.IGNORECASE), "git --force 계열 금지"),
-    (re.compile(r"\bgit\s+reset\s+[^\n]*--hard", re.IGNORECASE), "git reset --hard 금지"),
-    # 플래그 재배치(-d -f)·--force 표기까지 잡는다
-    (re.compile(r"\bgit\s+clean\b[^\n]*(\s-[A-Za-z]*f|\s--force\b)", re.IGNORECASE),
-     "git clean 강제 삭제 금지"),
-]
+# ------------------------------------------------------- 명령 판정 (토큰 기반)
+#
+# 명령 문자열 전체를 정규식으로 훑으면 인용부호 안의 단어까지 명령으로 오인한다.
+# 실측된 오탐: `git log --grep=push`, `grep -r "git push" docs/`,
+# `git commit -m "push 준비 완료"`(허용해야 할 로컬 커밋), `echo "git push 하지 마세요"`.
+# 반대로 `bash -c '...'` 같은 래퍼 안의 실제 명령은 구조를 모르므로 놓쳤다.
+#
+# 그래서 셸 구분자로 세그먼트를 나누고 shlex 로 토큰화한 뒤, **첫 토큰이 무엇이고
+# git 서브커맨드가 무엇인가**로 판정한다. 인용은 shlex 가 존중하므로 문자열 안의
+# 단어는 애초에 명령 위치에 오지 않는다.
 
-GIT_COMMIT_RE = re.compile(r"\bgit\b[^\n&|;]*\bcommit\b", re.IGNORECASE)
+SHELL_SPLIT_RE = re.compile(r"&&|\|\||[;\n|]")
+ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 값을 하나 더 먹는 git 전역 옵션 — 인자까지 건너뛰어야 서브커맨드를 정확히 찾는다
+GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                       "--exec-path", "--super-prefix"}
+NEUTRAL_PREFIXES = {"env", "command", "nohup", "time", "builtin", "exec"}
+POSIX_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "ash"}
+PWSH_SHELLS = {"powershell", "pwsh"}
+WRAPPER_MAX_DEPTH = 3          # 래퍼 재귀 상한 — 무한 중첩 방어
+FORCE_SUBCOMMANDS = {"branch", "checkout", "switch", "restore"}
+
+
+def _command_segments(command):
+    return [s.strip() for s in SHELL_SPLIT_RE.split(command or "") if s.strip()]
+
+
+def _shell_tokens(segment):
+    """shlex 토큰화. 따옴표 불균형 등 파싱 실패는 None → 호출자가 fail-open."""
+    try:
+        return shlex.split(segment, posix=True)
+    except ValueError:
+        return None
+
+
+def _strip_neutral_prefix(tokens):
+    """선행 환경변수 대입(`FOO=1 git …`)과 중립 수식어를 걷어낸다."""
+    i = 0
+    while i < len(tokens) and (ENV_ASSIGN_RE.match(tokens[i]) or tokens[i] in NEUTRAL_PREFIXES):
+        i += 1
+    return tokens[i:]
+
+
+def _exe_name(token):
+    name = os.path.basename(token.replace("\\", "/")).lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _git_subcommand(args):
+    """git 뒤 전역 옵션을 건너뛰고 (서브커맨드, 나머지 인자)를 돌려준다."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in GIT_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        return a, args[i + 1:]
+    return None, []
+
+
+def _has_force_flag(rest):
+    for a in rest:
+        if a == "--force" or a.startswith("--force-with-lease"):
+            return True
+        if re.match(r"^-[A-Za-z]*f[A-Za-z]*$", a):   # -f · 결합 플래그(-fd) · 재배치(-d -f)
+            return True
+    return False
+
+
+def _wrapper_payload(tokens, flags):
+    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열."""
+    for i, t in enumerate(tokens):
+        if t.lower() in flags and i + 1 < len(tokens):
+            return tokens[i + 1]
+    return None
+
+
+def _walk_git_invocations(command, depth=0):
+    """명령 안에서 실제로 실행되는 git 호출을 (서브커맨드, 나머지 인자)로 내놓는다.
+
+    래퍼(`bash -c "…"`)는 페이로드를 재귀 분석한다 — 래퍼로 감싸 우회하는 것을 막는다."""
+    if depth > WRAPPER_MAX_DEPTH:
+        return
+    for seg in _command_segments(command):
+        tokens = _shell_tokens(seg)
+        if tokens is None:
+            continue                       # 파싱 실패 — 이 세그먼트는 판단 보류(fail-open)
+        tokens = _strip_neutral_prefix(tokens)
+        if not tokens:
+            continue
+        exe = _exe_name(tokens[0])
+        if exe in POSIX_SHELLS or exe in PWSH_SHELLS:
+            flags = {"-c"} if exe in POSIX_SHELLS else {"-command", "-c"}
+            payload = _wrapper_payload(tokens, flags)
+            if payload:
+                for item in _walk_git_invocations(payload, depth + 1):
+                    yield item
+            continue
+        if exe != "git":
+            continue
+        sub, rest = _git_subcommand(tokens[1:])
+        if sub is not None:
+            yield sub, rest
+
+
+def deny_reason(command):
+    """차단 사유 문자열, 없으면 None. 판정 불가는 None(fail-open)."""
+    for sub, rest in _walk_git_invocations(command):
+        if sub == "push":
+            return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
+        if sub == "reset" and "--hard" in rest:
+            return "git reset --hard 금지"
+        if sub == "clean" and _has_force_flag(rest):
+            return "git clean 강제 삭제 금지"
+        if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
+            return "git --force 계열 금지"
+    return None
+
+
+def invokes_git_commit(command):
+    """명령이 실제로 `git commit` 을 실행하는가 — 커밋 게이트 판정용.
+
+    문자열 매칭이면 `echo "git commit"` 같은 언급까지 게이트를 켜 버린다."""
+    return any(sub == "commit" for sub, _ in _walk_git_invocations(command))
 
 
 def cmd_hook_prebash(a):
@@ -989,11 +1106,11 @@ def cmd_hook_prebash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         record_hook_fire(a.repo, "hook-prebash", data)
-        for pat, msg in DENY_PATTERNS:
-            if pat.search(command):
-                sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (msg, command[:200]))
-                sys.exit(2)
-        if GIT_COMMIT_RE.search(command):
+        reason = deny_reason(command)
+        if reason:
+            sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (reason, command[:200]))
+            sys.exit(2)
+        if invokes_git_commit(command):
             tracker = load_tracker(a.repo, required=False)
             if tracker and tracker["tasks"] and not os.path.exists(rp(a.repo)["paused_flag"]):
                 active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
@@ -1022,7 +1139,7 @@ def cmd_hook_postbash(a):
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         record_hook_fire(a.repo, "hook-postbash", data)
-        if GIT_COMMIT_RE.search(command):
+        if invokes_git_commit(command):
             sync_commit(a.repo, require_new_head=True)
     except Exception:
         pass

@@ -98,8 +98,27 @@ autoharness/
 
 로그: 전체 출력은 `.claude/harness-logs/<task>-<UTC ts>.log`(같은 초 재실행 시 `-N` 접미로
 이전 로그 보존). stdout 요약은 에러 패턴 라인 최대 60줄 × 400자(패턴 없으면 tail 30줄).
-`last_error` 는 4000자 상한. 금지 명령·commit 탐지 정규식은 전부 IGNORECASE 이며 `git clean`
-은 플래그 재배치(`-d -f`)·`--force` 표기까지 차단한다.
+`last_error` 는 4000자 상한.
+
+**명령 판정은 토큰 기반이다**(`deny_reason` / `invokes_git_commit`). 명령 문자열 전체를
+정규식으로 훑으면 인용부호 안 단어까지 명령으로 오인한다 — 실측 오탐: `git log --grep=push`,
+`grep -r "git push" docs/`, `echo "git push 하지 마세요"`, 그리고 **허용해야 할**
+`git commit -m "push 준비 완료"`. 판정 절차:
+
+1. 셸 구분자(`&&` `||` `;` `|` 개행)로 세그먼트 분해
+2. `shlex.split` 으로 토큰화 — 인용을 존중하므로 문자열 안 단어는 명령 위치에 오지 않는다
+3. 선행 환경변수 대입(`FOO=1 git …`)·중립 수식어(`env` `nohup` …) 제거 후 첫 토큰의
+   basename(확장자 제거)이 `git` 인지 판정
+4. 값을 먹는 git 전역 옵션(`-C` `-c` `--git-dir` `--work-tree` `--exec-path` …)을 건너뛰고
+   **실제 서브커맨드** 식별
+5. 서브커맨드 기준 차단: `push` / `reset --hard` / `clean` +force / `branch·checkout·switch·
+   restore` +force. force 는 `--force`·`--force-with-lease`·결합 플래그(`-fd`)·재배치(`-d -f`) 인식
+6. 래퍼(`bash -c` `sh -c` `powershell -Command`)의 페이로드는 **재귀 분석**한다 — 정규식이
+   놓치던 우회 경로다(최대 3단, 초과 시 판정 포기)
+7. `shlex` 파싱 실패(따옴표 불균형 등)는 **fail-open** — 훅이 주행을 막지 않는다
+
+커밋 게이트의 트리거도 같은 판정을 쓴다 — `echo "git commit"` 같은 언급으로 게이트가 켜지지
+않는다.
 
 ## 5. 장부 스키마 (`.claude/agent_tracker.json`)
 
