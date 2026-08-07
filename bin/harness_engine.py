@@ -1008,35 +1008,94 @@ def read_hook_input():
 # git 서브커맨드가 무엇인가**로 판정한다. 인용은 shlex 가 존중하므로 문자열 안의
 # 단어는 애초에 명령 위치에 오지 않는다.
 
-SHELL_SPLIT_RE = re.compile(r"&&|\|\||[;\n|]")
 ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # 값을 하나 더 먹는 git 전역 옵션 — 인자까지 건너뛰어야 서브커맨드를 정확히 찾는다
 GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                        "--exec-path", "--super-prefix"}
-NEUTRAL_PREFIXES = {"env", "command", "nohup", "time", "builtin", "exec"}
+# 인자를 먹지 않는 수식어
+NEUTRAL_PREFIXES = {"env", "command", "nohup", "builtin", "exec", "time", "stdbuf"}
+# 인자를 N개 먹는 수식어 — 인자 수를 모르면 실제 명령 위치를 놓친다
+PREFIX_ARITY = {"timeout": 1, "sudo": 0, "nice": 0, "ionice": 0, "doas": 0}
+# 값을 먹는 수식어 옵션(`nice -n 10 git …`, `sudo -u user git …`)
+PREFIX_OPTS_WITH_VALUE = {"-n", "-u", "-g", "-k", "--user", "--group"}
 POSIX_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "ash"}
 PWSH_SHELLS = {"powershell", "pwsh"}
+# 뒤따르는 토큰이 실제 실행 대상인 수식어
+EXEC_DELEGATES = {"xargs"}
+SHELL_OPERATORS = ("&&", "||", ";", "|", "\n", "&")
 WRAPPER_MAX_DEPTH = 3          # 래퍼 재귀 상한 — 무한 중첩 방어
 FORCE_SUBCOMMANDS = {"branch", "checkout", "switch", "restore"}
+# 판정 불가(파싱 실패) 세그먼트에만 쓰는 안전망 키워드 — 구조 판정의 대체가 아니라 보조다.
+# 이게 없으면 파싱 실패가 곧 '무검사 통과'가 되어 fail-open 이 우회 경로가 된다.
+UNPARSED_RISK_RE = re.compile(
+    r"\b(push|--force|--force-with-lease|reset\s+--hard|clean\s+-[A-Za-z]*f|"
+    r"filter-branch|reflog\s+expire)\b", re.IGNORECASE)
+
+LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+
+
+def _fold_continuations(command):
+    """역슬래시 줄바꿈을 접는다 — `git \\<개행> push` 가 두 조각으로 갈라지는 것을 막는다."""
+    return LINE_CONTINUATION_RE.sub(" ", command or "")
+
+
+def _split_on_operators(tokens):
+    groups, current = [], []
+    for t in tokens:
+        if t in SHELL_OPERATORS:
+            if current:
+                groups.append(current)
+            current = []
+        else:
+            current.append(t)
+    if current:
+        groups.append(current)
+    return groups
 
 
 def _command_segments(command):
-    return [s.strip() for s in SHELL_SPLIT_RE.split(command or "") if s.strip()]
+    """따옴표를 존중해 토큰화한 뒤 연산자에서 끊는다.
 
-
-def _shell_tokens(segment):
-    """shlex 토큰화. 따옴표 불균형 등 파싱 실패는 None → 호출자가 fail-open."""
+    문자열을 먼저 정규식으로 자르면 따옴표·heredoc 안의 `;`·`|`·개행이 분할점이 되어
+    정상 명령이 스스로 파싱 불능이 된다(실측: 여러 줄 커밋 메시지가 통째로 무검사 통과).
+    반환: (세그먼트 토큰 목록, 파싱 실패 여부)."""
+    text = _fold_continuations(command)
+    if not text.strip():
+        return [], False
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
     try:
-        return shlex.split(segment, posix=True)
+        tokens = list(lexer)
     except ValueError:
-        return None
+        return [], True          # 따옴표 불균형 등 — 호출자가 안전망으로 처리한다
+    return _split_on_operators(tokens), False
 
 
 def _strip_neutral_prefix(tokens):
-    """선행 환경변수 대입(`FOO=1 git …`)과 중립 수식어를 걷어낸다."""
+    """선행 환경변수 대입·수식어를 인자 수까지 고려해 걷어낸다."""
     i = 0
-    while i < len(tokens) and (ENV_ASSIGN_RE.match(tokens[i]) or tokens[i] in NEUTRAL_PREFIXES):
-        i += 1
+    while i < len(tokens):
+        t = tokens[i]
+        if ENV_ASSIGN_RE.match(t):
+            i += 1
+            continue
+        name = _exe_name(t)
+        if name in NEUTRAL_PREFIXES:
+            i += 1
+            continue
+        if name in PREFIX_ARITY:
+            i += 1
+            # 수식어 자신의 옵션(값을 먹는 것 포함)을 건너뛴다
+            while i < len(tokens) and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in PREFIX_OPTS_WITH_VALUE else 1
+            i += PREFIX_ARITY[name]      # timeout 의 duration 처럼 위치 인자
+            continue
+        if name in EXEC_DELEGATES:
+            i += 1
+            while i < len(tokens) and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in ("-n", "-P", "-I", "-L", "-d") else 1
+            continue
+        break
     return tokens[i:]
 
 
@@ -1069,32 +1128,54 @@ def _has_force_flag(rest):
     return False
 
 
-def _wrapper_payload(tokens, flags):
-    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열."""
+def _is_pwsh_command_flag(token):
+    """PowerShell 은 접두사 축약을 허용한다 — -c · -co · … · -command 전부 같은 뜻."""
+    t = token.lower()
+    if not t.startswith("-"):
+        return False
+    body = t[1:]
+    return bool(body) and "command".startswith(body)
+
+
+def _wrapper_payload(tokens, posix):
+    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열.
+
+    반환: (페이로드, 판정불가여부). -EncodedCommand 는 디코드하지 않고 판정 불가로 둔다."""
     for i, t in enumerate(tokens):
-        if t.lower() in flags and i + 1 < len(tokens):
-            return tokens[i + 1]
-    return None
+        low = t.lower()
+        if posix:
+            if low == "-c" and i + 1 < len(tokens):
+                return tokens[i + 1], False
+        else:
+            if low.startswith("-encodedcommand") or low == "-e" or low == "-enc":
+                return None, True          # base64 — 구조 판정 불가
+            if _is_pwsh_command_flag(t) and i + 1 < len(tokens):
+                return tokens[i + 1], False
+    return None, False
 
 
 def _walk_git_invocations(command, depth=0):
     """명령 안에서 실제로 실행되는 git 호출을 (서브커맨드, 나머지 인자)로 내놓는다.
 
+    반환하는 항목 중 ("<unparsed>", [원문]) 은 '구조 판정 불가' 신호다.
     래퍼(`bash -c "…"`)는 페이로드를 재귀 분석한다 — 래퍼로 감싸 우회하는 것을 막는다."""
     if depth > WRAPPER_MAX_DEPTH:
+        yield UNPARSED, [command or ""]
         return
-    for seg in _command_segments(command):
-        tokens = _shell_tokens(seg)
-        if tokens is None:
-            continue                       # 파싱 실패 — 이 세그먼트는 판단 보류(fail-open)
+    segments, failed = _command_segments(command)
+    if failed:
+        yield UNPARSED, [command or ""]
+        return
+    for tokens in segments:
         tokens = _strip_neutral_prefix(tokens)
         if not tokens:
             continue
         exe = _exe_name(tokens[0])
         if exe in POSIX_SHELLS or exe in PWSH_SHELLS:
-            flags = {"-c"} if exe in POSIX_SHELLS else {"-command", "-c"}
-            payload = _wrapper_payload(tokens, flags)
-            if payload:
+            payload, opaque = _wrapper_payload(tokens, exe in POSIX_SHELLS)
+            if opaque:
+                yield UNPARSED, [command or ""]
+            elif payload:
                 for item in _walk_git_invocations(payload, depth + 1):
                     yield item
             continue
@@ -1105,9 +1186,19 @@ def _walk_git_invocations(command, depth=0):
             yield sub, rest
 
 
+UNPARSED = "<unparsed>"
+
+
 def deny_reason(command):
-    """차단 사유 문자열, 없으면 None. 판정 불가는 None(fail-open)."""
+    """차단 사유 문자열, 없으면 None.
+
+    구조 판정이 1차다. 파싱이 불가능한 경우에만 키워드 안전망을 쓴다 — 파싱 실패를
+    그냥 통과시키면 fail-open 이 곧 우회 경로가 된다(적대 검증에서 실측된 결함)."""
     for sub, rest in _walk_git_invocations(command):
+        if sub == UNPARSED:
+            if UNPARSED_RISK_RE.search(rest[0] if rest else ""):
+                return ("명령 구조를 해석할 수 없는데 위험 키워드가 보입니다 — 확인이 필요합니다")
+            continue
         if sub == "push":
             return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
         if sub == "reset" and "--hard" in rest:

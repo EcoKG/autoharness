@@ -125,22 +125,92 @@ class AllowTest(unittest.TestCase):
             '--title "' + G + ' push 차단이 오탐을 낸다"')
 
 
-class FailOpenTest(unittest.TestCase):
-    """④ 판정 불가는 주행을 막지 않는다."""
+class UnparsableTest(unittest.TestCase):
+    """④ 판정 불가 처리 — 조용한 통과가 곧 우회 경로였다(적대 검증 high).
 
-    def test_unbalanced_quotes_fail_open(self):
-        self.assertIsNone(eng.deny_reason(G + ' push "미완성 따옴표'))
+    구조 판정이 1차이고, 파싱이 불가능할 때만 키워드 안전망이 작동한다:
+      위험 키워드 있음 → 게이트(사람에게 확인)
+      위험 키워드 없음 → 통과(정상 작업을 막지 않는다)
+    """
+
+    def test_unparsable_with_risk_keyword_is_gated(self):
+        self.assertIsNotNone(eng.deny_reason(G + ' push "미완성 따옴표'))
+
+    def test_unparsable_without_risk_keyword_passes(self):
+        self.assertIsNone(eng.deny_reason('echo "미완성 따옴표'))
+        self.assertIsNone(eng.deny_reason(G + ' status "열린 따옴표'))
 
     def test_empty_and_none(self):
         for cmd in ("", "   ", None):
             self.assertIsNone(eng.deny_reason(cmd))
 
-    def test_deep_wrapper_nesting_terminates(self):
-        # 무한 재귀 방어 — 상한을 넘으면 판정을 포기하되 죽지 않는다
+    def test_deep_wrapper_nesting_is_gated_not_silently_passed(self):
+        # 상한을 넘으면 판정을 포기하되, 위험 키워드가 보이면 통과시키지 않는다
         cmd = G + " push"
         for _ in range(eng.WRAPPER_MAX_DEPTH + 3):
             cmd = "bash -c %s" % repr(cmd)
-        self.assertIsNone(eng.deny_reason(cmd))   # 상한 초과 → fail-open, 예외 없음
+        self.assertIsNotNone(eng.deny_reason(cmd))
+
+    def test_deep_nesting_without_risk_passes(self):
+        cmd = G + " status"
+        for _ in range(eng.WRAPPER_MAX_DEPTH + 3):
+            cmd = "bash -c %s" % repr(cmd)
+        self.assertIsNone(eng.deny_reason(cmd))
+
+
+class QuoteAwareSplitTest(unittest.TestCase):
+    """① 따옴표 안 구분자가 분할점이 되어 정상 명령이 무검사 통과하던 결함(high)."""
+
+    def test_semicolon_inside_commit_message(self):
+        cmd = G + ' commit -m "정리; 리팩터링"'
+        self.assertIsNone(eng.deny_reason(cmd))
+        self.assertTrue(eng.invokes_git_commit(cmd), "커밋 게이트가 켜져야 한다")
+
+    def test_pipe_inside_commit_message(self):
+        cmd = G + ' commit -m "A | B 병합"'
+        self.assertTrue(eng.invokes_git_commit(cmd))
+
+    def test_newline_inside_commit_message(self):
+        cmd = G + ' commit -m "제목\n\n본문 줄"'
+        self.assertTrue(eng.invokes_git_commit(cmd))
+
+    def test_quoted_separator_does_not_hide_later_command(self):
+        """따옴표 안 세미콜론 때문에 뒤쪽 실제 명령을 놓치면 안 된다."""
+        self.assertIsNotNone(eng.deny_reason('echo "a; b" && ' + G + ' push origin main'))
+
+
+class ContinuationAndPrefixTest(unittest.TestCase):
+    """②③ 줄 연속·수식어 접두로 판정을 빠져나가던 결함(high)."""
+
+    def test_backslash_line_continuation(self):
+        self.assertIsNotNone(eng.deny_reason(G + " \\\n  push origin main"))
+        self.assertIsNotNone(eng.deny_reason(G + " \\\r\n  reset --hard HEAD~1"))
+
+    def test_prefix_with_positional_argument(self):
+        self.assertIsNotNone(eng.deny_reason("timeout 30 " + G + " push origin main"))
+
+    def test_prefix_with_value_option(self):
+        self.assertIsNotNone(eng.deny_reason("nice -n 10 " + G + " push"))
+        self.assertIsNotNone(eng.deny_reason("sudo -u deploy " + G + " push"))
+
+    def test_exec_delegate(self):
+        self.assertIsNotNone(eng.deny_reason("xargs " + G + " push"))
+        self.assertIsNotNone(eng.deny_reason("xargs -n 1 " + G + " push"))
+
+    def test_powershell_flag_abbreviations(self):
+        for flag in ("-Command", "-command", "-Comm", "-co", "-c"):
+            self.assertIsNotNone(
+                eng.deny_reason('powershell %s "%s push origin main"' % (flag, G)), flag)
+
+    def test_powershell_encoded_command_is_gated(self):
+        # base64 는 구조 판정 불가 — 조용히 통과시키지 않는다
+        self.assertIsNotNone(
+            eng.deny_reason("powershell -EncodedCommand cAB1AHMAaAA= push"))
+
+    def test_prefix_does_not_swallow_real_command(self):
+        # 수식어 건너뛰기가 과해서 무관한 명령을 git 으로 오인하면 안 된다
+        self.assertIsNone(eng.deny_reason("timeout 30 npm test"))
+        self.assertIsNone(eng.deny_reason("nice -n 10 ls -la"))
 
 
 class GitCommitDetectionTest(unittest.TestCase):
@@ -166,8 +236,23 @@ class TokenHelperTest(unittest.TestCase):
     """판정을 떠받치는 보조 함수 — 경계 동작을 직접 고정한다."""
 
     def test_segments_split_on_shell_separators(self):
-        self.assertEqual(eng._command_segments("a && b || c; d | e"),
-                         ["a", "b", "c", "d", "e"])
+        segments, failed = eng._command_segments("a && b || c; d | e")
+        self.assertFalse(failed)
+        self.assertEqual(segments, [["a"], ["b"], ["c"], ["d"], ["e"]])
+
+    def test_segments_keep_quoted_separators_together(self):
+        segments, failed = eng._command_segments('echo "a; b | c" && ls')
+        self.assertFalse(failed)
+        self.assertEqual(segments, [["echo", "a; b | c"], ["ls"]])
+
+    def test_segments_report_parse_failure(self):
+        segments, failed = eng._command_segments('echo "열린 따옴표')
+        self.assertTrue(failed)
+        self.assertEqual(segments, [])
+
+    def test_fold_continuations(self):
+        self.assertEqual(eng._fold_continuations("a \\\nb"), "a  b")
+        self.assertEqual(eng._fold_continuations("a \\\r\nb"), "a  b")
 
     def test_exe_name_normalizes_path_and_extension(self):
         for token, expected in (("/usr/bin/git", "git"), ("C:\\Program Files\\Git\\git.exe", "git"),

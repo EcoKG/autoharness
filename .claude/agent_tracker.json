@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T09:23:05.026200+00:00",
+  "updated_at": "2026-08-07T09:29:26.419068+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -424,9 +424,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/apply-gate-fixes-to-self-20260807T092201Z.log",
-      "commit": null,
+      "commit": "09dca87",
       "started_at": "2026-08-07T09:22:01.828257+00:00",
       "finished_at": "2026-08-07T09:23:05.025195+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "deny-tokenizer-hardening",
+      "title": "토큰 판정기의 우회 경로 3종 차단 (적대 검증 high 2건) — 이번 라운드에 넣은 판정기 자체의 결함이다. ① 세그먼트 분할이 인용을 무시한다: SHELL_SPLIT_RE 가 shlex 이전에 문자열을 자르므로 따옴표·heredoc 안의 ;·|·개행이 분할점이 되어 정상 커밋 명령이 스스로 파싱 불능이 되고 조용히 통과한다. 여러 줄 커밋 메시지는 표준 형태라 커밋 게이트가 헤드리스에서 무력화되고 postbash 의 sync_commit 도 안 돌아 커밋 SHA 가 장부에 안 남는다. 해법: shlex.shlex(punctuation_chars=True)로 전체를 한 번 토큰화한 뒤 연산자 토큰에서 그룹을 끊는다. ② 역슬래시 줄바꿈: `git \\\\<개행> push` 가 두 세그먼트로 쪼개져 어느 쪽도 git 호출로 인식되지 않는다. 해법: 분할 전에 줄 연속을 접는다. ③ 접두 수식어의 인자 수를 모른다: timeout N·nice -n N·sudo -u user·xargs 처럼 인자를 먹는 수식어를 인자 없는 것과 같이 취급해 실제 명령 위치를 놓친다. PowerShell 은 -c~-command 접두사 축약과 -EncodedCommand 도 처리해야 한다. ④ 가장 중요: '파싱 실패 → 조용히 건너뜀'을 없앤다. 판정 불가 세그먼트에 위험 키워드가 보이면 게이트로 승격해 사람에게 묻는다 — fail-open 이 곧 무검사 통과가 되지 않게 한다. 구조 판정을 1차로 두고 키워드는 판정 불가일 때만 쓰는 안전망이다. 회귀 테스트로 heredoc 커밋·구분자 포함 메시지·줄 연속·수식어 접두·PowerShell 축약을 전부 고정할 것.",
+      "path": "bin/harness_engine.py",
+      "deps": [],
+      "priority": 5,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/deny-tokenizer-hardening-20260807T092826Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T09:28:26.383659+00:00",
+      "finished_at": "2026-08-07T09:29:26.419068+00:00",
       "test_cmd": null
     }
   ]
