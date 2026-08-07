@@ -223,6 +223,15 @@ function Install-WatchdogTask {
     }
     Write-Step ("작업 스케줄러 등록 완료: " + $TaskName + " (" + $IntervalMinutes + "분 간격)")
 
+    # 설치 시각·주기를 레지스트리에 남긴다 — watchdog_status 의 유예 판정 기준이다.
+    # 이게 없으면 첫 주기가 오기 전에 '실행 흔적 없음' 경고가 떠 오탐이 된다.
+    # 기록 실패가 설치를 깨뜨리면 안 되므로 실패해도 계속 진행한다.
+    $mcpScript = Join-Path $Dst "bin\harness_mcp.py"
+    if (Test-Path $mcpScript) {
+        & $python $mcpScript stamp-watchdog-install --interval-minutes $IntervalMinutes | Out-Null
+        if (-not $?) { Write-Step "설치 시각 기록에 실패했습니다 (설치는 정상 — 진단 유예만 영향)" }
+    }
+
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -ne $task) {
         $exec = $task.Actions[0].Execute

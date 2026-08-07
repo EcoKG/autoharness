@@ -271,6 +271,39 @@ class GraceWindowTest(HealthTestBase):
         self.write_log(age_minutes=1)
         self.assertEqual(self.health(reg=registry())["state"], "healthy")
 
+    def test_scheduler_never_ran_without_stamp_is_grace(self):
+        """설치 스크립트(install.ps1 -Watchdog / install.sh --watchdog)로 등록해
+        설치 스탬프가 없는 환경 — 스케줄러가 '미실행'을 보고하면 유예다.
+
+        스탬프에만 의존하던 첫 구현은 이 경로 사용자가 전부 오탐을 맞았다(실측 재현)."""
+        h = self.health(q=query(last_result=str(0x41303)), reg=registry())
+        self.assertEqual(h["state"], "grace")
+        self.assertEqual(h["warnings"], [])
+
+    def test_never_ran_but_log_exists_is_not_graced(self):
+        # 실행 흔적이 있는데 '미실행' 보고면 유예 대상이 아니다 — 정상 판정으로 간다
+        self.write_log(age_minutes=1)
+        self.assertEqual(
+            self.health(q=query(last_result=str(0x41303)), reg=registry())["state"], "healthy")
+
+    def test_never_ran_with_stale_log_still_warns(self):
+        self.write_log(age_minutes=200)
+        h = self.health(q=query(last_result=str(0x41303)), reg=registry(), interval=15)
+        self.assertEqual(h["state"], "stale")
+
+    def test_refused_code_without_stamp_is_not_graced(self):
+        """원래 결함(0x800710E0 반려)은 스탬프가 없어도 유예로 숨기지 않는다."""
+        h = self.health(q=query(last_result="-2147020576"), reg=registry())
+        self.assertEqual(h["state"], "stale")
+        self.assertTrue(any("0x800710E0" in w for w in h["warnings"]))
+
+    def test_never_ran_rescue_does_not_apply_when_stamp_exists(self):
+        # 스탬프가 있으면 그 값이 우선 — 유예 창을 지났으면 미실행이라도 경고한다
+        h = self.health(q=query(last_result=str(0x41303)),
+                        reg=registry(installed_at="INSTALL"),
+                        interval=15, ages={"INSTALL": 600.0})
+        self.assertEqual(h["state"], "stale")
+
     def test_recent_tick_without_log_file_is_not_stale(self):
         # 로그가 지워졌어도 last_tick 이 최근이면 워치독은 돌고 있다
         h = self.health(reg=registry(last_tick="TICK"), ages={"TICK": 3.0})
@@ -329,6 +362,84 @@ class WatchdogTickStampTest(unittest.TestCase):
             self.run_watchdog(["--registry", self.registry_path, "--dry-run"]), 0)
         reg = eng.load_json(self.registry_path)
         self.assertIsNone((reg or {}).get("last_tick"))
+
+
+class StampCliTest(unittest.TestCase):
+    """설치 스크립트가 부르는 stamp-watchdog-install CLI — 레지스트리에만 부작용을 낸다."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ah-stamp-")
+        self.registry_path = os.path.join(self.tmp, "registry.json")
+        self._saved = mcp.REGISTRY_PATH
+        mcp.REGISTRY_PATH = self.registry_path      # 사용자 레지스트리 오염 방지
+
+    def tearDown(self):
+        mcp.REGISTRY_PATH = self._saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def read(self):
+        import harness_engine as eng
+        return eng.load_json(self.registry_path) or {}
+
+    def test_stamp_writes_install_time_and_interval(self):
+        mcp.cli_stamp_watchdog_install(["--interval-minutes", "30"])
+        s = self.read().get("settings") or {}
+        self.assertTrue(s.get("watchdog_installed_at"))
+        self.assertEqual(s.get("watchdog_interval_minutes"), 30)
+
+    def test_stamp_defaults_to_15_minutes(self):
+        mcp.cli_stamp_watchdog_install([])
+        self.assertEqual((self.read().get("settings") or {}).get("watchdog_interval_minutes"), 15)
+
+    def test_stamp_preserves_existing_projects(self):
+        import harness_engine as eng
+        eng.atomic_write_json(self.registry_path,
+                              {"schema_version": 1, "settings": {"stale_minutes": 42},
+                               "projects": [project("keepme")]})
+        mcp.cli_stamp_watchdog_install(["--interval-minutes", "15"])
+        reg = self.read()
+        self.assertEqual([p["id"] for p in reg["projects"]], ["keepme"])
+        self.assertEqual(reg["settings"]["stale_minutes"], 42)   # 기존 설정 보존
+        self.assertTrue(reg["settings"]["watchdog_installed_at"])
+
+    def test_stamped_registry_is_graced(self):
+        # 스탬프 직후에는 로그·tick 이 없어도 경고가 없어야 한다(설치 경로 오탐 해소)
+        mcp.cli_stamp_watchdog_install(["--interval-minutes", "15"])
+        h = mcp.watchdog_health(query(), self.read(),
+                                os.path.join(self.tmp, "nolog.log"), interval_minutes=15)
+        self.assertEqual(h["state"], "grace")
+        self.assertEqual(h["warnings"], [])
+
+    def test_cli_registry_is_dispatchable(self):
+        self.assertIn("stamp-watchdog-install", mcp.CLI_COMMANDS)
+        self.assertIn("finish-init", mcp.CLI_COMMANDS)
+
+
+class InstallerWiringTest(unittest.TestCase):
+    """두 설치 스크립트가 워치독 등록 직후 실제로 스탬프를 호출하는지 — 배선 고정."""
+
+    def read(self, name):
+        with open(os.path.join(REPO, name), "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    def test_install_ps1_calls_stamp(self):
+        text = self.read("install.ps1")
+        self.assertIn("stamp-watchdog-install", text)
+        self.assertIn("--interval-minutes", text)
+
+    def test_install_sh_calls_stamp(self):
+        text = self.read("install.sh")
+        self.assertIn("stamp-watchdog-install", text)
+        self.assertIn("--interval-minutes", text)
+
+    def test_stamp_is_after_registration_not_before(self):
+        # 등록에 실패했는데 설치 시각만 남으면 유예가 실제 결함을 가린다
+        text = self.read("install.sh")
+        self.assertLess(text.index("cron 워치독 등록 완료"),
+                        text.index("stamp-watchdog-install"))
+        text = self.read("install.ps1")
+        self.assertLess(text.index("작업 스케줄러 등록 완료"),
+                        text.index("stamp-watchdog-install"))
 
 
 if __name__ == "__main__":

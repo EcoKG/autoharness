@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:55:49.851443+00:00",
+  "updated_at": "2026-08-07T04:57:26.772246+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -328,9 +328,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/refresh-loop-engine-detection-20260807T035500Z.log",
-      "commit": null,
+      "commit": "dd46b43",
       "started_at": "2026-08-07T03:55:00.777421+00:00",
       "finished_at": "2026-08-07T03:55:49.851443+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "watchdog-install-stamp",
+      "title": "설치 스크립트로 등록한 워치독이 유예 판정에서 누락되는 오탐 — install.ps1 -Watchdog 과 install.sh --watchdog 는 레지스트리에 아무것도 쓰지 않아 settings.watchdog_installed_at 이 없다. 그런데 watchdog_health 의 유예(grace) 판정은 그 값에만 의존하므로, 설치 스크립트 경로로 등록한 사용자는 첫 주기가 오기 전에 곧바로 stale 경고를 받는다(실측 재현). MCP watchdog_install 경로만 유예를 받는 비대칭이며 detect-dead-watchdog 요구사항 ④(설치 직후는 경고 대상 아님)를 절반만 충족한 상태다. 요구사항: ① harness_mcp.py 에 설치 시각·주기를 레지스트리에 기록하는 CLI 서브커맨드를 추가하고 두 설치 스크립트의 워치독 등록 성공 직후 호출할 것 ② 이미 설치된 환경(스탬프 없음)도 구제되도록, 스케줄러가 '한 번도 실행 안 됨'(0x41303)을 보고하고 실행 흔적이 없으면 유예로 볼 것 ③ 다만 그 유예가 영구화되면 원래 결함을 놓치므로 반려 코드(0x800710E0 등)는 유예 중에도 경고를 유지할 것 ④ 오탐·정탐 경계를 tests/ 회귀 테스트로 고정",
+      "path": "bin/harness_mcp.py",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/watchdog-install-stamp-20260807T045639Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T04:56:39.942208+00:00",
+      "finished_at": "2026-08-07T04:57:26.772246+00:00",
       "test_cmd": null
     }
   ]

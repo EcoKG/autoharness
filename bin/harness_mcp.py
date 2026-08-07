@@ -627,6 +627,7 @@ def tool_watchdog_uninstall(a):
 
 STALE_INTERVAL_MULTIPLIER = 3     # 기대 주기의 몇 배까지를 정상으로 볼지 (경고·유예 공통)
 DEFAULT_INTERVAL_MINUTES = 15
+SCHED_NEVER_RUN = 0x41303         # 스케줄러가 보고하는 '작업이 한 번도 실행된 적 없음'
 
 # 흔한 작업 스케줄러 결과 코드 — 0 이 아니어도 실패가 아닌 정보성 값이 있다
 SCHED_RESULT_MEANINGS = {
@@ -761,11 +762,21 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
     projects = reg.get("projects") or []
     never_launched = [p.get("id") for p in projects if not (p.get("last_launch") or {}).get("ts")]
 
+    # 스케줄러가 직접 알려주는 '아직 한 번도 실행 안 됨' — 설치 스탬프가 없는 환경
+    # (install.ps1 -Watchdog / install.sh --watchdog 로 등록했거나 구버전 설치본)의
+    # 유예 근거로 쓴다. 스탬프에만 의존하면 그 경로 사용자가 전부 오탐을 맞는다.
+    never_ran_per_scheduler = bool(result and result["code"] == SCHED_NEVER_RUN)
+
     warnings = []
     if not registered:
         state = "not_registered"
     elif since_install is not None and since_install < threshold:
         # 설치 직후 아직 주기가 안 온 경우 — 경고 대상 아님(오탐 금지)
+        state = "grace"
+    elif since_install is None and never_ran_per_scheduler and age is None and since_tick is None:
+        # 설치 시각을 모르지만 스케줄러가 '미실행'을 보고 — 첫 주기 전으로 본다.
+        # 이 유예는 영구화될 수 있으나(트리거 오설정 등) 그 경우 결과 코드가 미실행이
+        # 아닌 실패 코드로 바뀌므로 아래 결과 코드 경고가 결함을 잡는다.
         state = "grace"
     elif age is None and since_tick is None:
         state = "stale"
@@ -1115,12 +1126,45 @@ def cli_finish_init(argv):
     print(json.dumps(done, ensure_ascii=False, indent=2))
 
 
+def cli_stamp_watchdog_install(argv):
+    """설치 스크립트(install.ps1 -Watchdog / install.sh --watchdog)가 워치독 등록에
+    성공한 직후 호출한다 — 레지스트리에 설치 시각·주기를 남겨 watchdog_status 의 유예
+    판정이 MCP 경로와 동일하게 동작하게 한다.
+
+    사용: python3 harness_mcp.py stamp-watchdog-install [--interval-minutes 15]
+
+    스탬프가 없으면 설치 직후에도 stale 경고가 떠 오탐이 된다. 실패해도 설치 자체를
+    깨뜨리면 안 되므로 어떤 예외에서도 0 으로 끝난다(fail-open).
+    """
+    import argparse   # CLI 전용 — MCP 서버 기동 경로에서는 임포트하지 않는다
+    ap = argparse.ArgumentParser(prog="harness_mcp.py stamp-watchdog-install")
+    ap.add_argument("--interval-minutes", dest="interval_minutes", type=int, default=15)
+    a = ap.parse_args(argv)
+    try:
+        reg = registry_load()
+        reg["settings"]["watchdog_installed_at"] = now_iso()
+        reg["settings"]["watchdog_interval_minutes"] = max(1, a.interval_minutes)
+        registry_save(reg)
+        print(json.dumps({"ok": True, "registry": REGISTRY_PATH,
+                          "watchdog_installed_at": reg["settings"]["watchdog_installed_at"],
+                          "watchdog_interval_minutes": reg["settings"]["watchdog_interval_minutes"]},
+                         ensure_ascii=False))
+    except Exception as e:
+        sys.stderr.write("[stamp-watchdog-install] 기록 실패(설치는 계속): %r\n" % (e,))
+
+
+CLI_COMMANDS = {
+    "finish-init": cli_finish_init,
+    "stamp-watchdog-install": cli_stamp_watchdog_install,
+}
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "finish-init":
-        cli_finish_init(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] in CLI_COMMANDS:
+        CLI_COMMANDS[sys.argv[1]](sys.argv[2:])
     elif len(sys.argv) > 1:
         sys.stderr.write("알 수 없는 인자입니다. MCP 서버는 인자 없이 실행되며, "
-                         "CLI 는 finish-init 만 지원합니다.\n")
+                         "CLI 는 %s 만 지원합니다.\n" % ", ".join(sorted(CLI_COMMANDS)))
         sys.exit(2)
     else:
         serve()

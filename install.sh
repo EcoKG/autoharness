@@ -147,6 +147,12 @@ if [ "$DO_WATCHDOG" = "1" ]; then
     CRON_LINE="*/$INTERVAL * * * * PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin $PY $DST/bin/harness_watchdog.py >> $RUNTIME/logs/cron.log 2>&1"
     ( crontab -l 2>/dev/null | grep -v "$CRON_MARK" || true; echo "$CRON_LINE" ) | crontab -
     step "cron 워치독 등록 완료 (${INTERVAL}분 간격)"
+    # 설치 시각·주기를 레지스트리에 기록 — watchdog_status 의 유예 판정 기준(오탐 방지).
+    # 실패해도 설치를 중단하지 않는다.
+    if [ -f "$DST/bin/harness_mcp.py" ]; then
+        "$PY" "$DST/bin/harness_mcp.py" stamp-watchdog-install --interval-minutes "$INTERVAL" \
+            >/dev/null 2>&1 || step "설치 시각 기록 실패 (설치는 정상 — 진단 유예만 영향)"
+    fi
     if ! pgrep -x cron >/dev/null 2>&1 && ! pgrep -x crond >/dev/null 2>&1; then
         step "주의: cron 데몬이 실행 중이 아닙니다. WSL 에서는 'sudo service cron start' 를 실행하거나"
         step "      /etc/wsl.conf 에 [boot] systemd=true 를 설정해 cron 을 켜야 자동 부활이 동작합니다."
