@@ -495,6 +495,50 @@ def print_status(reg, registry_path, runtime_dir):
             print("  " + ln)
 
 
+# ------------------------------------------------- 레지스트리 저장 (갱신 소실 방지)
+
+def project_key(proj):
+    return os.path.normcase(os.path.abspath(proj.get("repo") or ""))
+
+
+def save_registry_merged(registry_path, reg, touched, log):
+    """저장 직전 디스크를 다시 읽어, **이번 주기에 실제로 바꾼 프로젝트만** 병합해 쓴다.
+
+    주기 시작에 읽은 메모리 사본을 통째로 되쓰면, 주기 도중 MCP 가 기록한 변경
+    (task_add 재활성화·pause·model_set·설치 스탬프)이 조용히 되돌려진다. completed
+    프로젝트에 작업을 넣어도 다음 주기가 completed 로 되돌리면 자동 부활이 영구 무효가
+    되는 경로였다."""
+    disk = eng.load_json(registry_path)
+    if not isinstance(disk, dict) or not isinstance(disk.get("projects"), list):
+        eng.atomic_write_json(registry_path, reg)   # 디스크가 이상하면 메모리본을 쓴다
+        return
+    by_key = {}
+    for p in disk["projects"]:
+        by_key.setdefault(project_key(p), p)
+    added = 0
+    for p in reg.get("projects") or []:
+        key = project_key(p)
+        if key not in touched:
+            continue                     # 안 만진 프로젝트는 디스크 값을 그대로 둔다
+        target = by_key.get(key)
+        if target is None:
+            disk["projects"].append(p)   # 주기 중 새로 등록됐다가 사라진 경우는 없다
+            added += 1
+            continue
+        for field in WATCHDOG_OWNED_FIELDS:
+            if field in p:
+                target[field] = p[field]
+    disk["last_tick"] = reg.get("last_tick")
+    eng.atomic_write_json(registry_path, disk)
+    if added:
+        log("-", "info", "레지스트리 병합 저장 — 신규 항목 %d건" % added)
+
+
+# 워치독이 소유하는 필드 — 이 필드만 되쓴다
+WATCHDOG_OWNED_FIELDS = ("status", "consecutive_errors", "limit_hits",
+                         "next_retry_at", "last_launch", "updated_at")
+
+
 # ---------------------------------------------------------------- main
 
 def main(argv=None):
@@ -537,9 +581,11 @@ def main(argv=None):
     try:
         if not projects:
             log("-", "idle", "등록된 프로젝트 없음")
+        touched = set()
         for proj in projects:
             try:
-                handle_project(proj, settings, runtime_dir, probe_sec, False, log)
+                if handle_project(proj, settings, runtime_dir, probe_sec, False, log):
+                    touched.add(project_key(proj))
             except Exception as e:
                 # 한 프로젝트의 예외가 다른 프로젝트 처리를 막으면 안 된다
                 log(proj.get("id") or "?", "error", "워치독 내부 예외: %r" % (e,))
@@ -547,7 +593,7 @@ def main(argv=None):
         # skip/completed 주기에는 갱신되지 않아 '한 번도 기동 안 됨'과 '워치독이 아예
         # 안 돎'을 구분하지 못한다. 그 구분이 진단(watchdog_status)의 판정 근거다.
         reg["last_tick"] = eng.now_iso()
-        eng.atomic_write_json(registry_path, reg)
+        save_registry_merged(registry_path, reg, touched, log)
     finally:
         release_lock(runtime_dir)
     return 0

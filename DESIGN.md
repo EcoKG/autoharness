@@ -201,6 +201,20 @@ autoharness/
 }
 ```
 
+**쓰기 무결성 계약**(적대 검증에서 실측된 결함 2건):
+
+- **파손은 부재와 다르다.** 쓰기 경로(`registry_load`)는 파손된 registry.json 을 기본값으로
+  대체하지 않는다 — `.corrupt-<ts>` 로 대피시킨 뒤 중단한다. 종전에는 둘 다 기본값으로
+  대체돼, 파손 상태에서 무언가를 등록하면 이어지는 저장이 **등록된 프로젝트를 전부 지웠고**
+  성공 보고까지 나갔다. 읽기 전용 진단(`harness_status`·`watchdog_status`)은 파손 상태에서도
+  답하되 `registry_state`(ok|missing|corrupt)를 함께 보고한다.
+- **워치독은 통째로 되쓰지 않는다.** 주기 끝 저장은 디스크를 다시 읽어 **이번 주기에 실제로
+  바꾼 프로젝트의 소유 필드만**(`status`·`consecutive_errors`·`limit_hits`·`next_retry_at`·
+  `last_launch`·`updated_at`) 병합한다. 종전에는 주기 시작의 메모리 사본을 통째로 저장해,
+  주기 도중 MCP 가 기록한 변경(task_add 재활성화·pause·model_set·설치 스탬프)이 조용히
+  되돌려졌다 — completed 프로젝트에 작업을 넣어도 다음 주기가 되돌리면 자동 부활이 영구
+  무효가 되는 경로였다.
+
 `last_tick` 은 워치독이 **한 주기라도 실제로 돌았다**는 증거로, 기동 여부와 무관하게 매
 실행(dry-run 제외) 끝에 기록된다. `last_launch` 는 헤드리스 세션을 실제로 띄웠을 때만
 갱신되므로 skip/completed 주기에는 null 로 남는다 — 둘을 섞으면 "워치독이 죽었다"와

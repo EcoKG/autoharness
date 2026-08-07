@@ -176,16 +176,53 @@ def default_registry():
     }
 
 
-def registry_load():
-    reg = eng.load_json(REGISTRY_PATH)
+REGISTRY_OK, REGISTRY_MISSING, REGISTRY_CORRUPT = "ok", "missing", "corrupt"
+
+
+def registry_load_checked():
+    """(레지스트리, 상태) — 상태는 ok|missing|corrupt.
+
+    **부재와 파손을 구분한다.** 종전에는 둘 다 기본값으로 대체돼, 파일이 파손된 상태에서
+    무언가를 등록하면 이어지는 저장이 기존 프로젝트를 전부 지웠다(ok:true 로 성공 보고까지
+    나갔다). 워치독은 같은 파일에 대해 파손이면 덮어쓰지 않고 종료하는데, 두 주체의 규칙이
+    정면으로 어긋나 있었다."""
+    if not os.path.exists(REGISTRY_PATH):
+        return default_registry(), REGISTRY_MISSING
+    try:
+        with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
+            reg = json.load(f)
+    except (OSError, ValueError):
+        return None, REGISTRY_CORRUPT
     if not isinstance(reg, dict):
-        reg = default_registry()
+        return None, REGISTRY_CORRUPT
     base = default_registry()
     reg.setdefault("schema_version", 1)
     if not isinstance(reg.get("settings"), dict):
         reg["settings"] = base["settings"]
     if not isinstance(reg.get("projects"), list):
         reg["projects"] = []
+    return reg, REGISTRY_OK
+
+
+def registry_backup_corrupt():
+    """파손된 레지스트리를 .bak-<ts> 로 대피시킨다 — 덮어쓰기 전에 원본을 남긴다."""
+    try:
+        backup = REGISTRY_PATH + ".corrupt-" + utc_stamp()
+        shutil.copyfile(REGISTRY_PATH, backup)
+        return backup
+    except OSError:
+        return None
+
+
+def registry_load():
+    """쓰기 경로용 — 파손이면 대피 후 중단한다(등록 프로젝트 전멸 방지)."""
+    reg, state = registry_load_checked()
+    if state == REGISTRY_CORRUPT:
+        backup = registry_backup_corrupt()
+        raise ToolError(
+            "레지스트리가 파손됐습니다: %s — 덮어쓰지 않고 중단합니다(등록된 프로젝트가 "
+            "지워지는 것을 막기 위함). 원본 사본: %s. 내용을 고치거나 파일을 지운 뒤 "
+            "다시 시도하십시오." % (REGISTRY_PATH, backup or "(대피 실패)"))
     return reg
 
 
@@ -420,8 +457,9 @@ def tool_harness_status(a):
     if code != 0:
         raise ToolError("status 실패 (exit %d): %s" % (code, (err or out).strip()))
     status = safe_json(out) or {"raw": out.strip()}
-    reg = registry_load()
-    status["registry"] = registry_find(reg, repo)
+    reg, registry_state = registry_load_checked()   # 읽기 전용 — 파손이어도 답한다
+    status["registry_state"] = registry_state
+    status["registry"] = registry_find(reg, repo) if reg is not None else None
     status["tracker_path"] = eng.rp(repo)["tracker"]
     return status
 
@@ -853,7 +891,10 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
 
 def tool_watchdog_status(a):
     query = _schtasks("/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST")
-    reg = registry_load()
+    # 진단은 파손 상태에서도 답해야 한다 — 읽기 전용이라 전멸 위험이 없다
+    reg, registry_state = registry_load_checked()
+    if reg is None:
+        reg = default_registry()
     projects = [{"id": p.get("id"), "repo": p.get("repo"), "status": p.get("status"),
                  "model": p.get("model"), "consecutive_errors": p.get("consecutive_errors"),
                  "limit_hits": p.get("limit_hits"), "next_retry_at": p.get("next_retry_at"),
@@ -868,7 +909,8 @@ def tool_watchdog_status(a):
                              interval_minutes=scheduler_interval_minutes() if query["exit_code"] == 0
                              else None)
     return {"task_name": TASK_NAME, "scheduler": query, "health": health,
-            "registry": {"path": REGISTRY_PATH, "settings": reg.get("settings"),
+            "registry": {"path": REGISTRY_PATH, "state": registry_state,
+                         "settings": reg.get("settings"),
                          "last_tick": reg.get("last_tick"), "projects": projects},
             "watchdog_log": {"path": WATCHDOG_LOG, "tail": log_tail}}
 
