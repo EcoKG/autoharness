@@ -277,6 +277,27 @@ def registered_marker_hooks(repo):
     return sorted(registered_hook_matchers(repo))
 
 
+def settings_states(repo):
+    """설정 파일별 상태 — ok|missing|corrupt.
+
+    load_json 은 파일 부재(OSError)와 JSON 파손(ValueError)을 같은 None 으로 뭉갠다.
+    그대로 쓰면 settings.json 이 깨졌을 때 '훅 미등록(수동 운용)'으로 판정해 경고 대상에서
+    빠진다 — 실제로는 훅이 전부 죽은 상태인데 오탐 금지 규칙에 가려진다(적대 검증에서 확인)."""
+    states = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(rp(repo)["claude_dir"], name)
+        if not os.path.exists(path):
+            states[name] = "missing"
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                json.load(f)
+            states[name] = "ok"
+        except (OSError, ValueError):
+            states[name] = "corrupt"
+    return states
+
+
 def registered_hook_matchers(repo):
     """등록된 하네스 훅 op → 그 훅이 걸린 matcher 문자열(없으면 "")."""
     found = {}
@@ -329,11 +350,32 @@ def hook_wiring_status(repo, tracker=None):
                         for op, m in matchers.items()
                         if op in MATCHER_SCOPED_OPS and not matcher_covers(m, tool)})
 
+    # 설정 파손을 '미등록'으로 오판하지 않는다 — 파손이면 훅이 전부 죽은 상태다
+    states = settings_states(repo)
+    corrupt_files = sorted(n for n, s in states.items() if s == "corrupt")
+    # 부분 등록: 일부만 걸려 있으면 나머지 게이트는 없는 상태인데 종전에는 드러나지 않았다
+    missing_ops = [op for op in MARKER_HOOK_OPS if op not in registered]
+
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
             "matchers": matchers, "uncovered_tools": uncovered,
+            "settings_states": states, "missing_hooks": missing_ops,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
+
+    extra_warnings = []
+    if corrupt_files:
+        extra_warnings.append(
+            "[AutoHarness 경고] 설정 파일이 파손됐습니다(%s) — Claude Code 가 읽지 못하면 훅이 "
+            "전부 비활성화됩니다. '미등록(수동 운용)'으로 보이지만 실제로는 게이트가 없는 "
+            "상태일 수 있습니다." % ", ".join(corrupt_files))
+    if registered and missing_ops:
+        extra_warnings.append(
+            "[AutoHarness 경고] 하네스 훅이 일부만 등록돼 있습니다 — 누락: %s. 등록되지 않은 "
+            "훅이 강제하던 규칙은 동작하지 않습니다." % ", ".join(missing_ops))
+
     if state == WIRING_INACTIVE:
-        info["warning"] = _wiring_warning(repo, info)
+        extra_warnings.insert(0, _wiring_warning(repo, info))
+    if extra_warnings:
+        info["warning"] = "\n".join(extra_warnings)
     return info
 
 

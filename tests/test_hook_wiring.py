@@ -217,6 +217,59 @@ class FalsePositiveBoundaryTest(WiringTestBase):
         self.assertEqual(self.wiring()["state"], eng.WIRING_INACTIVE)
 
 
+class DiagnosisGapTest(WiringTestBase):
+    """진단의 사각 2건 — 설정 파손을 미등록으로 오판, 부분 등록을 정상으로 보고(적대 검증)."""
+
+    def write_raw_settings(self, text, name="settings.json"):
+        os.makedirs(self.paths["claude_dir"], exist_ok=True)
+        with open(os.path.join(self.paths["claude_dir"], name), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_settings_states_distinguish_missing_and_corrupt(self):
+        self.init_tracker()
+        self.assertEqual(eng.settings_states(self.sandbox)["settings.json"], "missing")
+        self.write_raw_settings("{ 잘린 JSON")
+        self.assertEqual(eng.settings_states(self.sandbox)["settings.json"], "corrupt")
+        self.write_settings()
+        self.assertEqual(eng.settings_states(self.sandbox)["settings.json"], "ok")
+
+    def test_corrupt_settings_is_warned_not_silently_unregistered(self):
+        """파손이면 훅이 전부 죽은 상태인데 종전에는 '수동 운용' 으로 조용히 넘어갔다."""
+        self.init_tracker()
+        self.write_raw_settings("{ 잘린 JSON")
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(info["settings_states"]["settings.json"], "corrupt")
+        self.assertTrue(info["warning"])
+        self.assertIn("파손", info["warning"])
+
+    def test_partial_registration_is_warned(self):
+        """훅 일부만 등록된 상태 — 나머지 게이트는 없는데 active 로 보고됐다."""
+        self.init_tracker()
+        self.write_settings(commands=["python scripts/harness_engine.py hook-prebash"])
+        self.hook("hook-prebash", REAL_PAYLOAD)          # 등록된 것은 발화 → active
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(info["state"], eng.WIRING_ACTIVE)
+        self.assertIn("hook-postbash", info["missing_hooks"])
+        self.assertIn("hook-stop", info["missing_hooks"])
+        self.assertTrue(info["warning"])
+        self.assertIn("일부만", info["warning"])
+
+    def test_full_registration_has_no_partial_warning(self):
+        self.init_tracker()
+        self.write_settings()
+        self.hook("hook-prebash", REAL_PAYLOAD)
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(info["missing_hooks"], [])
+        self.assertIsNone(info["warning"])
+
+    def test_unregistered_repo_gets_no_partial_warning(self):
+        """오탐 금지 — 훅을 아예 안 쓰는 저장소는 '일부만 등록' 이 아니다."""
+        self.init_tracker()
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(info["state"], eng.WIRING_NOT_REGISTERED)
+        self.assertIsNone(info["warning"])
+
+
 class SecondarySignalTest(WiringTestBase):
     """보조 신호 — done 인데 커밋 SHA 가 비어 있으면 PostToolUse 미발화의 흔적이다."""
 
