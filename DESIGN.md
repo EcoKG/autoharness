@@ -220,9 +220,26 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 | 훅 | 명령 | 강제하는 규칙 |
 |---|---|---|
 | SessionStart | `... brief` | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입(진행 복구) |
-| PreToolUse(Bash) | `... hook-prebash` | ① `git push`/`--force`/`reset --hard`/`clean -fd` 차단(exit 2) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` 차단 ③ 커밋 허용 시 직전 HEAD 를 1회용 마커(`head_before_commit`)로 상태 파일에 기록 |
+| PreToolUse(Bash) | `... hook-prebash` | ① 금지 명령 게이트(`push`/`--force`/`reset --hard`/`clean -f`) ② **커밋 게이트**: 직전 harness run 성공 없이 `git commit` ③ 커밋이 일어날 수 있는 경로에서 직전 HEAD 를 1회용 마커(`head_before_commit`)로 기록. ①②의 **처리 방식은 컨텍스트가 정한다**(아래) |
 | PostToolUse(Bash) | `... hook-postbash` | `git commit` 직후 done 작업에 SHA 자동 기록 + 하트비트. **오귀속 방지**: prebash 마커와 대조해 HEAD 가 실제로 변한 경우에만 기록(nothing to commit 등 실패 커밋이 직전 SHA 를 가로채지 않는다). 마커 부재 시(수동 sync-commit·부분 설치)는 종전대로 기록 |
 | Stop | `... hook-stop` | 자율 주행 게이트(아래) + 하트비트 |
+
+**게이트 처리 방식은 컨텍스트가 정한다** (`gate_decision`) — 금지 명령 게이트와 커밋 게이트가
+**같은 판정 함수**를 쓴다:
+
+| 컨텍스트 | 처리 | 근거 |
+|---|---|---|
+| 헤드리스 (`CLAUDE_AUTOHARNESS=1`) | `deny` — exit 2 + stderr | 물어볼 사람이 없다 |
+| 대화형 | `ask` — exit 0 + `permissionDecision:"ask"` | 사람이 승인·거부를 결정한다 |
+| `HARNESS_PAUSED` 존재 | `ask` | 일시정지 = 사람이 직접 운전 중 |
+
+위험 모델은 "**사람이 없을 때** 에이전트가 되돌릴 수 없는 일을 하는 것"이다. 종전 구현은 이를
+무조건 exit 2 로 막아 사람이 눈앞에서 지시한 경우까지 덮었고, 사용자가 승인해도 실행이
+불가능했다. `hook-stop` 은 처음부터 `CLAUDE_AUTOHARNESS` 로 헤드리스를 식별했으므로 같은
+파일 안에서 기준이 갈렸던 것이다 — 이제 `is_headless_session()` 하나로 통일한다.
+
+`ask` 는 Claude Code 훅 계약의 `hookSpecificOutput.permissionDecision` 값이며,
+`allow`/`deny`/`ask`/`defer` 중 하나다. deny 는 stdout 을 쓰지 않고 ask 는 stderr 를 쓰지 않는다.
 
 **hook-stop 로직** (fail-open):
 1. 하트비트 갱신(항상).

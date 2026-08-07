@@ -86,19 +86,47 @@ class HookSandboxTest(unittest.TestCase):
 
 
 class PreBashDenyTest(HookSandboxTest):
-    """hook-prebash — 금지 명령 차단(exit 2)과 fail-open 계약."""
+    """hook-prebash — 금지 명령 게이트와 fail-open 계약.
+
+    게이트 처리 방식은 컨텍스트가 정한다(의도된 계약 변경):
+      헤드리스(CLAUDE_AUTOHARNESS=1) → exit 2 하드 차단
+      대화형                          → exit 0 + permissionDecision "ask"(사용자 승인 창)
+    """
 
     def assert_blocked(self, command):
-        r = self.hook("hook-prebash", command=command)
+        """무인 세션에서는 종전대로 하드 차단이어야 한다."""
+        r = self.hook("hook-prebash", command=command, autoharness="1")
         self.assertEqual(r.returncode, 2, "차단돼야 함: %s (stderr=%s)" % (command, r.stderr))
         self.assertIn("차단", r.stderr)
+
+    def assert_asked(self, command):
+        """대화형에서는 승인 요청으로 승격돼야 한다 — 사용자가 승인하면 실행된다."""
+        r = self.hook("hook-prebash", command=command)
+        self.assertEqual(r.returncode, 0, "승인 요청이어야 함: %s (stderr=%s)" % (command, r.stderr))
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "ask")
+        self.assertIn("AutoHarness", out["permissionDecisionReason"])
 
     def assert_allowed(self, command):
         r = self.hook("hook-prebash", command=command)
         self.assertEqual(r.returncode, 0, "허용돼야 함: %s (stderr=%s)" % (command, r.stderr))
+        self.assertEqual(r.stdout.strip(), "", "개입 없이 통과해야 함: %s" % r.stdout)
 
     def test_blocks_git_push(self):
         self.assert_blocked("git push origin main")
+
+    def test_interactive_push_escalates_to_ask(self):
+        """사용자가 지시한 경우까지 막던 모순 — 대화형에서는 승인 창으로 승격된다."""
+        self.assert_asked("git push origin main")
+
+    def test_paused_escalates_to_ask_even_when_headless(self):
+        """일시정지는 사람이 직접 운전 중이라는 뜻 — 하드 차단하지 않는다."""
+        os.makedirs(self.paths["claude_dir"], exist_ok=True)
+        with open(self.paths["paused_flag"], "w", encoding="utf-8") as f:
+            f.write("")
+        r = self.hook("hook-prebash", command="git push origin main", autoharness="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
 
     def test_blocks_git_push_korean_text(self):
         # stdin 이 utf-8 로 디코드되지 않으면 한글 명령이 오염돼 fail-open 으로 뒤집힌다
@@ -136,13 +164,26 @@ class PreBashCommitGateTest(HookSandboxTest):
     """hook-prebash — 커밋 게이트: 검증 통과 기록 없는 커밋 차단."""
 
     def test_blocks_commit_without_passing_run(self):
+        """무인 세션 — 검증 통과 기록 없는 커밋은 하드 차단."""
         self.init_tracker(["t1"])
         r = self.engine("run", "--task", "t1", "--cmd", FAIL_CMD)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        r = self.hook("hook-prebash", command='git commit -m "작업"')
+        r = self.hook("hook-prebash", command='git commit -m "작업"', autoharness="1")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("커밋 게이트", r.stderr)
         self.assertIn("t1", r.stderr)
+
+    def test_interactive_commit_gate_escalates_to_ask(self):
+        """대화형에서는 커밋 게이트도 승인 창으로 승격된다 — 두 게이트가 같은 규칙을 쓴다."""
+        self.init_tracker(["t1"])
+        self.engine("run", "--task", "t1", "--cmd", FAIL_CMD)
+        r = self.hook("hook-prebash", command='git commit -m "작업"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "ask")
+        self.assertIn("커밋 게이트", out["permissionDecisionReason"])
+        # 승인되면 커밋이 실제로 일어나므로 오귀속 방지 마커가 남아 있어야 한다
+        self.assertIn("head_before_commit", self.read_state())
 
     def test_allows_commit_after_passing_run(self):
         self.init_tracker(["t1"])

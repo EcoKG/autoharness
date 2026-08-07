@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T09:08:24.202494+00:00",
+  "updated_at": "2026-08-07T09:14:41.150099+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -373,7 +373,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/deny-command-tokenize-20260807T090726Z.log",
-      "commit": null,
+      "commit": "94415c3",
       "started_at": "2026-08-07T09:07:26.763099+00:00",
       "finished_at": "2026-08-07T09:08:24.202494+00:00",
       "test_cmd": null
@@ -386,13 +386,13 @@
         "deny-command-tokenize"
       ],
       "priority": 20,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/gate-decision-context-20260807T091334Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-07T09:13:34.590369+00:00",
+      "finished_at": "2026-08-07T09:14:41.150099+00:00",
       "test_cmd": null
     },
     {

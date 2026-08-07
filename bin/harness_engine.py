@@ -1100,32 +1100,87 @@ def invokes_git_commit(command):
     return any(sub == "commit" for sub, _ in _walk_git_invocations(command))
 
 
+# ------------------------------------------------- 게이트 판정 (컨텍스트 인지)
+#
+# 위험 모델은 "사람이 없을 때 에이전트가 되돌릴 수 없는 일을 하는 것"이다. 그런데
+# 종전 구현은 금지 명령을 무조건 exit 2 로 막아, **사람이 눈앞에서 지시한 경우까지**
+# 덮었다 — 사용자가 승인해도 실행이 불가능했다. 같은 파일의 hook-stop 은
+# CLAUDE_AUTOHARNESS 로 헤드리스를 식별해 대화형을 건드리지 않는데 여기만 달랐다.
+#
+# 그래서 두 게이트(금지 명령·커밋)가 같은 판정 함수를 쓰게 통일한다:
+#   헤드리스(무인)          → deny  : 물어볼 사람이 없으므로 하드 차단
+#   대화형 / 일시정지 중     → ask   : 사용자 승인 창으로 승격 — 사람이 결정한다
+#
+# ask 는 Claude Code 훅 계약의 hookSpecificOutput.permissionDecision 값이다.
+
+GATE_DENY = "deny"
+GATE_ASK = "ask"
+
+
+def is_headless_session():
+    """워치독이 띄운 무인 세션인가 — hook-stop 과 동일한 식별 기준."""
+    return os.environ.get("CLAUDE_AUTOHARNESS") == "1"
+
+
+def gate_decision(repo):
+    """게이트가 걸렸을 때의 처리 방식 — 사람이 개입할 수 있는 자리인가로 정한다."""
+    if os.path.exists(rp(repo)["paused_flag"]):
+        return GATE_ASK          # 일시정지 = 사람이 직접 운전 중
+    return GATE_DENY if is_headless_session() else GATE_ASK
+
+
+def emit_gate(decision, reason, command=""):
+    """게이트 결과를 훅 계약대로 내보내고 종료한다."""
+    if decision == GATE_DENY:
+        sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (reason, command[:200]))
+        sys.exit(2)
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": "[AutoHarness] " + reason,
+    }}, ensure_ascii=False))
+    sys.exit(0)
+
+
+def commit_gate_reason(repo):
+    """커밋 게이트가 걸리는 사유 — 통과면 None."""
+    tracker = load_tracker(repo, required=False)
+    if not tracker or not tracker.get("tasks"):
+        return None
+    if os.path.exists(rp(repo)["paused_flag"]):
+        return None                      # 일시정지 중에는 게이트를 걸지 않는다
+    active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
+    if not active:
+        return None
+    if ((load_state(repo).get("last_run")) or {}).get("ok"):
+        return None
+    return ("커밋 게이트: 진행 중 작업(%s)의 harness 검증 통과 기록이 없습니다. "
+            "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오."
+            % (active[0]["id"], active[0]["id"]))
+
+
 def cmd_hook_prebash(a):
     try:
         data = read_hook_input()
         command = (data.get("tool_input") or {}).get("command", "") or ""
         write_heartbeat(a.repo, "hook")
         record_hook_fire(a.repo, "hook-prebash", data)
+        decision = gate_decision(a.repo)
+
         reason = deny_reason(command)
         if reason:
-            sys.stderr.write("[AutoHarness 차단] %s: %s\n" % (reason, command[:200]))
-            sys.exit(2)
+            emit_gate(decision, reason, command)
+
         if invokes_git_commit(command):
-            tracker = load_tracker(a.repo, required=False)
-            if tracker and tracker["tasks"] and not os.path.exists(rp(a.repo)["paused_flag"]):
-                active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
+            gate = commit_gate_reason(a.repo)
+            # 커밋이 실제로 일어날 수 있는 경로에서는 직전 HEAD 를 1회용 마커로 남긴다
+            # (postbash 가 '새 커밋 생성'을 검증한다). 하드 차단이면 커밋이 없으므로 생략.
+            if not (gate and decision == GATE_DENY):
                 state = load_state(a.repo)
-                lr = state.get("last_run") or {}
-                if active and not lr.get("ok"):
-                    sys.stderr.write(
-                        "[AutoHarness 차단] 커밋 게이트: 진행 중 작업(%s)의 harness 검증 통과 기록이 없습니다. "
-                        "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오.\n"
-                        % (active[0]["id"], active[0]["id"]))
-                    sys.exit(2)
-            # 커밋 허용 — 직전 HEAD 를 1회용 마커로 남겨 postbash 가 '새 커밋 생성'을 검증한다
-            state = load_state(a.repo)
-            state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
-            save_state(a.repo, state)
+                state["head_before_commit"] = _git(a.repo, "rev-parse", "--short", "HEAD")
+                save_state(a.repo, state)
+            if gate:
+                emit_gate(decision, gate, command)
         sys.exit(0)
     except SystemExit:
         raise
