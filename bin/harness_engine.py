@@ -1024,7 +1024,31 @@ PWSH_SHELLS = {"powershell", "pwsh"}
 EXEC_DELEGATES = {"xargs"}
 SHELL_OPERATORS = ("&&", "||", ";", "|", "\n", "&")
 WRAPPER_MAX_DEPTH = 3          # 래퍼 재귀 상한 — 무한 중첩 방어
-FORCE_SUBCOMMANDS = {"branch", "checkout", "switch", "restore"}
+# --force 로 파괴적이 되는 서브커맨드. `restore` 는 --force 옵션 자체가 없어 제외한다
+# (적대 검증에서 '절대 발동하지 않는 죽은 규칙'으로 지적됨 — restore 는 아래 별도 규칙).
+FORCE_SUBCOMMANDS = {"branch", "checkout", "switch"}
+
+# 원격 상태를 바꾸는 gh 동작 — `git push` 없이도 원격을 바꿀 수 있으므로 함께 막는다.
+# 그룹별 쓰기 동사만 열거한다(list/view/status/diff/download 등 읽기는 통과).
+GH_WRITE_ACTIONS = {
+    "pr": {"create", "merge", "close", "reopen", "edit", "ready", "review", "comment"},
+    "release": {"create", "delete", "edit", "upload"},
+    "repo": {"create", "delete", "edit", "rename", "archive", "sync"},
+    "issue": {"create", "close", "reopen", "edit", "comment", "delete", "transfer"},
+    "workflow": {"run", "enable", "disable"},
+    "secret": {"set", "delete"},
+    "variable": {"set", "delete"},
+    "gist": {"create", "delete", "edit"},
+    "cache": {"delete"},
+    "label": {"create", "delete", "edit"},
+}
+GH_WRITE_METHODS = {"post", "put", "patch", "delete"}
+# 로컬 이력·작업물을 되돌릴 수 없게 파괴하는 git 동작
+HISTORY_DESTRUCTIVE = {
+    ("stash", "drop"), ("stash", "clear"),
+    ("reflog", "expire"), ("reflog", "delete"),
+    ("worktree", "remove"),
+}
 # 판정 불가(파싱 실패) 세그먼트에만 쓰는 안전망 키워드 — 구조 판정의 대체가 아니라 보조다.
 # 이게 없으면 파싱 실패가 곧 '무검사 통과'가 되어 fail-open 이 우회 경로가 된다.
 UNPARSED_RISK_RE = re.compile(
@@ -1179,34 +1203,84 @@ def _walk_git_invocations(command, depth=0):
                 for item in _walk_git_invocations(payload, depth + 1):
                     yield item
             continue
-        if exe != "git":
+        if exe not in ("git", "gh"):
             continue
         sub, rest = _git_subcommand(tokens[1:])
         if sub is not None:
-            yield sub, rest
+            yield (exe + ":" + sub) if exe == "gh" else sub, rest
 
 
 UNPARSED = "<unparsed>"
+
+
+def _first_positional(rest):
+    for a in rest:
+        if not a.startswith("-"):
+            return a
+    return None
+
+
+def _gh_deny_reason(group, rest):
+    """gh 는 push 없이도 원격을 바꾼다 — 그룹별 쓰기 동사를 막는다."""
+    if group == "api":
+        for i, a in enumerate(rest):
+            low = a.lower()
+            if low in ("-x", "--method") and i + 1 < len(rest):
+                if rest[i + 1].lower() in GH_WRITE_METHODS:
+                    return "gh api 쓰기 요청 금지 — 원격 상태를 바꿉니다"
+            if low.startswith("--method="):
+                if low.split("=", 1)[1] in GH_WRITE_METHODS:
+                    return "gh api 쓰기 요청 금지 — 원격 상태를 바꿉니다"
+        return None
+    action = _first_positional(rest)
+    if action and action in GH_WRITE_ACTIONS.get(group, ()):
+        return "원격 변경 금지 — gh %s %s 는 원격 상태를 바꿉니다" % (group, action)
+    return None
+
+
+def _git_deny_reason(sub, rest):
+    if sub == "push":
+        return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
+    if sub == "subtree" and "push" in rest:
+        return "원격 반영(subtree push) 금지 — 로컬 커밋만 허용됩니다"
+    if sub == "reset" and "--hard" in rest:
+        return "git reset --hard 금지"
+    if sub == "clean" and _has_force_flag(rest):
+        return "git clean 강제 삭제 금지"
+    if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
+        return "git --force 계열 금지"
+    if sub == "branch" and any(a == "-D" for a in rest):
+        return "git branch -D 금지 — 병합되지 않은 브랜치가 사라집니다"
+    if sub == "checkout" and "--" in rest:
+        return "git checkout -- 금지 — 커밋되지 않은 작업물이 사라집니다"
+    if sub == "restore" and "--staged" not in rest:
+        return "git restore 금지 — 커밋되지 않은 작업물이 사라집니다"
+    if (sub, _first_positional(rest)) in HISTORY_DESTRUCTIVE:
+        return "git %s %s 금지 — 되돌릴 수 없습니다" % (sub, _first_positional(rest))
+    if sub == "filter-branch":
+        return "git filter-branch 금지 — 이력을 되돌릴 수 없게 재작성합니다"
+    if sub == "update-ref" and "-d" in rest:
+        return "git update-ref -d 금지 — 참조가 사라집니다"
+    return None
 
 
 def deny_reason(command):
     """차단 사유 문자열, 없으면 None.
 
     구조 판정이 1차다. 파싱이 불가능한 경우에만 키워드 안전망을 쓴다 — 파싱 실패를
-    그냥 통과시키면 fail-open 이 곧 우회 경로가 된다(적대 검증에서 실측된 결함)."""
+    그냥 통과시키면 fail-open 이 곧 우회 경로가 된다(적대 검증에서 실측된 결함).
+
+    막으려는 것은 명령 이름이 아니라 **결과** 둘이다: 원격 상태 변경과 되돌릴 수 없는
+    로컬 파괴. 그래서 git 서브커맨드뿐 아니라 gh 쓰기 동사도 함께 본다."""
     for sub, rest in _walk_git_invocations(command):
         if sub == UNPARSED:
             if UNPARSED_RISK_RE.search(rest[0] if rest else ""):
                 return ("명령 구조를 해석할 수 없는데 위험 키워드가 보입니다 — 확인이 필요합니다")
             continue
-        if sub == "push":
-            return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
-        if sub == "reset" and "--hard" in rest:
-            return "git reset --hard 금지"
-        if sub == "clean" and _has_force_flag(rest):
-            return "git clean 강제 삭제 금지"
-        if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
-            return "git --force 계열 금지"
+        reason = (_gh_deny_reason(sub[3:], rest) if sub.startswith("gh:")
+                  else _git_deny_reason(sub, rest))
+        if reason:
+            return reason
     return None
 
 

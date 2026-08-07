@@ -125,6 +125,89 @@ class AllowTest(unittest.TestCase):
             '--title "' + G + ' push 차단이 오탐을 낸다"')
 
 
+class RemoteMutationTest(unittest.TestCase):
+    """차단 목적은 명령 이름이 아니라 **결과** 다 — gh 는 push 없이도 원격을 바꾼다(high)."""
+
+    def assert_denied(self, command):
+        self.assertIsNotNone(eng.deny_reason(command), "차단돼야 함: %s" % command)
+
+    def assert_allowed(self, command):
+        self.assertIsNone(eng.deny_reason(command),
+                          "허용돼야 함: %s (%s)" % (command, eng.deny_reason(command)))
+
+    def test_blocks_gh_write_actions(self):
+        for cmd in ("gh pr create --title x", "gh pr merge 12 --auto",
+                    "gh release create v1", "gh repo delete owner/x",
+                    "gh workflow run deploy.yml", "gh secret set TOKEN",
+                    "gh issue create --title x", "gh gist create f.txt"):
+            self.assert_denied(cmd)
+
+    def test_blocks_gh_api_write_methods(self):
+        for cmd in ("gh api -X POST /repos/x/y/issues", "gh api --method DELETE /x",
+                    "gh api --method=PATCH /x", "gh api -X put /x"):
+            self.assert_denied(cmd)
+
+    def test_allows_gh_read_actions(self):
+        for cmd in ("gh pr list", "gh pr view 12", "gh release list", "gh repo view",
+                    "gh issue list", "gh run view 3", "gh api /repos/x/y",
+                    "gh api -X GET /x", "gh pr checks"):
+            self.assert_allowed(cmd)
+
+    def test_blocks_subtree_push(self):
+        self.assert_denied("git subtree push --prefix=dist origin gh-pages")
+
+    def test_gh_inside_wrapper(self):
+        self.assert_denied("bash -c 'gh pr merge 12 --auto'")
+
+
+class LocalDestructionTest(unittest.TestCase):
+    """되돌릴 수 없는 로컬 파괴 — reset --hard 와 동급인 경로들(high)."""
+
+    def assert_denied(self, command):
+        self.assertIsNotNone(eng.deny_reason(command), "차단돼야 함: %s" % command)
+
+    def assert_allowed(self, command):
+        self.assertIsNone(eng.deny_reason(command),
+                          "허용돼야 함: %s (%s)" % (command, eng.deny_reason(command)))
+
+    def test_blocks_branch_force_delete(self):
+        self.assert_denied("git branch -D feature")
+
+    def test_allows_safe_branch_delete(self):
+        self.assert_allowed("git branch -d merged")
+        self.assert_allowed("git branch feature")
+
+    def test_blocks_working_tree_discard(self):
+        for cmd in ("git checkout -- .", "git checkout -- src/a.py", "git restore src/"):
+            self.assert_denied(cmd)
+
+    def test_allows_staged_restore_and_plain_checkout(self):
+        self.assert_allowed("git restore --staged file.txt")
+        self.assert_allowed("git checkout main")
+        self.assert_allowed("git checkout -b feature")
+
+    def test_blocks_stash_and_reflog_destruction(self):
+        for cmd in ("git stash drop", "git stash clear",
+                    "git reflog expire --expire=now --all", "git reflog delete x"):
+            self.assert_denied(cmd)
+
+    def test_allows_recoverable_stash_and_reflog(self):
+        for cmd in ("git stash list", "git stash pop", "git stash", "git reflog"):
+            self.assert_allowed(cmd)
+
+    def test_blocks_history_rewrite_and_ref_deletion(self):
+        self.assert_denied("git filter-branch --tree-filter x HEAD")
+        self.assert_denied("git update-ref -d refs/heads/x")
+        self.assert_denied("git worktree remove wt")
+
+    def test_allows_worktree_list(self):
+        self.assert_allowed("git worktree list")
+
+    def test_restore_is_not_a_dead_force_rule(self):
+        """적대 검증 지적 — restore 에는 --force 가 없어 옛 규칙은 절대 발동하지 않았다."""
+        self.assertNotIn("restore", eng.FORCE_SUBCOMMANDS)
+
+
 class UnparsableTest(unittest.TestCase):
     """④ 판정 불가 처리 — 조용한 통과가 곧 우회 경로였다(적대 검증 high).
 

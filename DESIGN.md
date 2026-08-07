@@ -111,8 +111,20 @@ autoharness/
    basename(확장자 제거)이 `git` 인지 판정
 4. 값을 먹는 git 전역 옵션(`-C` `-c` `--git-dir` `--work-tree` `--exec-path` …)을 건너뛰고
    **실제 서브커맨드** 식별
-5. 서브커맨드 기준 차단: `push` / `reset --hard` / `clean` +force / `branch·checkout·switch·
-   restore` +force. force 는 `--force`·`--force-with-lease`·결합 플래그(`-fd`)·재배치(`-d -f`) 인식
+5. 서브커맨드 기준 차단 — **막는 것은 명령 이름이 아니라 결과 둘**이다:
+   - **원격 상태 변경**: `git push`·`git subtree push`, 그리고 **`gh` 쓰기 동사**
+     (`pr create/merge/close/…`, `release create/delete/…`, `repo delete/…`, `workflow run`,
+     `secret set`, `issue create/…`, `gist create/…`). `gh api` 는 `-X`/`--method` 가
+     POST·PUT·PATCH·DELETE 일 때만. **`git push` 없이도 원격은 바뀐다** — 이 축이 빠져
+     있으면 "로컬 커밋만 허용" 이 무력하다.
+   - **되돌릴 수 없는 로컬 파괴**: `reset --hard`, `clean` +force, `branch·checkout·switch`
+     +force, `branch -D`, `checkout --`(작업물 폐기), `restore`(단 `--staged` 는 허용),
+     `stash drop/clear`, `reflog expire/delete`, `worktree remove`, `filter-branch`,
+     `update-ref -d`.
+   force 는 `--force`·`--force-with-lease`·결합 플래그(`-fd`)·재배치(`-d -f`)를 인식한다.
+   `restore` 는 `--force` 옵션 자체가 없어 force 목록에서 제외한다(발동 불가 규칙 제거).
+   `rebase` 는 의도적으로 제외한다 — 흔하고, `reflog expire` 를 막아 두었으므로 reflog 로
+   복구 가능하다.
 6. 래퍼(`bash -c` `sh -c` `powershell -Command`)의 페이로드는 **재귀 분석**한다 — 정규식이
    놓치던 우회 경로다(최대 3단, 초과 시 판정 포기)
 7. `shlex` 파싱 실패(따옴표 불균형 등)는 **fail-open** — 훅이 주행을 막지 않는다
