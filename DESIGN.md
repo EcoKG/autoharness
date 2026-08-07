@@ -156,7 +156,7 @@ autoharness/
 | `heartbeat` | repo_path* | 하트비트 갱신 |
 | `watchdog_install` | interval_minutes(기본 15) | schtasks 사용자 작업 `AutoHarnessWatchdog` 생성(/F 갱신) |
 | `watchdog_uninstall` | — | schtasks 삭제 |
-| `watchdog_status` | — | schtasks 조회 + 레지스트리 + watchdog.log tail |
+| `watchdog_status` | — | schtasks 조회 + 레지스트리 + watchdog.log tail + `health` 진단(§10) |
 
 `harness_init` 의 settings 병합: 기존 `.claude/settings.json` 을 로드해 `hooks` 4종(§8)과
 `permissions.allow` 항목(`Bash(bash scripts/agent_harness.sh:*)`, `Bash(python scripts/harness_engine.py:*)`)을
@@ -168,7 +168,9 @@ autoharness/
 {
   "schema_version": 1,
   "settings": {"stale_minutes": 30, "probe_sec": 90, "max_consecutive_errors": 5,
-               "limit_backoff_minutes": [30,60,120,240,360], "error_backoff_minutes": [15,30,60]},
+               "limit_backoff_minutes": [30,60,120,240,360], "error_backoff_minutes": [15,30,60],
+               "watchdog_installed_at": "ISO", "watchdog_interval_minutes": 15},
+  "last_tick": "ISO",
   "projects": [{
     "id": "프로젝트명", "repo": "절대경로", "model": "claude-...-5",
     "permission_args": ["--dangerously-skip-permissions"],
@@ -179,6 +181,12 @@ autoharness/
   }]
 }
 ```
+
+`last_tick` 은 워치독이 **한 주기라도 실제로 돌았다**는 증거로, 기동 여부와 무관하게 매
+실행(dry-run 제외) 끝에 기록된다. `last_launch` 는 헤드리스 세션을 실제로 띄웠을 때만
+갱신되므로 skip/completed 주기에는 null 로 남는다 — 둘을 섞으면 "워치독이 죽었다"와
+"띄울 일이 없었다"를 구분하지 못한다. `settings.watchdog_installed_at` 은 설치 직후
+유예 판정(아래 §10)의 기준이다.
 
 status 전이 규칙: `completed` 는 종점이 아니다 — MCP `task_add` 로 새 작업이 들어오면
 active 로 복귀하고 백오프 카운터(consecutive_errors·limit_hits·next_retry_at)가 리셋된다.
@@ -270,6 +278,30 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
    claude 실행 파일 해석은 `.exe` 를 우선한다(.bat/.cmd 심은 cmd 재해석으로 프롬프트 인용이
    깨진다): which 결과가 .bat/.cmd 면 claude.exe → 고정 폴백 경로 순으로 대체.
 7. 모든 판단·행동을 watchdog.log 한 줄씩 기록.
+8. 주기 끝에 레지스트리 `last_tick` 을 갱신한다(기동 여부 무관, `--dry-run` 제외).
+
+**'등록만 되고 실행 안 됨' 감지** (`watchdog_status` 의 `health` — 경고 전용):
+
+작업이 `Ready` 로 등록돼 있어도 스케줄러가 매 기동을 반려하면(실측: `0x800710E0` 요청 거부)
+자동 부활 보장은 무효인데, 등록 여부만 보고하면 정상처럼 보인다. 그래서 **등록**과 **실제
+실행 이력**을 분리해 판정한다.
+
+| state | 조건 | 경고 |
+|---|---|---|
+| `not_registered` | schtasks 조회 실패 | 없음 |
+| `grace` | 설치 후 경과 < 주기×3 — 아직 첫 주기가 안 옴 | 없음(오탐 금지) |
+| `stale` | watchdog.log 부재 + `last_tick` 없음, 또는 로그 최종 기록이 주기×3 경과 | 있음 |
+| `healthy` | 그 외 | 없음 |
+
+- **결과 코드 해석**: `LastTaskResult` 를 부호 없는 16진수로 정규화해 뜻과 함께 보고한다
+  (`0x800710E0` 요청 거부, `0x8004131F` 인스턴스 중복, `0x80070002` 경로 없음 등).
+  `0x41300/0x41301/0x41303`(준비됨·실행 중·미실행)은 정보성이라 실패로 세지 않는다.
+  실패 코드는 `grace` 중에도 숨기지 않는다.
+- **주기 출처**: 등록된 작업 XML 의 `<Interval>` 을 파싱한다(실패 시 기본 15분).
+- **보조 신호**: 전 프로젝트 `last_launch=null` 이면 함께 제시하되, `last_tick` 유무로
+  "워치독 미실행 의심"과 "기동 조건이 매번 스킵됨"을 구분해 서술한다 — 이 구분이 없으면
+  정상 운용 중인 저장소를 죽은 것으로 오판한다(실측된 오탐).
+- 로케일 차이로 schtasks 출력 파싱이 실패하면 필드는 null 로 두고 **경고하지 않는다**.
 
 ## 11. 스킬 (`skill/SKILL.md`)
 

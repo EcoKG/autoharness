@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:43:53.711473+00:00",
+  "updated_at": "2026-08-07T03:54:02.618288+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -298,7 +298,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/detect-inactive-hooks-20260807T034305Z.log",
-      "commit": null,
+      "commit": "c309be5",
       "started_at": "2026-08-07T03:43:05.504690+00:00",
       "finished_at": "2026-08-07T03:43:53.711473+00:00",
       "test_cmd": null
@@ -309,13 +309,13 @@
       "path": "bin/harness_mcp.py",
       "deps": [],
       "priority": 15,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/detect-dead-watchdog-20260807T035314Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-07T03:50:56.756375+00:00",
+      "finished_at": "2026-08-07T03:54:02.618288+00:00",
       "test_cmd": null
     }
   ]

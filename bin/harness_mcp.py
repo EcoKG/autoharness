@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 
@@ -597,6 +598,13 @@ def tool_watchdog_install(a):
     create = _schtasks("/Create", "/TN", TASK_NAME, "/SC", "MINUTE",
                        "/MO", str(interval), "/F", "/TR", tr)
     query = _schtasks("/Query", "/TN", TASK_NAME)
+    if create["exit_code"] == 0:
+        # 설치 시각 기록 — watchdog_status 가 '설치 직후 아직 주기 미도래'를 경고에서
+        # 제외하는 유예 판정의 기준이다(오탐 금지).
+        reg = registry_load()
+        reg["settings"]["watchdog_installed_at"] = now_iso()
+        reg["settings"]["watchdog_interval_minutes"] = interval
+        registry_save(reg)
     note = None
     if not os.path.exists(WATCHDOG_SRC):
         note = "harness_watchdog.py 가 아직 없습니다: %s — 파일이 생기면 다음 주기부터 동작합니다" % WATCHDOG_SRC
@@ -609,6 +617,199 @@ def tool_watchdog_install(a):
 def tool_watchdog_uninstall(a):
     delete = _schtasks("/Delete", "/TN", TASK_NAME, "/F")
     return {"ok": delete["exit_code"] == 0, "task_name": TASK_NAME, "delete": delete}
+
+
+# ------------------------------------------------- 워치독 '등록만 되고 실행 안 됨' 감지
+#
+# 스케줄러에 Ready 로 등록돼 있어도 매 기동이 반려되면(0x800710E0 등) 자동 부활 보장은
+# 무효인데, 등록 여부만 보고하면 정상처럼 보인다. 그래서 '등록'과 '실제 실행 이력'을
+# 분리해 보고하고, 마지막 실행 결과 코드를 해석해 함께 내놓는다.
+
+STALE_INTERVAL_MULTIPLIER = 3     # 기대 주기의 몇 배까지를 정상으로 볼지 (경고·유예 공통)
+DEFAULT_INTERVAL_MINUTES = 15
+
+# 흔한 작업 스케줄러 결과 코드 — 0 이 아니어도 실패가 아닌 정보성 값이 있다
+SCHED_RESULT_MEANINGS = {
+    0x0: ("정상 종료", True),
+    0x1: ("일반 오류(잘못된 함수) — 실행 대상이 즉시 실패했을 수 있음", False),
+    0x41300: ("작업 준비됨 — 아직 실행 전", True),
+    0x41301: ("작업이 현재 실행 중", True),
+    0x41302: ("작업이 비활성 상태", False),
+    0x41303: ("작업이 한 번도 실행된 적 없음", True),
+    0x41304: ("예약된 실행 시간이 남아 있지 않음", False),
+    0x41306: ("사용자/시스템이 작업을 종료함", False),
+    0x8004131F: ("이미 실행 중인 인스턴스가 있어 새 인스턴스가 거부됨(MultipleInstancesPolicy)", False),
+    0x80070002: ("지정된 파일을 찾을 수 없음 — 실행 대상 경로 확인 필요", False),
+    0x800710E0: ("운영자 또는 관리자가 요청을 거부함 — 전원·인스턴스 정책 등 실행 조건에 막혀 "
+                 "기동되지 않음", False),
+}
+
+# schtasks /V /FO LIST 필드 라벨. schtasks 는 콘솔 UI 언어로 출력을 지역화하므로 영문만
+# 보면 한국어 Windows 에서 파싱이 통째로 실패한다 — 실측으로 확인된 결함이라 로케일별
+# 라벨을 모두 등록한다. 그래도 못 읽으면 필드는 null 로 두고 경고하지 않는다(오탐 금지).
+_SCHED_FIELDS = {
+    "status": ("Status", "상태"),
+    "last_run_time": ("Last Run Time", "마지막 실행 시간"),
+    "last_result": ("Last Result", "마지막 결과"),
+    "next_run_time": ("Next Run Time", "다음 실행 시간"),
+    "state": ("Scheduled Task State", "예약된 작업 상태"),
+}
+
+
+def _parse_schtasks_list(stdout):
+    """`Field: value` 라인을 dict 로. 같은 이름이 여러 번 나오면 첫 값을 쓴다."""
+    fields = {}
+    for line in (stdout or "").splitlines():
+        if ":" not in line:
+            continue
+        name, _, value = line.partition(":")
+        name, value = name.strip(), value.strip()
+        if name and name not in fields:
+            fields[name] = value
+    out = {}
+    for key, labels in _SCHED_FIELDS.items():
+        out[key] = next((fields[l] for l in labels if fields.get(l)), None)
+    return out
+
+
+def _as_unsigned32(n):
+    return n + 0x100000000 if n < 0 else n
+
+
+def interpret_sched_result(raw):
+    """LastTaskResult 해석 — (코드, 16진 표기, 뜻, 정상 여부). 파싱 불가면 None."""
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        text = str(raw).strip()
+        code = int(text, 16) if text.lower().startswith("0x") else int(text)
+    except ValueError:
+        return None
+    code = _as_unsigned32(code)
+    meaning, benign = SCHED_RESULT_MEANINGS.get(code, ("알려지지 않은 결과 코드", False))
+    return {"code": code, "hex": "0x%X" % code, "meaning": meaning, "benign": benign}
+
+
+_ISO_DURATION_RE = re.compile(r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?", re.IGNORECASE)
+
+
+def parse_iso_duration_minutes(text):
+    m = _ISO_DURATION_RE.search(text or "")
+    if not m:
+        return None
+    days, hours, minutes = (int(g or 0) for g in m.groups())
+    total = days * 1440 + hours * 60 + minutes
+    return total or None
+
+
+def scheduler_interval_minutes():
+    """등록된 반복 주기(분). XML 조회 실패 시 None."""
+    try:
+        xml = _schtasks("/Query", "/TN", TASK_NAME, "/XML")
+    except ToolError:
+        return None
+    if xml["exit_code"] != 0:
+        return None
+    m = re.search(r"<Interval>([^<]+)</Interval>", xml["stdout"] or "")
+    return parse_iso_duration_minutes(m.group(1)) if m else None
+
+
+def _log_age_minutes(path):
+    """watchdog.log 의 마지막 기록으로부터 경과 분. 파일이 없으면 None."""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    return max(0.0, (time.time() - mtime) / 60.0)
+
+
+def _minutes_since_iso(ts):
+    parsed = parse_iso_ts(ts)
+    if parsed is None:
+        return None
+    delta = datetime.now(timezone.utc) - parsed
+    return max(0.0, delta.total_seconds() / 60.0)
+
+
+def parse_iso_ts(ts):
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(ts))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_since=None):
+    """등록 여부와 '실제 실행 이력'을 분리 판정한다 — 경고 전용, 아무것도 막지 않는다.
+
+    state: not_registered / grace(설치 직후 아직 주기 미도래) / stale(경고) / healthy
+    """
+    registered = query.get("exit_code") == 0
+    fields = _parse_schtasks_list(query.get("stdout")) if registered else {}
+    result = interpret_sched_result(fields.get("last_result"))
+    interval = interval_minutes or DEFAULT_INTERVAL_MINUTES
+    threshold = interval * STALE_INTERVAL_MULTIPLIER
+
+    age = _log_age_minutes(log_path)
+    settings = reg.get("settings") or {}
+    since_install = (now_minutes_since or _minutes_since_iso)(settings.get("watchdog_installed_at"))
+    last_tick = reg.get("last_tick")
+    since_tick = (now_minutes_since or _minutes_since_iso)(last_tick)
+
+    projects = reg.get("projects") or []
+    never_launched = [p.get("id") for p in projects if not (p.get("last_launch") or {}).get("ts")]
+
+    warnings = []
+    if not registered:
+        state = "not_registered"
+    elif since_install is not None and since_install < threshold:
+        # 설치 직후 아직 주기가 안 온 경우 — 경고 대상 아님(오탐 금지)
+        state = "grace"
+    elif age is None and since_tick is None:
+        state = "stale"
+        warnings.append(
+            "워치독이 등록돼 있으나 실행 흔적이 전혀 없습니다(로그 파일 부재: %s). "
+            "스케줄러가 매 기동을 반려하면 등록 상태는 Ready 로 남아 정상처럼 보입니다 — "
+            "자동 부활 보장이 무효인 상태입니다." % log_path)
+    elif age is not None and age >= threshold:
+        state = "stale"
+        warnings.append(
+            "워치독 마지막 실행이 %.0f분 전입니다 — 기대 주기 %d분의 %d배(%d분)를 넘겼습니다. "
+            "스케줄러가 기동을 반려하고 있는지 확인하십시오."
+            % (age, interval, STALE_INTERVAL_MULTIPLIER, threshold))
+    else:
+        state = "healthy"
+
+    if result and not result["benign"]:
+        warnings.append("스케줄러 마지막 실행 결과가 %s 입니다 — %s"
+                        % (result["hex"], result["meaning"]))
+
+    # 보조 신호: 전 프로젝트 last_launch 가 null. 단, skip/completed 주기에는 last_launch 가
+    # 갱신되지 않으므로 이것만으로는 '워치독 미실행'의 근거가 못 된다 — last_tick 과 함께 본다.
+    never_launched_signal = None
+    if projects and len(never_launched) == len(projects):
+        never_launched_signal = {
+            "projects": never_launched,
+            "note": ("등록된 %d개 프로젝트 전부 last_launch 가 비어 있습니다(헤드리스 세션이 "
+                     "한 번도 기동되지 않음). 워치독 주기 자체는 %s"
+                     % (len(projects),
+                        ("돌고 있습니다(last_tick=%s) — 기동 조건이 매번 스킵된 것입니다."
+                         % last_tick) if last_tick else
+                        "돈 기록이 없습니다(last_tick 없음) — 워치독 미실행이 의심됩니다.")),
+        }
+
+    return {"state": state, "registered": registered, "warnings": warnings,
+            "scheduler_fields": fields, "last_result": result,
+            "interval_minutes": interval,
+            "interval_source": "scheduler" if interval_minutes else "default",
+            "stale_threshold_minutes": threshold,
+            "log_age_minutes": None if age is None else round(age, 1),
+            "minutes_since_install": None if since_install is None else round(since_install, 1),
+            "last_tick": last_tick,
+            "minutes_since_tick": None if since_tick is None else round(since_tick, 1),
+            "never_launched": never_launched_signal}
 
 
 def tool_watchdog_status(a):
@@ -624,9 +825,12 @@ def tool_watchdog_status(a):
             log_tail = f.read().splitlines()[-20:]
     except OSError:
         pass
-    return {"task_name": TASK_NAME, "scheduler": query,
+    health = watchdog_health(query, reg, WATCHDOG_LOG,
+                             interval_minutes=scheduler_interval_minutes() if query["exit_code"] == 0
+                             else None)
+    return {"task_name": TASK_NAME, "scheduler": query, "health": health,
             "registry": {"path": REGISTRY_PATH, "settings": reg.get("settings"),
-                         "projects": projects},
+                         "last_tick": reg.get("last_tick"), "projects": projects},
             "watchdog_log": {"path": WATCHDOG_LOG, "tail": log_tail}}
 
 
@@ -744,7 +948,9 @@ TOOLS = [
      "description": "워치독 제거 — 스케줄러에서 AutoHarnessWatchdog 작업을 삭제합니다.",
      "inputSchema": _obj({}, [])},
     {"name": "watchdog_status",
-     "description": "워치독 상태 — 스케줄러 상세 조회 + 레지스트리 요약 + watchdog.log 마지막 20줄.",
+     "description": "워치독 상태 — 스케줄러 상세 조회 + 레지스트리 요약 + watchdog.log 마지막 20줄. "
+                    "등록 여부와 '실제 실행 이력'을 분리한 health 진단(마지막 결과 코드 해석, "
+                    "실행 흔적 경과, 한 번도 기동되지 않은 프로젝트 신호)을 함께 돌려줍니다.",
      "inputSchema": _obj({}, [])},
 ]
 

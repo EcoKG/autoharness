@@ -535,17 +535,19 @@ def main(argv=None):
     if not acquire_lock(runtime_dir, log):
         return 0
     try:
-        changed = False
         if not projects:
             log("-", "idle", "등록된 프로젝트 없음")
         for proj in projects:
             try:
-                changed = handle_project(proj, settings, runtime_dir, probe_sec, False, log) or changed
+                handle_project(proj, settings, runtime_dir, probe_sec, False, log)
             except Exception as e:
                 # 한 프로젝트의 예외가 다른 프로젝트 처리를 막으면 안 된다
                 log(proj.get("id") or "?", "error", "워치독 내부 예외: %r" % (e,))
-        if changed:
-            eng.atomic_write_json(registry_path, reg)
+        # 기동 여부와 무관하게 '이번 주기가 실제로 돌았다'를 남긴다 — last_launch 는
+        # skip/completed 주기에는 갱신되지 않아 '한 번도 기동 안 됨'과 '워치독이 아예
+        # 안 돎'을 구분하지 못한다. 그 구분이 진단(watchdog_status)의 판정 근거다.
+        reg["last_tick"] = eng.now_iso()
+        eng.atomic_write_json(registry_path, reg)
     finally:
         release_lock(runtime_dir)
     return 0
