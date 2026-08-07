@@ -50,14 +50,25 @@ CREATE_NO_WINDOW = 0x08000000     # 헤드리스 기동(콘솔 창 금지)
 STILL_ACTIVE = 259                # GetExitCodeProcess 의 "아직 실행 중"
 PROCESS_QUERY_LIMITED = 0x1000    # PROCESS_QUERY_LIMITED_INFORMATION
 POLL_INTERVAL_SEC = 5
+LIMIT_NOTICE_HITS = 5      # 사용량 초과 분류가 이만큼 연속되면 오분류 의심 신호를 남긴다
 
 # 사용량 초과 패턴(대소문자 무시). rc!=0 인 조기 종료에서만 검사한다(rc=0 은 무조건 ok).
 # 429 는 독립 토큰만으로는 오탐("collected 429 items")이 있어 API 오류 문맥이 인접할 때만
 # 매칭한다. rate_limit_error 류 언더스코어 표기도 rate.?limit 로 잡는다.
+# `overloaded`·`quota` 가 맨몸이던 것을 정밀화한다. 429 만 문맥 조건을 갖고 나머지는 맨몸이라
+# 정상 실패 로그(테스트 이름·소스 인용)에 우연히 걸려 오분류가 났다(적대 검증에서 확인).
+# 다만 문맥을 무조건 요구하면 진짜 과부하를 놓쳐 error 경로로 빠지고 5회 뒤 정지하므로,
+# 미탐이 오탐보다 비싸다. 그래서 단어 경계와 동사 한정으로 좁힌다:
+#   `\boverloaded\b`      → "server is overloaded" 는 잡고 `test_overloaded_queue` 는 거른다
+#                            (밑줄은 word 문자라 식별자 안에서는 경계가 생기지 않는다)
+#   `quota exceeded|…`    → "quota management"·"disk quota check" 오탐 제거
+#   문맥 결합형            → JSON 의 `overloaded_error`·`api_error: quota` 등을 잡는다
 USAGE_RE = re.compile(
-    r"(usage.?limit|rate.?limit|limit reached|too many requests|overloaded|"
-    r"\bquota\b|credit balance|out of (extra )?usage|"
-    r"(api.?error|status|code|http)\D{0,6}429)", re.IGNORECASE)
+    r"(usage.?limit|rate.?limit|limit reached|too many requests|"
+    r"credit balance|out of (extra )?usage|"
+    r"\boverloaded\b|quota\s+(exceeded|exhausted|reached)|"
+    r"(api.?error|status|code|http)\D{0,12}(429|overloaded|quota)|"
+    r"(429|overloaded|quota)\D{0,12}(api.?error|_error))", re.IGNORECASE)
 
 # 템플릿 부재 시 사용할 내장 부트스트랩 프롬프트
 BUILTIN_BOOTSTRAP = (
@@ -401,8 +412,21 @@ def launch_project(proj, settings, runtime_dir, probe_sec, log, nxt):
         proj["next_retry_at"] = iso_after(mins)
         proj["last_launch"] = {"ts": eng.now_iso(), "result": "limit", "log": launch_log}
         proj["updated_at"] = eng.now_iso()
-        log(name, "limit", "사용량 초과 감지(rc=%s) — limit_hits=%d, %d분 후 재시도(영구 포기 없음)"
-            % (rc, hits, mins))
+        # 영구 포기는 없다(status 는 active 유지). 다만 한도가 계속 이어지면 사용량 초과가
+        # 아니라 오분류일 수 있으므로 사람이 볼 수 있게 신호를 남긴다 — 종전에는 상한도
+        # 신호도 없어 오분류 상태가 360분 간격으로 영원히 반복됐다(error 분기는 5회로
+        # 정지하는 것과 대조적인 비일관).
+        notice = int(settings.get("limit_notice_hits") or LIMIT_NOTICE_HITS)
+        warn = ""
+        if hits >= notice:
+            proj["needs_attention"] = (
+                "사용량 초과 분류가 %d회 연속입니다 — 실제 한도가 아니라 오분류일 수 있습니다. "
+                "%s 로그를 확인하십시오." % (hits, launch_log))
+            warn = " ⚠ %d회 연속 — 오분류 가능성, 로그 확인 권장" % hits
+        elif "needs_attention" in proj:
+            del proj["needs_attention"]
+        log(name, "limit", "사용량 초과 감지(rc=%s) — limit_hits=%d, %d분 후 재시도(영구 포기 없음)%s"
+            % (rc, hits, mins, warn))
         return True
 
     mark_error(proj, settings, "조기 비정상 종료(rc=%s) log=%s" % (rc, launch_log), False, log)

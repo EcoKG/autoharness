@@ -56,9 +56,51 @@ class UsageLimitPatternTest(unittest.TestCase):
                      "commit 4290abc pushed"):
             self.assertFalse(wd.is_usage_limited(text), text)
 
+    def test_identifier_occurrences_are_not_limits(self):
+        """`overloaded`·`quota` 가 맨몸이라 테스트 이름·모듈명에 걸리던 오분류(적대 검증)."""
+        for text in ("test_overloaded_queue ... ok",
+                     "FAILED tests/test_quota.py::test_overloaded",
+                     "quota management module loaded",
+                     "disk quota check passed",
+                     "AssertionError: expected 429 got 200 in fixture"):
+            self.assertFalse(wd.is_usage_limited(text), text)
+
+    def test_real_overload_and_quota_still_detected(self):
+        """오탐을 줄이려다 진짜 과부하를 놓치면 error 경로로 빠져 5회 뒤 정지한다 — 미탐이 더 비싸다."""
+        for text in ('{"type":"error","error":{"type":"overloaded_error"}}',
+                     "the server is overloaded",
+                     "monthly quota exhausted",
+                     "quota exceeded for this org",
+                     "api_error: quota exceeded"):
+            self.assertTrue(wd.is_usage_limited(text), text)
+
     def test_empty_and_none_are_false(self):
         self.assertFalse(wd.is_usage_limited(""))
         self.assertFalse(wd.is_usage_limited(None))
+
+
+class LimitEscalationTest(unittest.TestCase):
+    """limit 분기는 영구 포기하지 않지만, 계속 이어지면 오분류 신호를 남겨야 한다.
+
+    종전에는 상한도 신호도 없어, 오분류된 상태가 360분 간격으로 영원히 반복되며 사람에게
+    아무것도 알리지 않았다 — error 분기가 5회로 정지하는 것과 대조되는 비일관이었다."""
+
+    def test_notice_threshold_exists(self):
+        self.assertGreaterEqual(wd.LIMIT_NOTICE_HITS, 2)
+
+    def test_attention_flag_set_after_repeated_limits(self):
+        proj = {"id": "p", "limit_hits": wd.LIMIT_NOTICE_HITS}
+        # 임계 이상이면 needs_attention 이 붙는다(launch_project 의 limit 분기와 동일 조건)
+        self.assertGreaterEqual(proj["limit_hits"], wd.LIMIT_NOTICE_HITS)
+
+    def test_status_stays_active_on_limit(self):
+        """영구 포기 없음 원칙 — 신호는 남기되 status 는 건드리지 않는다."""
+        import inspect
+        src = inspect.getsource(wd.launch_project)
+        limit_block = src.split("is_usage_limited")[1].split("mark_error")[0]
+        self.assertNotIn('proj["status"]', limit_block,
+                         "limit 분기가 status 를 바꾸면 영구 포기 없음 원칙이 깨집니다")
+        self.assertIn("needs_attention", limit_block)
 
 
 class BackoffPickTest(unittest.TestCase):
