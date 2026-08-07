@@ -47,6 +47,13 @@ ERROR_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 진짜 실패를 가리키는 강한 신호 — 요약 상한을 이 줄들이 먼저 차지한다
+STRONG_ERROR_RE = re.compile(
+    r"(\[ERROR\]|Traceback|AssertionError|BUILD FAILURE|FAILED|npm ERR!|"
+    r"Caused by|error TS\d+|error\[|CompilationError|cannot find symbol|"
+    r"ModuleNotFoundError|SyntaxError|panic:|undefined reference|✗|✖)",
+    re.IGNORECASE)
+
 MODEL_FABLE = "claude-fable-5"
 MODEL_OPUS = "claude-opus-5"
 ALLOWED_MODELS = (MODEL_OPUS, MODEL_FABLE)
@@ -665,11 +672,22 @@ def status_counts(tracker):
 # ---------------------------------------------------------------- 러너
 
 def summarize(text):
-    lines = text.splitlines()
-    hits = [ln.strip()[:SUMMARY_LINE_CAP] for ln in lines if ln.strip() and ERROR_LINE_RE.search(ln)]
+    """오류 요약 — **강한 신호를 먼저 채운다.**
+
+    ERROR_LINE_RE 는 재현율을 위해 넓게 잡혀 있어 `Downloading error-prone-2.0.jar` 같은
+    무해한 줄도 걸린다(실측). 걸린 순서대로 60줄을 채우면 앞쪽 잡음이 상한을 먹어 정작
+    진짜 오류가 밖으로 밀려나고 last_error 에서 잘린다(적대 검증에서 확인). 정규식을
+    좁히면 진짜 오류를 놓치므로, 재현율은 두고 **우선순위**로 해결한다."""
+    lines = [ln.strip()[:SUMMARY_LINE_CAP] for ln in text.splitlines() if ln.strip()]
+    strong, weak = [], []
+    for ln in lines:
+        if not ERROR_LINE_RE.search(ln):
+            continue
+        (strong if STRONG_ERROR_RE.search(ln) else weak).append(ln)
+    hits = strong + weak
     if hits:
         return hits[:SUMMARY_MAX_LINES]
-    return [ln.strip()[:SUMMARY_LINE_CAP] for ln in lines[-SUMMARY_TAIL_LINES:] if ln.strip()]
+    return lines[-SUMMARY_TAIL_LINES:]
 
 
 def decode_output(b):

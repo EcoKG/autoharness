@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-07T13:17:07.272380+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-07T13:20:43.589066+00:00
 
-## 현황: done 36 / 37  (in_progress 0, failed 0, blocked 0, pending 1)
+## 현황: done 37 / 37  (in_progress 0, failed 0, blocked 0, pending 0)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -33,7 +33,7 @@
 | wiring-diagnosis-gaps | 훅 배선 진단의 사각 2건 — ① 부분 등록을 경고하지 않는다: 훅 4종 중 일부만 등록된 저장소에서 등록된 것 하나만 발화해도 active 로 보고해, 나머지 게이트가 없는 상태를 드러내지 않는다. ② 설정 파싱 실패가 미등록으로 위장한다: load_json 이 파일 부재(OSError)와 JSON 파손(ValueError)을 같은 None 으로 뭉개, settings.json 이 깨지면 '훅 미등록(수동 운용)'으로 판정해 경고 대상에서 빠진다. 실제로는 훅이 전부 죽은 상태인데 오탐 금지 규칙에 가려진다. 해법: 파일 존재 여부와 파싱 성공 여부를 분리해 파손을 별도 상태로 보고하고, 등록된 훅 종류와 기대 집합의 차이를 진단에 싣는다. | ✅ done | 0/5 | - | - |
 | path-asymmetry-cluster | 경로 비대칭 3건 — ① 재활성화가 MCP task_add 에만 있다: registry_reactivate_if_completed 의 호출처가 tool_task_add 한 곳뿐이라, SKILL.md 가 폴백으로 안내하는 엔진 CLI add-task 나 task_set 으로 작업을 되살리면 레지스트리는 completed 로 남아 워치독이 영영 안 뜬다. ② pause 는 플래그와 레지스트리 두 곳을 쓰는데 폴백 재개는 플래그만 되돌려 status=paused 가 남는다. ③ 워치독 진단이 Windows 전용이다: tool_watchdog_status 의 첫 줄이 schtasks 호출이라 WSL/Linux 에서는 ToolError 로 전체가 실패해 레지스트리 요약과 로그 tail 조차 볼 수 없다 — cron 으로 설치한 사용자는 진단 수단이 없다. 해법: 재활성화를 상태 변경 경로 전체에 걸고, 폴백 문서와 실제 부작용을 일치시키며, 스케줄러 조회 실패를 진단의 한 필드로 격하해 나머지는 계속 보고한다. | ✅ done | 0/5 | - | - |
 | docs-hardening-sync | 보강분의 설계 문서 반영 및 드리프트 재발 차단 — 보강 작업으로 SKILL 에 ops 모드와 판정 원칙 8개가 생겼는데 DESIGN §11 은 여전히 "본문 모드 4개"·원칙 4개로 남아 있다. ① DESIGN §11 을 실제 모드 구성(init/resume/status/pause/resume-project/ops)과 안전 규칙(폴백 init 고지·장부 실존 게이트·적재 0단계·배포 한계선)에 맞춰 갱신 ② SKILL.md 의 모드 목록과 DESIGN §11 의 모드 목록이 어긋나면 실패하는 교차 검증 테스트를 추가해 이 드리프트 종류를 기계적으로 차단 | ✅ done | 0/5 | - | - |
-| misc-robustness | 잔여 견고성 3건 — ① deploy_live 가 os.replace 를 재시도 없이 호출한다: 엔진은 OneDrive 동기화·백신 잠금 때문에 replace_with_retry 로 지수 백오프하는데 배포 경로만 raw 호출이라, 같은 일시적 PermissionError 에 설치본 동기화가 실패한다. ② summarize 의 에러 라인 정규식이 과잉 매칭해 정상 출력 줄을 오류로 집계하고, 그 결과 진짜 오류가 60줄 상한 밖으로 밀려 last_error 에서 잘린다. ③ 워치독의 프로젝트별 예외 처리가 로그만 남기고 오류 집계(consecutive_errors)를 하지 않아, 특정 프로젝트에서 매 주기 예외가 나도 영원히 재시도하며 status=error 로 정지하지 않는다. | ⏳ pending | 0/5 | - | - |
+| misc-robustness | 잔여 견고성 3건 — ① deploy_live 가 os.replace 를 재시도 없이 호출한다: 엔진은 OneDrive 동기화·백신 잠금 때문에 replace_with_retry 로 지수 백오프하는데 배포 경로만 raw 호출이라, 같은 일시적 PermissionError 에 설치본 동기화가 실패한다. ② summarize 의 에러 라인 정규식이 과잉 매칭해 정상 출력 줄을 오류로 집계하고, 그 결과 진짜 오류가 60줄 상한 밖으로 밀려 last_error 에서 잘린다. ③ 워치독의 프로젝트별 예외 처리가 로그만 남기고 오류 집계(consecutive_errors)를 하지 않아, 특정 프로젝트에서 매 주기 예외가 나도 영원히 재시도하며 status=error 로 정지하지 않는다. | ✅ done | 0/5 | - | - |
 | fix-sync-commit-guard | sync_commit 오귀속 방지 — git commit 이 실패해 HEAD 가 변하지 않은 경우(예: nothing to commit)에도 직전 커밋 SHA 를 최신 done 작업에 기록하는 결함. hook-postbash/sync_commit 에서 HEAD 변화(또는 커밋 성공)를 검증한 뒤에만 기록하도록 수정 + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | hook-matcher-coverage | 훅 matcher 커버리지 구멍 차단 — PreToolUse/PostToolUse 가 Bash 도구에만 걸려 다른 명령 실행 도구로는 게이트가 통째로 우회된다. 실측 증거: 이 세션에서 Bash 경로의 원격 반영은 차단됐으나 PowerShell 경로는 무검사로 통과했고, 같은 구멍으로 커밋 게이트도 함께 무력화된다. 원인: harness_mcp.py 의 HOOK_DEFS 가 matcher 를 문자열 "Bash" 로 고정한다. 해결: ① 공식 문서상 matcher 는 정규식·구분자 목록을 지원하므로 "Bash|PowerShell" 로 확대 ② 이미 설치된 저장소는 matcher 가 Bash 인 채로 남으므로 merge_settings 가 기존 하네스 훅 항목의 matcher 를 감지해 갱신하도록 하고, 갱신 시 기존 파일을 백업할 것 ③ 중복 추가 방지 로직이 지금은 이벤트 전체를 json.dumps 해서 harness_engine.py 포함 여부만 보는데, 이 방식은 matcher 가 달라도 같은 것으로 취급해 갱신을 건너뛴다 — 항목 단위로 판정하도록 정밀화 ④ 훅 배선 감지(hook_wiring_status)도 matcher 범위를 함께 보고해 부분 커버리지 상태를 드러낼 것 ⑤ 확대·마이그레이션·중복 방지 경계를 tests/ 회귀로 고정. | ✅ done | 0/5 | c0b67f3 | - |
 | refresh-loop-engine-routing | 주행용 엔진 사본 재갱신 — build_parser() 추출이 반영된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작 확인(개발 원본과 주행 사본의 드리프트 해소) | ✅ done | 0/5 | - | - |

@@ -173,5 +173,39 @@ class HeartbeatFailureTest(Sandbox):
         self.assertTrue(os.path.exists(self.paths["heartbeat"]))
 
 
+class SummaryPriorityTest(unittest.TestCase):
+    """진짜 오류가 잡음에 밀려 요약 밖으로 잘려 나가던 결함(적대 검증 확인).
+
+    ERROR_LINE_RE 는 재현율을 위해 넓게 잡혀 있어 무해한 줄도 걸린다. 걸린 순서대로
+    상한(60줄)을 채우면 앞쪽 잡음이 자리를 먹어 정작 진짜 오류가 last_error 에서 사라진다.
+    정규식을 좁히면 진짜 오류를 놓치므로 우선순위로 해결했다.
+    """
+
+    def test_strong_signals_come_first(self):
+        noise = "\n".join("Downloading error-prone-%d.jar" % i for i in range(70))
+        text = noise + "\nTraceback (most recent call last):\nAssertionError: 기대와 다름\n"
+        out = eng.summarize(text)
+        self.assertTrue(any("AssertionError" in ln for ln in out),
+                        "진짜 오류가 잡음에 밀려 요약에서 사라졌습니다")
+        self.assertIn("Traceback", out[0])
+        self.assertLessEqual(len(out), eng.SUMMARY_MAX_LINES)
+
+    def test_weak_hits_still_included_when_room_remains(self):
+        text = "Downloading error-prone.jar\nAssertionError: 실패\n"
+        out = eng.summarize(text)
+        self.assertEqual(len(out), 2)
+        self.assertIn("AssertionError", out[0])       # 강한 신호가 앞
+        self.assertIn("error-prone", out[1])
+
+    def test_falls_back_to_tail_when_no_error_lines(self):
+        text = "\n".join("정상 출력 %d" % i for i in range(50))
+        out = eng.summarize(text)
+        self.assertEqual(len(out), eng.SUMMARY_TAIL_LINES)
+        self.assertIn("정상 출력 49", out[-1])
+
+    def test_blank_lines_are_dropped(self):
+        self.assertEqual(eng.summarize("\n\n   \n"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

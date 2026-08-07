@@ -24,6 +24,11 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 엔진의 원자적 쓰기 규칙(잠금 재시도)을 그대로 쓴다 — 배포 경로만 다른 규칙을 쓰면
+# 같은 일시적 잠금에서 여기만 실패한다.
+sys.path.insert(0, os.path.join(REPO, "bin"))
+import harness_engine as eng  # noqa: E402
 DST = os.path.join(os.path.expanduser("~"), ".claude", "skills", "autoharness")
 
 # (개발 사본 상대경로, 설치본 상대경로) — 존재하지 않는 원본은 건너뛴다(install.sh 등 OS별 선택 파일)
@@ -53,7 +58,10 @@ def atomic_copy(src, dst):
             out.write(s.read())
             out.flush()
             os.fsync(out.fileno())
-        os.replace(tmp, dst)
+        # 엔진과 같은 재시도 규칙을 쓴다 — 이 저장소는 OneDrive 안에 있어 동기화·백신이
+        # 잠깐 잠그는 PermissionError 가 실제로 난다. 여기만 raw os.replace 라 같은
+        # 일시적 잠금에 설치본 동기화가 실패했다(적대 검증에서 확인).
+        eng.replace_with_retry(tmp, dst)
     finally:
         if os.path.exists(tmp):
             try:

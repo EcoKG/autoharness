@@ -643,8 +643,15 @@ def main(argv=None):
                 if handle_project(proj, settings, runtime_dir, probe_sec, False, log):
                     touched.add(project_key(proj))
             except Exception as e:
-                # 한 프로젝트의 예외가 다른 프로젝트 처리를 막으면 안 된다
-                log(proj.get("id") or "?", "error", "워치독 내부 예외: %r" % (e,))
+                # 한 프로젝트의 예외가 다른 프로젝트 처리를 막으면 안 된다. 다만 로그만
+                # 남기고 넘어가면 매 주기 같은 예외가 나도 영원히 재시도하며 status=error
+                # 로 정지하지 않는다 — 다른 실패 경로가 5회로 정지하는 것과 어긋난다.
+                try:
+                    mark_error(proj, settings, "워치독 내부 예외: %r" % (e,), False, log)
+                    touched.add(project_key(proj))
+                except Exception as inner:
+                    log(proj.get("id") or "?", "error",
+                        "워치독 내부 예외(집계 실패): %r / %r" % (e, inner))
         # 기동 여부와 무관하게 '이번 주기가 실제로 돌았다'를 남긴다 — last_launch 는
         # skip/completed 주기에는 갱신되지 않아 '한 번도 기동 안 됨'과 '워치독이 아예
         # 안 돎'을 구분하지 못한다. 그 구분이 진단(watchdog_status)의 판정 근거다.
