@@ -1019,7 +1019,10 @@ def cmd_selftest(a):
 
 # ---------------------------------------------------------------- main
 
-def main(argv=None):
+def build_parser():
+    """CLI 표면을 구성해 돌려준다 — main 과 문서 정합 테스트가 같은 정의를 본다.
+
+    SKILL.md 폴백 표가 실제 서브커맨드·옵션과 어긋나면 테스트가 잡아낸다."""
     ap = argparse.ArgumentParser(prog="harness_engine", description="AutoHarness engine")
     sub = ap.add_subparsers(dest="op")
 
@@ -1061,7 +1064,11 @@ def main(argv=None):
     sp = sub.add_parser("hook-postbash"); common(sp)
     sp = sub.add_parser("hook-stop"); common(sp)
     sp = sub.add_parser("selftest"); common(sp)
+    return ap
 
+
+def main(argv=None):
+    ap = build_parser()
     a = ap.parse_args(argv)
     if not a.op:
         ap.print_help()
