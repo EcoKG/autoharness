@@ -47,6 +47,13 @@ ERROR_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 진짜 실패를 가리키는 강한 신호 — 요약 상한을 이 줄들이 먼저 차지한다
+STRONG_ERROR_RE = re.compile(
+    r"(\[ERROR\]|Traceback|AssertionError|BUILD FAILURE|FAILED|npm ERR!|"
+    r"Caused by|error TS\d+|error\[|CompilationError|cannot find symbol|"
+    r"ModuleNotFoundError|SyntaxError|panic:|undefined reference|✗|✖)",
+    re.IGNORECASE)
+
 MODEL_FABLE = "claude-fable-5"
 MODEL_OPUS = "claude-opus-5"
 ALLOWED_MODELS = (MODEL_OPUS, MODEL_FABLE)
@@ -138,10 +145,32 @@ def load_json(path, default=None):
         return default
 
 
+TRACKER_OK, TRACKER_MISSING, TRACKER_CORRUPT = "ok", "missing", "corrupt"
+
+
+def load_tracker_checked(repo):
+    """(장부, 상태) — 상태는 ok|missing|corrupt.
+
+    **부재와 파손을 구분한다.** 둘 다 None 으로 뭉개면 장부가 깨졌을 때 커밋 게이트도
+    Stop 게이트도 '장부 없음(수동 운용)'으로 보고 조용히 통과한다 — 게이트가 통째로
+    무력해지는데 아무 신호도 없다(적대 검증에서 확인)."""
+    path = rp(repo)["tracker"]
+    if not os.path.exists(path):
+        return None, TRACKER_MISSING
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None, TRACKER_CORRUPT
+    if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+        return None, TRACKER_CORRUPT
+    return data, TRACKER_OK
+
+
 def load_tracker(repo, required=True):
-    t = load_json(rp(repo)["tracker"])
+    t, _state = load_tracker_checked(repo)
     if t is None and required:
-        die("장부(.claude/agent_tracker.json)가 없습니다. 먼저 init 을 실행하십시오.")
+        die("장부(.claude/agent_tracker.json)가 없거나 파손됐습니다. 먼저 init 을 실행하십시오.")
     return t
 
 
@@ -166,8 +195,10 @@ def die(msg, code=EXIT_USAGE):
 def write_heartbeat(repo, source):
     try:
         atomic_write_json(rp(repo)["heartbeat"], {"ts": now_iso(), "pid": os.getpid(), "source": source})
-    except Exception:
-        pass
+    except Exception as e:
+        # 삼키되 조용히는 아니다 — 하트비트가 안 써지면 워치독의 이중 기동 방지 근거가
+        # 사라지는데, 종전에는 아무 흔적도 남지 않아 알 방법이 없었다.
+        sys.stderr.write("[AutoHarness] 하트비트 기록 실패(%s): %r\n" % (source, e))
 
 
 # ------------------------------------------------------- 훅 배선 감지 (경고 전용)
@@ -253,6 +284,27 @@ def registered_marker_hooks(repo):
     return sorted(registered_hook_matchers(repo))
 
 
+def settings_states(repo):
+    """설정 파일별 상태 — ok|missing|corrupt.
+
+    load_json 은 파일 부재(OSError)와 JSON 파손(ValueError)을 같은 None 으로 뭉갠다.
+    그대로 쓰면 settings.json 이 깨졌을 때 '훅 미등록(수동 운용)'으로 판정해 경고 대상에서
+    빠진다 — 실제로는 훅이 전부 죽은 상태인데 오탐 금지 규칙에 가려진다(적대 검증에서 확인)."""
+    states = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(rp(repo)["claude_dir"], name)
+        if not os.path.exists(path):
+            states[name] = "missing"
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                json.load(f)
+            states[name] = "ok"
+        except (OSError, ValueError):
+            states[name] = "corrupt"
+    return states
+
+
 def registered_hook_matchers(repo):
     """등록된 하네스 훅 op → 그 훅이 걸린 matcher 문자열(없으면 "")."""
     found = {}
@@ -305,11 +357,32 @@ def hook_wiring_status(repo, tracker=None):
                         for op, m in matchers.items()
                         if op in MATCHER_SCOPED_OPS and not matcher_covers(m, tool)})
 
+    # 설정 파손을 '미등록'으로 오판하지 않는다 — 파손이면 훅이 전부 죽은 상태다
+    states = settings_states(repo)
+    corrupt_files = sorted(n for n, s in states.items() if s == "corrupt")
+    # 부분 등록: 일부만 걸려 있으면 나머지 게이트는 없는 상태인데 종전에는 드러나지 않았다
+    missing_ops = [op for op in MARKER_HOOK_OPS if op not in registered]
+
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
             "matchers": matchers, "uncovered_tools": uncovered,
+            "settings_states": states, "missing_hooks": missing_ops,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
+
+    extra_warnings = []
+    if corrupt_files:
+        extra_warnings.append(
+            "[AutoHarness 경고] 설정 파일이 파손됐습니다(%s) — Claude Code 가 읽지 못하면 훅이 "
+            "전부 비활성화됩니다. '미등록(수동 운용)'으로 보이지만 실제로는 게이트가 없는 "
+            "상태일 수 있습니다." % ", ".join(corrupt_files))
+    if registered and missing_ops:
+        extra_warnings.append(
+            "[AutoHarness 경고] 하네스 훅이 일부만 등록돼 있습니다 — 누락: %s. 등록되지 않은 "
+            "훅이 강제하던 규칙은 동작하지 않습니다." % ", ".join(missing_ops))
+
     if state == WIRING_INACTIVE:
-        info["warning"] = _wiring_warning(repo, info)
+        extra_warnings.insert(0, _wiring_warning(repo, info))
+    if extra_warnings:
+        info["warning"] = "\n".join(extra_warnings)
     return info
 
 
@@ -599,11 +672,22 @@ def status_counts(tracker):
 # ---------------------------------------------------------------- 러너
 
 def summarize(text):
-    lines = text.splitlines()
-    hits = [ln.strip()[:SUMMARY_LINE_CAP] for ln in lines if ln.strip() and ERROR_LINE_RE.search(ln)]
+    """오류 요약 — **강한 신호를 먼저 채운다.**
+
+    ERROR_LINE_RE 는 재현율을 위해 넓게 잡혀 있어 `Downloading error-prone-2.0.jar` 같은
+    무해한 줄도 걸린다(실측). 걸린 순서대로 60줄을 채우면 앞쪽 잡음이 상한을 먹어 정작
+    진짜 오류가 밖으로 밀려나고 last_error 에서 잘린다(적대 검증에서 확인). 정규식을
+    좁히면 진짜 오류를 놓치므로, 재현율은 두고 **우선순위**로 해결한다."""
+    lines = [ln.strip()[:SUMMARY_LINE_CAP] for ln in text.splitlines() if ln.strip()]
+    strong, weak = [], []
+    for ln in lines:
+        if not ERROR_LINE_RE.search(ln):
+            continue
+        (strong if STRONG_ERROR_RE.search(ln) else weak).append(ln)
+    hits = strong + weak
     if hits:
         return hits[:SUMMARY_MAX_LINES]
-    return [ln.strip()[:SUMMARY_LINE_CAP] for ln in lines[-SUMMARY_TAIL_LINES:] if ln.strip()]
+    return lines[-SUMMARY_TAIL_LINES:]
 
 
 def decode_output(b):
@@ -770,7 +854,7 @@ def cmd_run(a):
         state = load_state(a.repo)
         state["last_run"] = {"task": task["id"], "ok": True, "ts": now_iso()}
         save_state(a.repo, state)
-        render(a.repo)
+        render_safe(a.repo)
         print("HARNESS RESULT task=%s exit=0 통과 (다음: 커밋 후 다음 작업) log=%s" % (task["id"], rel_log))
         sys.exit(EXIT_OK)
 
@@ -781,7 +865,7 @@ def cmd_run(a):
     if task["attempts"] >= max_att:
         task["status"] = "blocked"
         save_tracker(a.repo, tracker)
-        render(a.repo)
+        render_safe(a.repo)
         print("HARNESS RESULT task=%s exit=4 시도 한도 도달(%d/%d) — 작업 봉인(blocked). "
               "남은 작업이 있으면 다음 작업 계속, 없으면 보고 log=%s"
               % (task["id"], task["attempts"], max_att, rel_log))
@@ -826,6 +910,19 @@ def render(repo):
         + "\n".join(rows) + "\n"
     )
     atomic_write_text(rp(repo)["progress"], text)
+
+
+def render_safe(repo):
+    """run 의 마무리 렌더 — 실패가 **검증 결과 판정을 뒤집지 않게** 격리한다.
+
+    PROGRESS.md 는 장부에서 파생된 표시물이다. 그 쓰기가 실패했다고 통과한 검증이
+    실패로 보고되면(예외가 전파돼 비정상 종료) 결과가 거짓이 된다."""
+    try:
+        render(repo)
+        return True
+    except Exception as e:
+        sys.stderr.write("[AutoHarness] PROGRESS.md 렌더 실패(검증 결과에는 영향 없음): %r\n" % (e,))
+        return False
 
 
 def cmd_render(a):
@@ -1008,35 +1105,118 @@ def read_hook_input():
 # git 서브커맨드가 무엇인가**로 판정한다. 인용은 shlex 가 존중하므로 문자열 안의
 # 단어는 애초에 명령 위치에 오지 않는다.
 
-SHELL_SPLIT_RE = re.compile(r"&&|\|\||[;\n|]")
 ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # 값을 하나 더 먹는 git 전역 옵션 — 인자까지 건너뛰어야 서브커맨드를 정확히 찾는다
 GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                        "--exec-path", "--super-prefix"}
-NEUTRAL_PREFIXES = {"env", "command", "nohup", "time", "builtin", "exec"}
+# 인자를 먹지 않는 수식어
+NEUTRAL_PREFIXES = {"env", "command", "nohup", "builtin", "exec", "time", "stdbuf"}
+# 인자를 N개 먹는 수식어 — 인자 수를 모르면 실제 명령 위치를 놓친다
+PREFIX_ARITY = {"timeout": 1, "sudo": 0, "nice": 0, "ionice": 0, "doas": 0}
+# 값을 먹는 수식어 옵션(`nice -n 10 git …`, `sudo -u user git …`)
+PREFIX_OPTS_WITH_VALUE = {"-n", "-u", "-g", "-k", "--user", "--group"}
 POSIX_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "ash"}
 PWSH_SHELLS = {"powershell", "pwsh"}
+# 뒤따르는 토큰이 실제 실행 대상인 수식어
+EXEC_DELEGATES = {"xargs"}
+SHELL_OPERATORS = ("&&", "||", ";", "|", "\n", "&")
 WRAPPER_MAX_DEPTH = 3          # 래퍼 재귀 상한 — 무한 중첩 방어
-FORCE_SUBCOMMANDS = {"branch", "checkout", "switch", "restore"}
+# --force 로 파괴적이 되는 서브커맨드. `restore` 는 --force 옵션 자체가 없어 제외한다
+# (적대 검증에서 '절대 발동하지 않는 죽은 규칙'으로 지적됨 — restore 는 아래 별도 규칙).
+FORCE_SUBCOMMANDS = {"branch", "checkout", "switch"}
+
+# 원격 상태를 바꾸는 gh 동작 — `git push` 없이도 원격을 바꿀 수 있으므로 함께 막는다.
+# 그룹별 쓰기 동사만 열거한다(list/view/status/diff/download 등 읽기는 통과).
+GH_WRITE_ACTIONS = {
+    "pr": {"create", "merge", "close", "reopen", "edit", "ready", "review", "comment"},
+    "release": {"create", "delete", "edit", "upload"},
+    "repo": {"create", "delete", "edit", "rename", "archive", "sync"},
+    "issue": {"create", "close", "reopen", "edit", "comment", "delete", "transfer"},
+    "workflow": {"run", "enable", "disable"},
+    "secret": {"set", "delete"},
+    "variable": {"set", "delete"},
+    "gist": {"create", "delete", "edit"},
+    "cache": {"delete"},
+    "label": {"create", "delete", "edit"},
+}
+GH_WRITE_METHODS = {"post", "put", "patch", "delete"}
+# 로컬 이력·작업물을 되돌릴 수 없게 파괴하는 git 동작
+HISTORY_DESTRUCTIVE = {
+    ("stash", "drop"), ("stash", "clear"),
+    ("reflog", "expire"), ("reflog", "delete"),
+    ("worktree", "remove"),
+}
+# 판정 불가(파싱 실패) 세그먼트에만 쓰는 안전망 키워드 — 구조 판정의 대체가 아니라 보조다.
+# 이게 없으면 파싱 실패가 곧 '무검사 통과'가 되어 fail-open 이 우회 경로가 된다.
+UNPARSED_RISK_RE = re.compile(
+    r"\b(push|--force|--force-with-lease|reset\s+--hard|clean\s+-[A-Za-z]*f|"
+    r"filter-branch|reflog\s+expire)\b", re.IGNORECASE)
+
+LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+
+
+def _fold_continuations(command):
+    """역슬래시 줄바꿈을 접는다 — `git \\<개행> push` 가 두 조각으로 갈라지는 것을 막는다."""
+    return LINE_CONTINUATION_RE.sub(" ", command or "")
+
+
+def _split_on_operators(tokens):
+    groups, current = [], []
+    for t in tokens:
+        if t in SHELL_OPERATORS:
+            if current:
+                groups.append(current)
+            current = []
+        else:
+            current.append(t)
+    if current:
+        groups.append(current)
+    return groups
 
 
 def _command_segments(command):
-    return [s.strip() for s in SHELL_SPLIT_RE.split(command or "") if s.strip()]
+    """따옴표를 존중해 토큰화한 뒤 연산자에서 끊는다.
 
-
-def _shell_tokens(segment):
-    """shlex 토큰화. 따옴표 불균형 등 파싱 실패는 None → 호출자가 fail-open."""
+    문자열을 먼저 정규식으로 자르면 따옴표·heredoc 안의 `;`·`|`·개행이 분할점이 되어
+    정상 명령이 스스로 파싱 불능이 된다(실측: 여러 줄 커밋 메시지가 통째로 무검사 통과).
+    반환: (세그먼트 토큰 목록, 파싱 실패 여부)."""
+    text = _fold_continuations(command)
+    if not text.strip():
+        return [], False
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
     try:
-        return shlex.split(segment, posix=True)
+        tokens = list(lexer)
     except ValueError:
-        return None
+        return [], True          # 따옴표 불균형 등 — 호출자가 안전망으로 처리한다
+    return _split_on_operators(tokens), False
 
 
 def _strip_neutral_prefix(tokens):
-    """선행 환경변수 대입(`FOO=1 git …`)과 중립 수식어를 걷어낸다."""
+    """선행 환경변수 대입·수식어를 인자 수까지 고려해 걷어낸다."""
     i = 0
-    while i < len(tokens) and (ENV_ASSIGN_RE.match(tokens[i]) or tokens[i] in NEUTRAL_PREFIXES):
-        i += 1
+    while i < len(tokens):
+        t = tokens[i]
+        if ENV_ASSIGN_RE.match(t):
+            i += 1
+            continue
+        name = _exe_name(t)
+        if name in NEUTRAL_PREFIXES:
+            i += 1
+            continue
+        if name in PREFIX_ARITY:
+            i += 1
+            # 수식어 자신의 옵션(값을 먹는 것 포함)을 건너뛴다
+            while i < len(tokens) and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in PREFIX_OPTS_WITH_VALUE else 1
+            i += PREFIX_ARITY[name]      # timeout 의 duration 처럼 위치 인자
+            continue
+        if name in EXEC_DELEGATES:
+            i += 1
+            while i < len(tokens) and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in ("-n", "-P", "-I", "-L", "-d") else 1
+            continue
+        break
     return tokens[i:]
 
 
@@ -1069,61 +1249,163 @@ def _has_force_flag(rest):
     return False
 
 
-def _wrapper_payload(tokens, flags):
-    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열."""
+def _is_pwsh_command_flag(token):
+    """PowerShell 은 접두사 축약을 허용한다 — -c · -co · … · -command 전부 같은 뜻."""
+    t = token.lower()
+    if not t.startswith("-"):
+        return False
+    body = t[1:]
+    return bool(body) and "command".startswith(body)
+
+
+def _wrapper_payload(tokens, posix):
+    """래퍼(`bash -c` / `powershell -Command`)가 실행할 페이로드 문자열.
+
+    반환: (페이로드, 판정불가여부). -EncodedCommand 는 디코드하지 않고 판정 불가로 둔다."""
     for i, t in enumerate(tokens):
-        if t.lower() in flags and i + 1 < len(tokens):
-            return tokens[i + 1]
-    return None
+        low = t.lower()
+        if posix:
+            if low == "-c" and i + 1 < len(tokens):
+                return tokens[i + 1], False
+        else:
+            if low.startswith("-encodedcommand") or low == "-e" or low == "-enc":
+                return None, True          # base64 — 구조 판정 불가
+            if _is_pwsh_command_flag(t) and i + 1 < len(tokens):
+                return tokens[i + 1], False
+    return None, False
 
 
 def _walk_git_invocations(command, depth=0):
     """명령 안에서 실제로 실행되는 git 호출을 (서브커맨드, 나머지 인자)로 내놓는다.
 
+    반환하는 항목 중 ("<unparsed>", [원문]) 은 '구조 판정 불가' 신호다.
     래퍼(`bash -c "…"`)는 페이로드를 재귀 분석한다 — 래퍼로 감싸 우회하는 것을 막는다."""
     if depth > WRAPPER_MAX_DEPTH:
+        yield UNPARSED, [command or ""]
         return
-    for seg in _command_segments(command):
-        tokens = _shell_tokens(seg)
-        if tokens is None:
-            continue                       # 파싱 실패 — 이 세그먼트는 판단 보류(fail-open)
+    segments, failed = _command_segments(command)
+    if failed:
+        yield UNPARSED, [command or ""]
+        return
+    for tokens in segments:
         tokens = _strip_neutral_prefix(tokens)
         if not tokens:
             continue
         exe = _exe_name(tokens[0])
         if exe in POSIX_SHELLS or exe in PWSH_SHELLS:
-            flags = {"-c"} if exe in POSIX_SHELLS else {"-command", "-c"}
-            payload = _wrapper_payload(tokens, flags)
-            if payload:
+            payload, opaque = _wrapper_payload(tokens, exe in POSIX_SHELLS)
+            if opaque:
+                yield UNPARSED, [command or ""]
+            elif payload:
                 for item in _walk_git_invocations(payload, depth + 1):
                     yield item
             continue
-        if exe != "git":
+        if exe not in ("git", "gh"):
             continue
         sub, rest = _git_subcommand(tokens[1:])
         if sub is not None:
-            yield sub, rest
+            yield (exe + ":" + sub) if exe == "gh" else sub, rest
 
 
-def deny_reason(command):
-    """차단 사유 문자열, 없으면 None. 판정 불가는 None(fail-open)."""
-    for sub, rest in _walk_git_invocations(command):
-        if sub == "push":
-            return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
-        if sub == "reset" and "--hard" in rest:
-            return "git reset --hard 금지"
-        if sub == "clean" and _has_force_flag(rest):
-            return "git clean 강제 삭제 금지"
-        if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
-            return "git --force 계열 금지"
+UNPARSED = "<unparsed>"
+
+
+def _first_positional(rest):
+    for a in rest:
+        if not a.startswith("-"):
+            return a
     return None
 
 
+def _gh_deny_reason(group, rest):
+    """gh 는 push 없이도 원격을 바꾼다 — 그룹별 쓰기 동사를 막는다."""
+    if group == "api":
+        for i, a in enumerate(rest):
+            low = a.lower()
+            if low in ("-x", "--method") and i + 1 < len(rest):
+                if rest[i + 1].lower() in GH_WRITE_METHODS:
+                    return "gh api 쓰기 요청 금지 — 원격 상태를 바꿉니다"
+            if low.startswith("--method="):
+                if low.split("=", 1)[1] in GH_WRITE_METHODS:
+                    return "gh api 쓰기 요청 금지 — 원격 상태를 바꿉니다"
+        return None
+    action = _first_positional(rest)
+    if action and action in GH_WRITE_ACTIONS.get(group, ()):
+        return "원격 변경 금지 — gh %s %s 는 원격 상태를 바꿉니다" % (group, action)
+    return None
+
+
+def _git_deny_reason(sub, rest):
+    if sub == "push":
+        return "원격 반영(push) 금지 — 로컬 커밋만 허용됩니다"
+    if sub == "subtree" and "push" in rest:
+        return "원격 반영(subtree push) 금지 — 로컬 커밋만 허용됩니다"
+    if sub == "reset" and "--hard" in rest:
+        return "git reset --hard 금지"
+    if sub == "clean" and _has_force_flag(rest):
+        return "git clean 강제 삭제 금지"
+    if sub in FORCE_SUBCOMMANDS and _has_force_flag(rest):
+        return "git --force 계열 금지"
+    if sub == "branch" and any(a == "-D" for a in rest):
+        return "git branch -D 금지 — 병합되지 않은 브랜치가 사라집니다"
+    if sub == "checkout" and "--" in rest:
+        return "git checkout -- 금지 — 커밋되지 않은 작업물이 사라집니다"
+    if sub == "restore" and "--staged" not in rest:
+        return "git restore 금지 — 커밋되지 않은 작업물이 사라집니다"
+    if (sub, _first_positional(rest)) in HISTORY_DESTRUCTIVE:
+        return "git %s %s 금지 — 되돌릴 수 없습니다" % (sub, _first_positional(rest))
+    if sub == "filter-branch":
+        return "git filter-branch 금지 — 이력을 되돌릴 수 없게 재작성합니다"
+    if sub == "update-ref" and "-d" in rest:
+        return "git update-ref -d 금지 — 참조가 사라집니다"
+    return None
+
+
+def deny_reason(command):
+    """차단 사유 문자열, 없으면 None.
+
+    구조 판정이 1차다. 파싱이 불가능한 경우에만 키워드 안전망을 쓴다 — 파싱 실패를
+    그냥 통과시키면 fail-open 이 곧 우회 경로가 된다(적대 검증에서 실측된 결함).
+
+    막으려는 것은 명령 이름이 아니라 **결과** 둘이다: 원격 상태 변경과 되돌릴 수 없는
+    로컬 파괴. 그래서 git 서브커맨드뿐 아니라 gh 쓰기 동사도 함께 본다."""
+    for sub, rest in _walk_git_invocations(command):
+        if sub == UNPARSED:
+            if UNPARSED_RISK_RE.search(rest[0] if rest else ""):
+                return ("명령 구조를 해석할 수 없는데 위험 키워드가 보입니다 — 확인이 필요합니다")
+            continue
+        reason = (_gh_deny_reason(sub[3:], rest) if sub.startswith("gh:")
+                  else _git_deny_reason(sub, rest))
+        if reason:
+            return reason
+    return None
+
+
+# 커밋을 만드는 서브커맨드 → 그 서브커맨드에서 '커밋 안 함'을 뜻하는 플래그.
+# `commit` 만 보면 revert·merge·cherry-pick 으로 검증 없이 이력이 늘고, postbash 의
+# sync_commit 도 돌지 않아 커밋 SHA 가 장부에 남지 않는다(적대 검증에서 확인).
+# `rebase` 는 제외한다 — 기존 커밋을 재생하는 것이라 '검증 안 된 새 작업'이 아니고,
+# 충돌 해소 중 --continue 가 잦아 게이트가 주행을 방해한다.
+COMMIT_CREATING = {
+    "commit": (),
+    "revert": ("--no-commit", "-n", "--abort", "--quit"),
+    "cherry-pick": ("--no-commit", "-n", "--abort", "--quit"),
+    "merge": ("--no-commit", "--abort", "--quit"),
+    "am": ("--abort", "--skip", "--quit"),
+}
+
+
 def invokes_git_commit(command):
-    """명령이 실제로 `git commit` 을 실행하는가 — 커밋 게이트 판정용.
+    """명령이 실제로 커밋을 만드는가 — 커밋 게이트·SHA 기록 판정용.
 
     문자열 매칭이면 `echo "git commit"` 같은 언급까지 게이트를 켜 버린다."""
-    return any(sub == "commit" for sub, _ in _walk_git_invocations(command))
+    for sub, rest in _walk_git_invocations(command):
+        if sub not in COMMIT_CREATING:
+            continue
+        if any(flag in rest for flag in COMMIT_CREATING[sub]):
+            continue                     # 이 호출은 커밋을 만들지 않는다
+        return True
+    return False
 
 
 # ------------------------------------------------- 게이트 판정 (컨텍스트 인지)
@@ -1170,7 +1452,11 @@ def emit_gate(decision, reason, command=""):
 
 def commit_gate_reason(repo):
     """커밋 게이트가 걸리는 사유 — 통과면 None."""
-    tracker = load_tracker(repo, required=False)
+    tracker, state = load_tracker_checked(repo)
+    if state == TRACKER_CORRUPT:
+        # 파손을 '장부 없음(수동 운용)'으로 보고 통과시키면 게이트가 조용히 사라진다
+        return ("장부가 파손돼 검증 상태를 확인할 수 없습니다: %s — 복구 후 커밋하십시오."
+                % rp(repo)["tracker"])
     if not tracker or not tracker.get("tasks"):
         return None
     if os.path.exists(rp(repo)["paused_flag"]):
