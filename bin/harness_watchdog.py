@@ -439,8 +439,24 @@ def handle_project(proj, settings, runtime_dir, probe_sec, dry_run, log):
     name = proj.get("id") or "?"
     now = datetime.now(timezone.utc)
 
-    # 1. status ≠ active → 스킵
+    # 1. status ≠ active → 스킵. 단 completed 는 종점이 아니다(DESIGN §7) — 장부에 진행
+    #    가능한 작업이 생겼으면 여기서 되살린다. 재활성화가 MCP task_add 에만 걸려 있어,
+    #    엔진 CLI add-task(SKILL 폴백 경로)나 손편집으로 작업을 넣으면 레지스트리가
+    #    completed 로 남아 워치독이 영영 기동하지 않던 비대칭을 없앤다.
     status = proj.get("status")
+    if status == "completed":
+        revived = eng.load_json(eng.rp(proj.get("repo") or "")["tracker"])
+        if isinstance(revived, dict) and eng.eligible_next(revived) is not None:
+            if dry_run:
+                log(name, "skip", "(dry-run) completed 인데 진행 가능 작업 있음 — 재활성화 대상")
+                return False
+            proj["status"] = "active"
+            proj["consecutive_errors"] = 0
+            proj["limit_hits"] = 0
+            proj["next_retry_at"] = None
+            proj["updated_at"] = eng.now_iso()
+            log(name, "active", "completed → active 재활성화(장부에 진행 가능 작업 확인)")
+            status = "active"
     if status != "active":
         log(name, "skip", "status=%s — 기동 대상 아님" % status)
         return False

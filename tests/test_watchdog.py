@@ -281,6 +281,39 @@ class HandleProjectTest(unittest.TestCase):
         self.assertTrue(self.handle(proj, dry_run=False))
         self.assertEqual(proj["status"], "needs_human")
 
+    def test_step1_completed_revives_when_work_appears(self):
+        """DESIGN 7 절이 'completed 는 종점이 아니다' 라고 못박았는데 워치독만 이를 몰랐다.
+
+        재활성화가 MCP task_add 에만 걸려 있어, 엔진 CLI(SKILL 폴백 경로)나 손편집으로
+        작업을 넣으면 레지스트리가 completed 로 남아 영영 기동하지 않았다."""
+        self.write_tracker([eng.new_task("t1", "새 작업")])
+        proj = self.project(status="completed")
+        self.handle(proj, dry_run=False)
+        self.assertEqual(proj["status"], "active")
+        self.assertIn("재활성화", self.msgs[0][2])
+
+    def test_step1_completed_stays_when_no_work(self):
+        """대조군 — 진행 가능 작업이 없으면 되살리지 않는다."""
+        self.write_tracker([dict(eng.new_task("t1", "완료"), status="done")])
+        proj = self.project(status="completed")
+        self.assertFalse(self.handle(proj, dry_run=False))
+        self.assertEqual(proj["status"], "completed")
+
+    def test_step1_other_statuses_are_not_revived(self):
+        """paused·needs_human·error 는 작업 추가만으로 자동 재개하지 않는다(DESIGN 7 절)."""
+        self.write_tracker([eng.new_task("t1", "새 작업")])
+        for status in ("paused", "needs_human", "error"):
+            proj = self.project(status=status)
+            self.assertFalse(self.handle(proj, dry_run=False))
+            self.assertEqual(proj["status"], status)
+
+    def test_step1_dry_run_does_not_revive(self):
+        self.write_tracker([eng.new_task("t1", "새 작업")])
+        proj = self.project(status="completed")
+        self.assertFalse(self.handle(proj, dry_run=True))
+        self.assertEqual(proj["status"], "completed")
+        self.assertIn("(dry-run)", self.msgs[0][2])
+
     def test_step4_empty_tracker_does_not_complete(self):
         """init 직후 빈 장부를 '완료' 로 봉인하면 이후 작업을 넣어도 영영 안 뜬다(실측 결함)."""
         self.write_tracker([])

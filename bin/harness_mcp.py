@@ -562,7 +562,12 @@ def tool_task_set(a):
     code, out, err = run_engine_argv(argv)
     if code != 0:
         raise ToolError("set-task 실패 (exit %d): %s" % (code, (err or out).strip()))
-    return safe_json(out) or {"ok": True, "raw": out.strip()}
+    result = safe_json(out) or {"ok": True, "raw": out.strip()}
+    # 작업을 되살렸으면 프로젝트도 되살린다 — task_add 에만 걸려 있어, blocked 를 pending
+    # 으로 되돌려도 레지스트리는 completed 로 남아 워치독이 영영 안 뜨는 비대칭이었다.
+    if a.get("status") == "pending" and registry_reactivate_if_completed(repo) is not None:
+        result["registry_reactivated"] = True
+    return result
 
 
 def tool_harness_pause(a):
@@ -906,7 +911,13 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
 
 
 def tool_watchdog_status(a):
-    query = _schtasks("/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST")
+    # 스케줄러 조회 실패를 도구 전체의 실패로 올리면, cron 으로 설치한 WSL/리눅스 사용자는
+    # 레지스트리 요약과 로그 tail 조차 볼 수 없다 — 진단 수단이 통째로 사라진다.
+    try:
+        query = _schtasks("/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST")
+    except ToolError as e:
+        query = {"exit_code": -1, "stdout": "", "stderr": str(e),
+                 "unavailable": "스케줄러 조회 불가(Windows 전용) — 나머지 진단만 보고합니다"}
     # 진단은 파손 상태에서도 답해야 한다 — 읽기 전용이라 전멸 위험이 없다
     reg, registry_state = registry_load_checked()
     if reg is None:
