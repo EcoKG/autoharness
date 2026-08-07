@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:09:32.601514+00:00",
+  "updated_at": "2026-08-07T03:12:14.532440+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -271,6 +271,21 @@
       "commit": null,
       "started_at": "2026-08-07T03:07:57.624929+00:00",
       "finished_at": "2026-08-07T03:09:32.601514+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "docs-hardening-sync",
+      "title": "보강분의 설계 문서 반영 및 드리프트 재발 차단 — 보강 작업으로 SKILL 에 ops 모드와 판정 원칙 8개가 생겼는데 DESIGN §11 은 여전히 \"본문 모드 4개\"·원칙 4개로 남아 있다. ① DESIGN §11 을 실제 모드 구성(init/resume/status/pause/resume-project/ops)과 안전 규칙(폴백 init 고지·장부 실존 게이트·적재 0단계·배포 한계선)에 맞춰 갱신 ② SKILL.md 의 모드 목록과 DESIGN §11 의 모드 목록이 어긋나면 실패하는 교차 검증 테스트를 추가해 이 드리프트 종류를 기계적으로 차단",
+      "path": "DESIGN.md",
+      "deps": [],
+      "priority": 27,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/docs-hardening-sync-20260807T031138Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T03:11:38.079831+00:00",
+      "finished_at": "2026-08-07T03:12:14.532440+00:00",
       "test_cmd": null
     }
   ]

@@ -221,6 +221,56 @@ class ExitCodeTableTest(unittest.TestCase):
             (0, 1, 2, 3, 4))
 
 
+class SkillDesignModeSyncTest(unittest.TestCase):
+    """SKILL.md 모드 표 ↔ DESIGN §11 모드 목록 교차 검증.
+
+    실측 드리프트: ops 모드를 SKILL 에 추가했을 때 DESIGN 은 "본문 모드 4개" 로 남아
+    있었다. 사람이 두 문서를 눈으로 맞추는 방식은 반복해서 실패하므로 기계로 대조한다.
+    """
+
+    DESIGN_PATH = os.path.join(REPO, "DESIGN.md")
+    BOLD_MODE_RE = re.compile(r"\*\*([a-z][a-z-]*)\*\*")
+
+    def skill_modes(self):
+        text = read_skill()
+        start = text.find("| 요청 신호 | 모드 |")
+        self.assertGreater(start, 0, "SKILL.md 에 모드 표가 없습니다")
+        modes = set()
+        for line in text[start:].splitlines()[1:]:
+            if not line.startswith("|"):
+                break
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            modes.update(self.BOLD_MODE_RE.findall(cells[-1]))
+        return modes
+
+    def design_modes(self):
+        with open(self.DESIGN_PATH, "r", encoding="utf-8") as f:
+            text = f.read().replace("\r\n", "\n")
+        start = text.find("## 11. 스킬")
+        self.assertGreater(start, 0, "DESIGN 에 스킬 절이 없습니다")
+        section = text[start:text.find("## 12.", start)]
+        anchor = section.find("본문 모드")
+        self.assertGreater(anchor, 0, "DESIGN 스킬 절에 모드 목록이 없습니다")
+        return set(re.findall(r"^- \*\*([a-z][a-z-]*)\*\*", section[anchor:], re.MULTILINE))
+
+    def test_mode_sets_match(self):
+        skill, design = self.skill_modes(), self.design_modes()
+        self.assertTrue(skill, "SKILL 모드 추출 실패")
+        self.assertEqual(
+            skill, design,
+            "SKILL 과 DESIGN 의 모드 목록이 다릅니다 — SKILL 전용=%s, DESIGN 전용=%s"
+            % (sorted(skill - design), sorted(design - skill)))
+
+    def test_expected_modes_are_covered(self):
+        self.assertEqual(
+            self.skill_modes(),
+            {"init", "resume", "status", "pause", "resume-project", "ops"})
+
+    def test_design_no_longer_claims_four_modes(self):
+        with open(self.DESIGN_PATH, "r", encoding="utf-8") as f:
+            self.assertNotIn("본문 모드 4개", f.read())
+
+
 class CliSurfaceSyncTest(unittest.TestCase):
     """스킬 문서에 적힌 엔진 호출이 실제 CLI 표면과 일치하는지 — 문서 드리프트 차단."""
 
