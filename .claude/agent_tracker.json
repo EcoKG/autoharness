@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:03:01.912238+00:00",
+  "updated_at": "2026-08-07T03:04:49.216016+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -231,13 +231,13 @@
         "skill-mode-routing"
       ],
       "priority": 20,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/docs-skill-routing-sync-20260807T030413Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-07T03:04:13.001869+00:00",
+      "finished_at": "2026-08-07T03:04:49.216016+00:00",
       "test_cmd": null
     },
     {

@@ -4,15 +4,15 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-07T03:03:01.939781+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-07T03:04:49.238537+00:00
 
-## 현황: done 13 / 15  (in_progress 0, failed 0, blocked 0, pending 2)
+## 현황: done 14 / 15  (in_progress 0, failed 0, blocked 0, pending 1)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
 | skill-mode-routing | 스킬 모드 라우팅 결함 수정 — 모드 표가 메커니즘 어휘("하네스 구축")로만 매칭해 결과 서술형 요청("검증하고 문제 있으면 수정", "master 승격 가능한지 확인")이 어느 모드에도 안 걸리고, 매칭 실패 시 폴백 조항이 없어 에이전트가 장부·커밋 게이트·훅 없이 맨손 작업으로 빠짐(실사용 실측). ① 모드 표를 의도 기반으로 재작성(결과 서술형 트리거 추가, 장부 유무로 init↔task_add+resume 분기) ② 폴백 조항 명문화(맨손 다단계 작업 금지) ③ frontmatter description 에도 결과 서술형 트리거 반영 ④ 엔진에 build_parser() 추출 후 tests/test_skill_contract.py 로 계약 회귀 검증(4모드·종료코드표↔엔진 상수·폴백 조항·폴백 표↔실제 CLI 표면 일치) | ✅ done | 1/5 | - | - |
 | tests-engine-hooks | 엔진 훅 단위 테스트 구축 — hook-prebash(금지 명령 차단·커밋 게이트)·hook-stop(6단계 게이트·진전 가드)·hook-postbash(SHA 동기화)를 stdin JSON 실측으로 검증하는 tests/test_engine_hooks.py 작성. 임시 샌드박스 저장소 사용, 실제 저장소·사용자 상태 오염 금지 | ✅ done | 0/5 | - | - |
-| docs-skill-routing-sync | 라우팅 계약 문서 반영 — DESIGN.md §11(스킬 절)에 모드 판정 원칙·폴백 규칙을 계약으로 명시하고, README 사용 흐름에 "하네스가 이미 있는 저장소에 새 목표를 줄 때는 init 재실행이 아니라 task_add + resume" 경로를 추가 | ⏳ pending | 0/5 | - | - |
+| docs-skill-routing-sync | 라우팅 계약 문서 반영 — DESIGN.md §11(스킬 절)에 모드 판정 원칙·폴백 규칙을 계약으로 명시하고, README 사용 흐름에 "하네스가 이미 있는 저장소에 새 목표를 줄 때는 init 재실행이 아니라 task_add + resume" 경로를 추가 | ✅ done | 0/5 | - | - |
 | fix-add-task-self-dep | add-task 자기/순환 의존 결함 수정 — cmd_add_task 의 `d != a.id` 조건이 자기 의존을 오히려 허용해 영구 교착 작업이 생김. 자기 의존·순환 의존을 add-task 시점에 거부하고, next/brief/status 가 '충족 불가능한 pending(교착)'을 구분해 알리도록 개선 + tests/ 회귀 테스트 | ✅ done | 0/5 | - | - |
 | fix-sync-commit-guard | sync_commit 오귀속 방지 — git commit 이 실패해 HEAD 가 변하지 않은 경우(예: nothing to commit)에도 직전 커밋 SHA 를 최신 done 작업에 기록하는 결함. hook-postbash/sync_commit 에서 HEAD 변화(또는 커밋 성공)를 검증한 뒤에만 기록하도록 수정 + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | refresh-loop-engine-routing | 주행용 엔진 사본 재갱신 — build_parser() 추출이 반영된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작 확인(개발 원본과 주행 사본의 드리프트 해소) | ⏳ pending | 0/5 | - | - |
