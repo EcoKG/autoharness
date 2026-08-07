@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T03:54:02.618288+00:00",
+  "updated_at": "2026-08-07T03:55:49.851443+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -313,9 +313,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/detect-dead-watchdog-20260807T035314Z.log",
-      "commit": null,
+      "commit": "4a63ecb",
       "started_at": "2026-08-07T03:50:56.756375+00:00",
       "finished_at": "2026-08-07T03:54:02.618288+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "refresh-loop-engine-detection",
+      "title": "주행용 엔진 사본 재갱신 — 훅 배선 비활성 감지가 반영된 bin/harness_engine.py 를 scripts/ 고정 사본으로 복사한다. 이번 라운드에서 등록된 훅(python scripts/harness_engine.py hook-*)이 실행하는 것은 이 사본이므로, 갱신 전에는 발화 마커(.claude/harness-hooks-seen.json)가 기록되지 않아 이 저장소 자신의 배선 진단이 inactive 로 오보고된다. 갱신 후 status 의 hooks 필드가 active 로 뒤집히는지 실측 확인할 것.",
+      "path": "scripts/harness_engine.py",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/refresh-loop-engine-detection-20260807T035500Z.log",
+      "commit": null,
+      "started_at": "2026-08-07T03:55:00.777421+00:00",
+      "finished_at": "2026-08-07T03:55:49.851443+00:00",
       "test_cmd": null
     }
   ]
