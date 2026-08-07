@@ -130,7 +130,12 @@ autoharness/
 7. `shlex` 파싱 실패(따옴표 불균형 등)는 **fail-open** — 훅이 주행을 막지 않는다
 
 커밋 게이트의 트리거도 같은 판정을 쓴다 — `echo "git commit"` 같은 언급으로 게이트가 켜지지
-않는다.
+않는다. 다만 **커밋을 만드는 것은 `commit` 만이 아니다**: `revert`·`cherry-pick`·`merge`·`am`
+도 트리거한다(각 서브커맨드의 `--no-commit`/`-n`/`--abort`/`--skip`/`--quit` 는 제외). 이
+축이 빠져 있으면 검증 통과 기록 없이 이력이 늘고, PostToolUse 의 `sync_commit` 도 돌지 않아
+커밋 SHA 가 장부에 남지 않는다. `rebase` 는 **의도적으로 제외**한다 — 기존 커밋을 재생하는
+것이라 "검증 안 된 새 작업"이 아니고, 충돌 해소 중 `--continue` 가 잦아 게이트가 주행을
+방해한다.
 
 ## 5. 장부 스키마 (`.claude/agent_tracker.json`)
 

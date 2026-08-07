@@ -1284,11 +1284,31 @@ def deny_reason(command):
     return None
 
 
+# 커밋을 만드는 서브커맨드 → 그 서브커맨드에서 '커밋 안 함'을 뜻하는 플래그.
+# `commit` 만 보면 revert·merge·cherry-pick 으로 검증 없이 이력이 늘고, postbash 의
+# sync_commit 도 돌지 않아 커밋 SHA 가 장부에 남지 않는다(적대 검증에서 확인).
+# `rebase` 는 제외한다 — 기존 커밋을 재생하는 것이라 '검증 안 된 새 작업'이 아니고,
+# 충돌 해소 중 --continue 가 잦아 게이트가 주행을 방해한다.
+COMMIT_CREATING = {
+    "commit": (),
+    "revert": ("--no-commit", "-n", "--abort", "--quit"),
+    "cherry-pick": ("--no-commit", "-n", "--abort", "--quit"),
+    "merge": ("--no-commit", "--abort", "--quit"),
+    "am": ("--abort", "--skip", "--quit"),
+}
+
+
 def invokes_git_commit(command):
-    """명령이 실제로 `git commit` 을 실행하는가 — 커밋 게이트 판정용.
+    """명령이 실제로 커밋을 만드는가 — 커밋 게이트·SHA 기록 판정용.
 
     문자열 매칭이면 `echo "git commit"` 같은 언급까지 게이트를 켜 버린다."""
-    return any(sub == "commit" for sub, _ in _walk_git_invocations(command))
+    for sub, rest in _walk_git_invocations(command):
+        if sub not in COMMIT_CREATING:
+            continue
+        if any(flag in rest for flag in COMMIT_CREATING[sub]):
+            continue                     # 이 호출은 커밋을 만들지 않는다
+        return True
+    return False
 
 
 # ------------------------------------------------- 게이트 판정 (컨텍스트 인지)

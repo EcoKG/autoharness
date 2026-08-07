@@ -314,6 +314,30 @@ class GitCommitDetectionTest(unittest.TestCase):
     def test_detects_commit_in_wrapper(self):
         self.assertTrue(eng.invokes_git_commit("bash -c '" + G + " commit -m x'"))
 
+    def test_detects_other_commit_creating_subcommands(self):
+        """`commit` 만 보면 검증 없이 이력이 늘고 SHA 도 안 남는다(적대 검증 확인)."""
+        for cmd in (G + " revert abc123", G + " cherry-pick abc123",
+                    G + " merge feature", G + " am patch.mbox",
+                    G + " merge --continue"):
+            self.assertTrue(eng.invokes_git_commit(cmd), cmd)
+
+    def test_no_commit_flags_are_respected(self):
+        """커밋을 만들지 않는 형태까지 게이트를 켜면 정상 작업이 막힌다."""
+        for cmd in (G + " revert --no-commit abc", G + " revert -n abc",
+                    G + " cherry-pick -n abc", G + " merge --no-commit feature",
+                    G + " merge --abort", G + " cherry-pick --abort",
+                    G + " am --skip", G + " am --abort"):
+            self.assertFalse(eng.invokes_git_commit(cmd), cmd)
+
+    def test_rebase_is_deliberately_excluded(self):
+        """기존 커밋 재생이라 '검증 안 된 새 작업' 이 아니다 — 의도적 제외."""
+        for cmd in (G + " rebase main", G + " rebase --continue"):
+            self.assertFalse(eng.invokes_git_commit(cmd), cmd)
+
+    def test_read_only_subcommands_do_not_trigger(self):
+        for cmd in (G + " log --merges", G + " diff", G + " status", G + " stash list"):
+            self.assertFalse(eng.invokes_git_commit(cmd), cmd)
+
 
 class TokenHelperTest(unittest.TestCase):
     """판정을 떠받치는 보조 함수 — 경계 동작을 직접 고정한다."""
