@@ -833,29 +833,39 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
     # 유예 근거로 쓴다. 스탬프에만 의존하면 그 경로 사용자가 전부 오탐을 맞는다.
     never_ran_per_scheduler = bool(result and result["code"] == SCHED_NEVER_RUN)
 
+    # 실행 흔적은 로그 나이와 tick 나이 중 **더 최근인 값**이다. 종전에는 임계를 로그
+    # 나이에만 적용하고 tick 은 존재 여부로만 봐서, 로그 파일이 사라진 환경에서 마지막
+    # 틱이 며칠 전이어도 healthy 로 보고했다 — 이 모듈이 존재하는 이유인 '등록만 되고
+    # 실행 안 됨'을 정확히 그 상태에서 놓쳤다(적대 검증에서 실측).
+    evidence = [v for v in (age, since_tick) if v is not None]
+    freshest = min(evidence) if evidence else None
+
     warnings = []
     if not registered:
         state = "not_registered"
     elif since_install is not None and since_install < threshold:
         # 설치 직후 아직 주기가 안 온 경우 — 경고 대상 아님(오탐 금지)
         state = "grace"
-    elif since_install is None and never_ran_per_scheduler and age is None and since_tick is None:
+    elif since_install is None and never_ran_per_scheduler and freshest is None:
         # 설치 시각을 모르지만 스케줄러가 '미실행'을 보고 — 첫 주기 전으로 본다.
         # 이 유예는 영구화될 수 있으나(트리거 오설정 등) 그 경우 결과 코드가 미실행이
         # 아닌 실패 코드로 바뀌므로 아래 결과 코드 경고가 결함을 잡는다.
         state = "grace"
-    elif age is None and since_tick is None:
+    elif freshest is None:
         state = "stale"
         warnings.append(
-            "워치독이 등록돼 있으나 실행 흔적이 전혀 없습니다(로그 파일 부재: %s). "
+            "워치독이 등록돼 있으나 실행 흔적이 전혀 없습니다(로그 파일 부재: %s, tick 기록 없음). "
             "스케줄러가 매 기동을 반려하면 등록 상태는 Ready 로 남아 정상처럼 보입니다 — "
             "자동 부활 보장이 무효인 상태입니다." % log_path)
-    elif age is not None and age >= threshold:
+    elif freshest >= threshold:
         state = "stale"
         warnings.append(
-            "워치독 마지막 실행이 %.0f분 전입니다 — 기대 주기 %d분의 %d배(%d분)를 넘겼습니다. "
-            "스케줄러가 기동을 반려하고 있는지 확인하십시오."
-            % (age, interval, STALE_INTERVAL_MULTIPLIER, threshold))
+            "워치독 마지막 실행 흔적이 %.0f분 전입니다(로그 %s / tick %s) — 기대 주기 %d분의 "
+            "%d배(%d분)를 넘겼습니다. 스케줄러가 기동을 반려하고 있는지 확인하십시오."
+            % (freshest,
+               "없음" if age is None else "%.0f분 전" % age,
+               "없음" if since_tick is None else "%.0f분 전" % since_tick,
+               interval, STALE_INTERVAL_MULTIPLIER, threshold))
     else:
         state = "healthy"
 
@@ -867,14 +877,19 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
     # 갱신되지 않으므로 이것만으로는 '워치독 미실행'의 근거가 못 된다 — last_tick 과 함께 본다.
     never_launched_signal = None
     if projects and len(never_launched) == len(projects):
+        if since_tick is None:
+            tick_note = "돈 기록이 없습니다(last_tick 없음) — 워치독 미실행이 의심됩니다."
+        elif since_tick >= threshold:
+            # 오래된 tick 을 '돌고 있다' 고 서술하면 죽은 워치독을 살아 있다고 알리는 셈이다
+            tick_note = ("마지막으로 돈 것이 %.0f분 전입니다(last_tick=%s, 기대 주기 %d분) — "
+                         "워치독이 멈춰 있습니다." % (since_tick, last_tick, interval))
+        else:
+            tick_note = ("돌고 있습니다(last_tick=%s) — 기동 조건이 매번 스킵된 것입니다."
+                         % last_tick)
         never_launched_signal = {
             "projects": never_launched,
             "note": ("등록된 %d개 프로젝트 전부 last_launch 가 비어 있습니다(헤드리스 세션이 "
-                     "한 번도 기동되지 않음). 워치독 주기 자체는 %s"
-                     % (len(projects),
-                        ("돌고 있습니다(last_tick=%s) — 기동 조건이 매번 스킵된 것입니다."
-                         % last_tick) if last_tick else
-                        "돈 기록이 없습니다(last_tick 없음) — 워치독 미실행이 의심됩니다.")),
+                     "한 번도 기동되지 않음). 워치독 주기 자체는 %s" % (len(projects), tick_note)),
         }
 
     return {"state": state, "registered": registered, "warnings": warnings,
@@ -883,6 +898,7 @@ def watchdog_health(query, reg, log_path, interval_minutes=None, now_minutes_sin
             "interval_source": "scheduler" if interval_minutes else "default",
             "stale_threshold_minutes": threshold,
             "log_age_minutes": None if age is None else round(age, 1),
+            "evidence_age_minutes": None if freshest is None else round(freshest, 1),
             "minutes_since_install": None if since_install is None else round(since_install, 1),
             "last_tick": last_tick,
             "minutes_since_tick": None if since_tick is None else round(since_tick, 1),

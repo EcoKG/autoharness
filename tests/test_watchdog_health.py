@@ -310,6 +310,60 @@ class GraceWindowTest(HealthTestBase):
         self.assertEqual(h["state"], "healthy")
 
 
+class EvidenceAgeTest(HealthTestBase):
+    """실행 흔적은 로그 나이와 tick 나이 중 더 최근인 값이다 (적대 검증 확인 결함).
+
+    종전에는 임계를 로그 나이에만 적용하고 tick 은 존재 여부로만 봐서, 로그 파일이
+    사라진 환경에서 마지막 틱이 며칠 전이어도 healthy 로 보고했다 — 이 모듈이 존재하는
+    이유인 '등록만 되고 실행 안 됨'을 정확히 그 상태에서 놓쳤다.
+    """
+
+    def test_old_tick_without_log_is_stale(self):
+        h = self.health(reg=registry(last_tick="TICK"), interval=15,
+                        ages={"TICK": 14400.0})          # 10일 전
+        self.assertEqual(h["state"], "stale")
+        self.assertTrue(h["warnings"])
+        self.assertEqual(h["evidence_age_minutes"], 14400.0)
+
+    def test_fresh_log_wins_over_old_tick(self):
+        self.write_log(age_minutes=2)
+        h = self.health(reg=registry(last_tick="TICK"), interval=15,
+                        ages={"TICK": 14400.0})
+        self.assertEqual(h["state"], "healthy")
+        self.assertEqual(h["evidence_age_minutes"], 2.0)
+
+    def test_fresh_tick_wins_over_old_log(self):
+        self.write_log(age_minutes=600)
+        h = self.health(reg=registry(last_tick="TICK"), interval=15, ages={"TICK": 3.0})
+        self.assertEqual(h["state"], "healthy")
+        self.assertEqual(h["evidence_age_minutes"], 3.0)
+
+    def test_both_old_is_stale(self):
+        self.write_log(age_minutes=600)
+        h = self.health(reg=registry(last_tick="TICK"), interval=15, ages={"TICK": 700.0})
+        self.assertEqual(h["state"], "stale")
+        self.assertEqual(h["evidence_age_minutes"], 600.0)   # 더 최근인 값
+
+    def test_warning_names_both_sources(self):
+        h = self.health(reg=registry(last_tick="TICK"), interval=15, ages={"TICK": 14400.0})
+        w = h["warnings"][0]
+        self.assertIn("로그 없음", w)
+        self.assertIn("tick", w)
+
+    def test_never_launched_note_does_not_claim_alive_when_tick_is_old(self):
+        """죽은 워치독을 '돌고 있습니다' 라고 서술하던 오보고."""
+        reg = registry(projects=[project("a"), project("b")], last_tick="TICK")
+        h = self.health(reg=reg, interval=15, ages={"TICK": 14400.0})
+        note = h["never_launched"]["note"]
+        self.assertIn("멈춰 있습니다", note)
+        self.assertNotIn("돌고 있습니다", note)
+
+    def test_never_launched_note_says_alive_when_tick_is_fresh(self):
+        reg = registry(projects=[project("a")], last_tick="TICK")
+        h = self.health(reg=reg, interval=15, ages={"TICK": 2.0})
+        self.assertIn("돌고 있습니다", h["never_launched"]["note"])
+
+
 class NeverLaunchedSignalTest(HealthTestBase):
     """③ 전 프로젝트 last_launch=null 신호 — last_tick 과 함께 해석한다."""
 
