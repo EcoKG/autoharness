@@ -319,6 +319,45 @@ def registered_hook_matchers(repo):
     return found
 
 
+# 훅 명령 안에서 엔진을 가리키는 경로 토큰(따옴표로 감싼 것 우선)
+ENGINE_PATH_RE = re.compile(r'"([^"]*harness_engine\.py)"|(\S*harness_engine\.py)')
+
+
+def engine_path_in_command(command):
+    """훅 명령이 가리키는 엔진 경로 토큰. 없으면 None."""
+    m = ENGINE_PATH_RE.search(command or "")
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
+def path_is_rooted(path):
+    """이 경로가 cwd 와 무관하게 해석되는가 — 즉 어디서 실행돼도 같은 파일을 가리키는가."""
+    if not path:
+        return False
+    if "CLAUDE_PROJECT_DIR" in path:
+        return True                      # 플레이스홀더 — 프로젝트 루트로 치환된다
+    if path.startswith(("/", "\\", "~")):
+        return True                      # POSIX 절대 경로·홈
+    return len(path) > 1 and path[1] == ":"   # C:/... 윈도우 절대 경로
+
+
+def cwd_dependent_hooks(repo):
+    """엔진을 상대 경로로 가리켜 cwd 에 종속되는 훅 명령 목록(정렬).
+
+    훅은 프로젝트 루트가 아니라 **현재 작업 디렉토리에서 실행된다**(공식 훅 문서).
+    상대 경로로 쓰면 하위 디렉토리로 이동하는 순간 게이트 4종이 전부 죽는다 — 실측으로
+    확인된 결함이다. `${CLAUDE_PROJECT_DIR}` 나 절대 경로면 안전하다."""
+    weak = set()
+    for name in SETTINGS_FILES:
+        settings = load_json(os.path.join(rp(repo)["claude_dir"], name))
+        for _event, command, _matcher in _iter_hook_commands(settings):
+            path = engine_path_in_command(command)
+            if path and not path_is_rooted(path):
+                weak.add(command.strip())
+    return sorted(weak)
+
+
 def matcher_covers(matcher, tool):
     """matcher 문자열이 해당 도구를 덮는가 — 정확 일치 목록(`|`·`,` 구분) 기준."""
     if not matcher:
@@ -363,9 +402,13 @@ def hook_wiring_status(repo, tracker=None):
     # 부분 등록: 일부만 걸려 있으면 나머지 게이트는 없는 상태인데 종전에는 드러나지 않았다
     missing_ops = [op for op in MARKER_HOOK_OPS if op not in registered]
 
+    # cwd 종속 훅: 등록돼 있어도 하위 디렉토리에서는 죽는다 — 등록 여부만 보면 안 보인다
+    weak_hooks = cwd_dependent_hooks(repo)
+
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
             "matchers": matchers, "uncovered_tools": uncovered,
             "settings_states": states, "missing_hooks": missing_ops,
+            "cwd_dependent_hooks": weak_hooks,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
 
     extra_warnings = []
@@ -378,6 +421,11 @@ def hook_wiring_status(repo, tracker=None):
         extra_warnings.append(
             "[AutoHarness 경고] 하네스 훅이 일부만 등록돼 있습니다 — 누락: %s. 등록되지 않은 "
             "훅이 강제하던 규칙은 동작하지 않습니다." % ", ".join(missing_ops))
+    if weak_hooks:
+        extra_warnings.append(
+            "[AutoHarness 경고] 훅 %d건이 엔진을 상대 경로로 가리킵니다 — 훅은 프로젝트 루트가 "
+            "아니라 현재 작업 디렉토리에서 실행되므로, 하위 디렉토리로 이동하면 게이트가 전부 "
+            "죽습니다. `${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py` 로 바꾸십시오." % len(weak_hooks))
 
     if state == WIRING_INACTIVE:
         extra_warnings.insert(0, _wiring_warning(repo, info))

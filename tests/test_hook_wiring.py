@@ -34,6 +34,10 @@ ENGINE = os.path.join(BIN, "harness_engine.py")
 PY = sys.executable
 OK_CMD = '"%s" -c "print(\'ok\')"' % PY
 
+# 정상 설치가 내보내는 훅 명령 형태. 훅은 프로젝트 루트가 아니라 현재 작업 디렉토리에서
+# 실행되므로 엔진은 ${CLAUDE_PROJECT_DIR} 로 뿌리내려야 한다(상대 경로면 cd 한 순간 죽는다).
+HOOK_CMD = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" %s'
+
 # 실제 훅 호출 페이로드 — Claude Code 런타임이 session_id/hook_event_name 을 채운다
 REAL_PAYLOAD = {"session_id": "abc-123", "hook_event_name": "PreToolUse",
                 "transcript_path": "/tmp/t.jsonl", "tool_input": {"command": "git status"}}
@@ -83,9 +87,9 @@ class WiringTestBase(unittest.TestCase):
     def write_settings(self, name="settings.json", commands=None):
         """하네스 훅이 등록된 settings 파일을 만든다."""
         if commands is None:
-            commands = ["python scripts/harness_engine.py hook-prebash",
-                        "python scripts/harness_engine.py hook-postbash",
-                        "python scripts/harness_engine.py hook-stop"]
+            commands = [HOOK_CMD % "hook-prebash",
+                        HOOK_CMD % "hook-postbash",
+                        HOOK_CMD % "hook-stop"]
         events = {"PreToolUse": [], "PostToolUse": [], "Stop": []}
         keys = list(events)
         for i, cmd in enumerate(commands):
@@ -167,7 +171,7 @@ class FalsePositiveBoundaryTest(WiringTestBase):
         eng.atomic_write_json(
             os.path.join(self.paths["claude_dir"], "settings.json"),
             {"hooks": {"SessionStart": [{"hooks": [
-                {"type": "command", "command": "python scripts/harness_engine.py brief"}]}]}})
+                {"type": "command", "command": HOOK_CMD % "brief"}]}]}})
         self.assertEqual(self.wiring()["state"], eng.WIRING_NOT_REGISTERED)
 
     def test_registered_and_fired_is_active(self):
@@ -245,7 +249,7 @@ class DiagnosisGapTest(WiringTestBase):
     def test_partial_registration_is_warned(self):
         """훅 일부만 등록된 상태 — 나머지 게이트는 없는데 active 로 보고됐다."""
         self.init_tracker()
-        self.write_settings(commands=["python scripts/harness_engine.py hook-prebash"])
+        self.write_settings(commands=[HOOK_CMD % "hook-prebash"])
         self.hook("hook-prebash", REAL_PAYLOAD)          # 등록된 것은 발화 → active
         info = eng.hook_wiring_status(self.sandbox)
         self.assertEqual(info["state"], eng.WIRING_ACTIVE)

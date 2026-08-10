@@ -274,17 +274,31 @@ HOOK_PY = "python" if os.name == "nt" else "python3"
 # matcher 는 `|` 로 구분한 정확 일치 목록을 받는다.
 COMMAND_TOOL_MATCHER = "Bash|PowerShell"
 
+# 훅 핸들러는 **프로젝트 루트가 아니라 현재 작업 디렉토리에서** 실행된다(공식 훅 문서).
+# 그래서 상대 경로로 쓰면 하위 디렉토리로 이동하는 순간 훅 4종이 전부 죽는다 — 실측:
+# `cd daemon` 후 모든 명령이 "can't open file .../daemon/scripts/harness_engine.py" 로 차단됐다.
+# 프로젝트 루트 참조는 ${CLAUDE_PROJECT_DIR} 플레이스홀더가 정답이다.
+ENGINE_REF = '"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py"'
+# 상대 경로 시절의 형태 — 기존 저장소를 마이그레이션할 때 이걸로 식별한다
+LEGACY_ENGINE_REF = "scripts/harness_engine.py"
+
 HOOK_DEFS = [
-    ("SessionStart", None, HOOK_PY + " scripts/harness_engine.py brief"),
-    ("PreToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " scripts/harness_engine.py hook-prebash"),
-    ("PostToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " scripts/harness_engine.py hook-postbash"),
-    ("Stop", None, HOOK_PY + " scripts/harness_engine.py hook-stop"),
+    ("SessionStart", None, HOOK_PY + " " + ENGINE_REF + " brief"),
+    ("PreToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " " + ENGINE_REF + " hook-prebash"),
+    ("PostToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " " + ENGINE_REF + " hook-postbash"),
+    ("Stop", None, HOOK_PY + " " + ENGINE_REF + " hook-stop"),
 ]
 
 PERMISSION_ALLOW = [
     "Bash(bash scripts/agent_harness.sh:*)",
     "Bash(" + HOOK_PY + " scripts/harness_engine.py:*)",
 ]
+
+
+def cwd_dependent_hook_command(command):
+    """이 훅 명령이 cwd 에 종속되는가 — 즉 하위 디렉토리에서 죽는가. 판정은 엔진과 공유한다."""
+    path = eng.engine_path_in_command(command)
+    return bool(path) and not eng.path_is_rooted(path)
 
 
 def _is_harness_hook_item(item, op):
@@ -342,6 +356,17 @@ def merge_settings(repo):
                 if matcher and item.get("matcher") != matcher:
                     item["matcher"] = matcher     # 커버리지 확대 마이그레이션
                     changed = True
+                for h in item.get("hooks") or []:
+                    if isinstance(h, dict) and cwd_dependent_hook_command(h.get("command")):
+                        # 상대 경로 → ${CLAUDE_PROJECT_DIR}. 훅은 cwd 에서 실행되므로
+                        # 상대 경로는 하위 디렉토리에서 게이트를 통째로 죽인다.
+                        old_path = eng.engine_path_in_command(h["command"])
+                        quoted = '"%s"' % old_path
+                        # 원본이 이미 따옴표에 싸여 있으면 통째로 바꾼다 — 안쪽만 바꾸면
+                        # ENGINE_REF 의 따옴표와 겹쳐 `""..."" ` 가 된다
+                        target = quoted if quoted in h["command"] else old_path
+                        h["command"] = h["command"].replace(target, ENGINE_REF, 1)
+                        changed = True
             (migrated_events if changed else skipped_events).append(event)
             continue
         item = {"hooks": [{"type": "command", "command": command}]}

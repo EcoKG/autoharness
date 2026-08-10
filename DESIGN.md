@@ -246,7 +246,11 @@ active 로 복귀하고 백오프 카운터(consecutive_errors·limit_hits·next
 ## 8. 훅 계약 (대상 저장소 `.claude/settings.json` 에 병합)
 
 CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙은 전부 훅으로 구현한다.
-훅 명령은 **상대 경로**(`python scripts/harness_engine.py ...`, cwd=프로젝트 루트 전제)로 쓴다.
+훅 명령은 엔진을 **`${CLAUDE_PROJECT_DIR}` 로 뿌리내려** 쓴다
+(`python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" ...`). 훅 핸들러는 프로젝트 루트가
+아니라 **현재 작업 디렉토리에서 실행**되므로(공식 훅 문서), 상대 경로로 쓰면 하위 디렉토리로
+이동하는 순간 게이트 4종이 전부 죽는다 — 실측으로 확인된 결함이다. `merge_settings` 는 기존
+저장소의 상대 경로 훅을 감지해 마이그레이션하고, 배선 진단은 `cwd_dependent_hooks` 로 알린다.
 
 | 훅 | 명령 | 강제하는 규칙 |
 |---|---|---|

@@ -156,6 +156,86 @@ class MigrationTest(MergeSettingsSandbox):
                         "기존 파일을 백업해야 합니다")
 
 
+class CwdDependencyTest(unittest.TestCase):
+    """훅 경로가 cwd 에 종속되면 하위 디렉토리에서 게이트가 전부 죽는다(실측 결함).
+
+    공식 훅 문서: 핸들러는 프로젝트 루트가 아니라 **현재 작업 디렉토리에서** 실행되며,
+    루트를 참조하려면 ${CLAUDE_PROJECT_DIR} 플레이스홀더를 써야 한다.
+    """
+
+    def test_relative_paths_are_cwd_dependent(self):
+        for cmd in ("python scripts/harness_engine.py hook-prebash",
+                    'python "scripts/harness_engine.py" hook-prebash',
+                    "python3 ./scripts/harness_engine.py brief"):
+            self.assertTrue(mcp.cwd_dependent_hook_command(cmd), cmd)
+
+    def test_rooted_paths_are_safe(self):
+        for cmd in ('python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" hook-stop',
+                    'python "C:/repo/scripts/harness_engine.py" hook-stop',
+                    "python /home/u/repo/scripts/harness_engine.py brief",
+                    "python ~/repo/scripts/harness_engine.py brief"):
+            self.assertFalse(mcp.cwd_dependent_hook_command(cmd), cmd)
+
+    def test_unrelated_commands_are_not_flagged(self):
+        for cmd in ("echo hello", "npm test", ""):
+            self.assertFalse(mcp.cwd_dependent_hook_command(cmd), cmd)
+
+    def test_hook_defs_use_rooted_reference(self):
+        """신규 설치가 처음부터 cwd 독립이어야 한다."""
+        for _event, _matcher, command in mcp.HOOK_DEFS:
+            self.assertFalse(mcp.cwd_dependent_hook_command(command), command)
+            self.assertIn("CLAUDE_PROJECT_DIR", command)
+
+
+class CwdDependencyMigrationTest(MergeSettingsSandbox):
+    """기존 저장소의 상대 경로 훅을 병합 시 마이그레이션한다."""
+
+    def legacy(self, quoted=False):
+        ref = '"scripts/harness_engine.py"' if quoted else "scripts/harness_engine.py"
+        self.write({"hooks": {
+            "PreToolUse": [hook_item("python %s hook-prebash" % ref, "Bash|PowerShell")],
+            "Stop": [hook_item("python %s hook-stop" % ref)],
+        }})
+
+    def test_relative_hook_is_migrated(self):
+        self.legacy()
+        result = mcp.merge_settings(self.sandbox)
+        self.assertIn("PreToolUse", result["migrated_hooks"])
+        cmd = self.entries("PreToolUse")[0]["hooks"][0]["command"]
+        self.assertIn("${CLAUDE_PROJECT_DIR}", cmd)
+        self.assertFalse(mcp.cwd_dependent_hook_command(cmd))
+
+    def test_already_quoted_relative_hook_migrates_cleanly(self):
+        """따옴표 중복(`""...""`)이 생기면 안 된다."""
+        self.legacy(quoted=True)
+        mcp.merge_settings(self.sandbox)
+        cmd = self.entries("PreToolUse")[0]["hooks"][0]["command"]
+        self.assertNotIn('""', cmd)
+        self.assertFalse(mcp.cwd_dependent_hook_command(cmd))
+
+    def test_migration_is_idempotent(self):
+        self.legacy()
+        mcp.merge_settings(self.sandbox)
+        first = self.entries("PreToolUse")[0]["hooks"][0]["command"]
+        result = mcp.merge_settings(self.sandbox)
+        second = self.entries("PreToolUse")[0]["hooks"][0]["command"]
+        self.assertEqual(first, second)
+        self.assertIn("PreToolUse", result["skipped_hooks"])  # 두 번째는 손댈 것이 없다
+        self.assertEqual(len(self.entries("PreToolUse")), 1)
+
+    def test_diagnosis_reports_weak_hooks(self):
+        self.legacy()
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(len(info["cwd_dependent_hooks"]), 2)
+        self.assertIn("상대 경로", info["warning"])
+
+    def test_diagnosis_clean_after_migration(self):
+        self.legacy()
+        mcp.merge_settings(self.sandbox)
+        info = eng.hook_wiring_status(self.sandbox)
+        self.assertEqual(info["cwd_dependent_hooks"], [])
+
+
 class HarnessItemDetectionTest(unittest.TestCase):
     """항목 단위 판정 — 종전의 이벤트 통째 json.dumps 방식이 낳은 결함의 근원."""
 
