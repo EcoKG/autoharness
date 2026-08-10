@@ -27,7 +27,13 @@ import {
   READ_ONLY_NOTICE,
   backlogMessages,
 } from "./console.ts";
-import { HANDLERS, ToolError, type ToolArgs } from "../mcp/tools.ts";
+import {
+  DELEGATABLE_TOOLS,
+  FORBIDDEN_DELEGATED_ARGS,
+  HANDLERS,
+  ToolError,
+  type ToolArgs,
+} from "../mcp/tools.ts";
 import { bearerToken, ensureToken, tokenMatches } from "./token.ts";
 import { STATIC_ASSETS } from "./ui.ts";
 
@@ -398,9 +404,29 @@ async function handlePost(
     const name = String(body["name"] ?? "");
     const handler = HANDLERS[name];
     if (!handler) return json({ ok: false, error: `알 수 없는 도구입니다: ${name}` }, 404);
+    // **위임은 권한 확장이 아니다.** 토큰만 있으면 부를 수 있는 경로이므로 도구를 좁힌다.
+    // 여기서 막혀도 MCP 클라이언트는 인프로세스 폴백으로 동작하므로 기능은 줄지 않는다.
+    if (!DELEGATABLE_TOOLS.has(name)) {
+      ctx.log.warn("-", "mcp", `위임 거부(허용 목록 밖): ${name}`);
+      return json(
+        {
+          ok: false,
+          error:
+            `이 도구는 원격 위임으로 노출하지 않습니다: ${name}. ` +
+            "임의 셸 실행·설치 변경 경로를 HTTP 표면에서 제외한 결과이며, MCP 로는 그대로 쓸 수 있습니다.",
+        },
+        403,
+      );
+    }
     const args = (body["arguments"] && typeof body["arguments"] === "object"
       ? body["arguments"]
       : {}) as ToolArgs;
+    // 두 번째 방어선 — 허용 도구라도 셸로 직행하는 인자는 받지 않는다
+    const forbidden = FORBIDDEN_DELEGATED_ARGS.filter((k) => k in args);
+    if (forbidden.length > 0) {
+      ctx.log.warn("-", "mcp", `위임 거부(금지 인자 ${forbidden.join(", ")}): ${name}`);
+      return json({ ok: false, error: `위임 경로에서 허용되지 않는 인자입니다: ${forbidden.join(", ")}` }, 403);
+    }
     try {
       const result = await handler(args);
       ctx.log.debug("-", "mcp", `위임 처리: ${name}`);

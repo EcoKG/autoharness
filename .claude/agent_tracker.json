@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T07:14:46.148417+00:00",
+  "updated_at": "2026-08-10T07:21:17.720469+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1118,13 +1118,13 @@
       "path": "daemon/src/web/server.ts",
       "deps": [],
       "priority": 1,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/web-mcp-shell-exposure-20260810T071847Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T07:18:47.543806+00:00",
+      "finished_at": "2026-08-10T07:21:17.720469+00:00",
       "test_cmd": null
     },
     {
@@ -1152,7 +1152,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/uninstall-env-leak-20260810T071216Z.log",
-      "commit": null,
+      "commit": "8d0947c",
       "started_at": "2026-08-10T07:12:16.071031+00:00",
       "finished_at": "2026-08-10T07:14:46.148417+00:00",
       "test_cmd": null

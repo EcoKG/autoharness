@@ -364,6 +364,34 @@ export const toolWatchdogStatus: ToolHandler = async () => {
   };
 };
 
+/**
+ * **HTTP 위임으로 노출해도 되는 도구.**
+ *
+ * 위임은 편의이지 권한 확장이 아니다. `/api/mcp/call` 은 토큰만 있으면 누구나 부를 수
+ * 있으므로, 여기 없는 도구는 HTTP 로 나가지 않는다 — MCP 클라이언트는 인프로세스 폴백으로
+ * 그대로 동작하므로 기능은 줄지 않고 **원격 표면만** 줄어든다.
+ *
+ * 특히 제외한 것들:
+ *   `harness_run`  — `cmd` 인자가 셸로 직행한다. 토큰이 곧 임의 코드 실행이 된다.
+ *   `harness_init` — 대상 저장소의 settings.json 과 레지스트리를 쓴다.
+ *   `watchdog_install`/`watchdog_uninstall` — 시스템에 영구 설정을 심고 지운다.
+ */
+export const DELEGATABLE_TOOLS: ReadonlySet<string> = new Set([
+  "harness_detect",
+  "harness_status",
+  "task_add",
+  "task_set",
+  "harness_pause",
+  "harness_resume_project",
+  "model_recommend",
+  "model_set",
+  "heartbeat",
+  "watchdog_status",
+]);
+
+/** 위임 경로에서 절대 받지 않는 인자 — 값이 그대로 셸로 가는 것들. */
+export const FORBIDDEN_DELEGATED_ARGS: readonly string[] = ["cmd"];
+
 export const HANDLERS: Record<string, ToolHandler> = {
   harness_detect: toolHarnessDetect,
   harness_init: toolHarnessInit,

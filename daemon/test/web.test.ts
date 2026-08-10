@@ -304,3 +304,61 @@ describe("응답 위생", () => {
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });
+
+/**
+ * **위임은 권한 확장이 아니다** — 적대 검증에서 확인된 구멍을 막는다.
+ *
+ * 파일 머리말이 "임의 셸 실행을 노출하지 않는다" 고 못 박고 프로젝트 동작을 4가지
+ * 화이트리스트로 좁혀 놓았는데, 정작 /api/mcp/call 이 도구 전체를 노출했다. 그중
+ * harness_run 은 cmd 인자가 셸로 직행하므로 토큰 하나가 곧 원격 코드 실행 키였다.
+ */
+describe("위임 표면 — 임의 셸 실행 차단", () => {
+  const auth2 = () => ({
+    authorization: `Bearer ${server.token}`,
+    "content-type": "application/json",
+  });
+
+  async function call(name: string, args: Record<string, unknown>) {
+    return fetch(`http://127.0.0.1:${server.port}/api/mcp/call`, {
+      method: "POST",
+      headers: auth2(),
+      body: JSON.stringify({ name, arguments: args }),
+    });
+  }
+
+  test("harness_run 은 위임으로 노출되지 않는다 — cmd 가 셸로 간다", async () => {
+    const r = await call("harness_run", { repo_path: repo, cmd: "echo 침투" });
+    expect(r.status).toBe(403);
+    expect(((await r.json()) as { error: string }).error).toContain("노출하지 않습니다");
+  });
+
+  test("cmd 없이도 harness_run 은 막힌다 — 도구 자체가 표면 밖이다", async () => {
+    expect((await call("harness_run", { repo_path: repo })).status).toBe(403);
+  });
+
+  test("설치·시스템 변경 도구도 표면 밖이다", async () => {
+    for (const name of ["harness_init", "watchdog_install", "watchdog_uninstall"]) {
+      expect((await call(name, {})).status, name).toBe(403);
+    }
+  });
+
+  test("허용 도구는 그대로 동작한다 — 기능을 줄이지 않았다", async () => {
+    const r = await call("heartbeat", { repo_path: repo });
+    expect(r.status).toBe(200);
+    expect((await r.json()) as unknown).toMatchObject({ ok: true });
+  });
+
+  test("허용 도구라도 셸로 가는 인자는 거부한다 — 두 번째 방어선", async () => {
+    const r = await call("harness_status", { repo_path: repo, cmd: "echo 침투" });
+    expect(r.status).toBe(403);
+    expect(((await r.json()) as { error: string }).error).toContain("허용되지 않는 인자");
+  });
+
+  test("표면 정의가 위험한 도구를 담고 있지 않다", async () => {
+    const { DELEGATABLE_TOOLS } = await import("../src/mcp/tools.ts");
+    for (const dangerous of ["harness_run", "harness_init", "watchdog_install", "watchdog_uninstall"]) {
+      expect(DELEGATABLE_TOOLS.has(dangerous), dangerous).toBe(false);
+    }
+    expect(DELEGATABLE_TOOLS.size).toBeGreaterThan(5); // 쓸모없이 좁히지도 않았다
+  });
+});

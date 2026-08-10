@@ -12,7 +12,7 @@
  */
 import { loadJson } from "../core/load.ts";
 import { userPaths } from "../core/paths.ts";
-import { HANDLERS, ToolError, type ToolArgs } from "./tools.ts";
+import { DELEGATABLE_TOOLS, HANDLERS, ToolError, type ToolArgs } from "./tools.ts";
 
 /** 진단은 stderr 로만 — stdout 은 JSON-RPC 프레이밍 전용이다. */
 function logStderr(message: string): void {
@@ -95,7 +95,9 @@ export async function callToolWithFallback(
   const handler = HANDLERS[name];
   if (!handler) throw new ToolError(`알 수 없는 도구입니다: ${name}`);
 
-  if (env["AUTOHARNESS_NO_DELEGATE"] !== "1") {
+  // 위임 표면 밖의 도구는 아예 시도하지 않는다 — 왕복만 낭비하고 403 을 받는다.
+  // 기능은 줄지 않는다: 여기서 곧장 인프로세스로 수행한다(그것이 폴백의 존재 이유다).
+  if (env["AUTOHARNESS_NO_DELEGATE"] !== "1" && DELEGATABLE_TOOLS.has(name)) {
     const outcome = await tryDelegate(name, args, env);
     if (outcome.ok) return outcome.result;
     if (outcome.reason && outcome.reason !== "데몬 접속 정보 없음") {
