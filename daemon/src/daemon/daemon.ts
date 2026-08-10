@@ -24,6 +24,13 @@ export interface DaemonOptions {
   launcher?: Launcher;
   /** 판단만 하고 기동·기록은 하지 않는다 — 진단용. */
   dryRun?: boolean;
+  /** 웹 API 를 띄울 것인가(기본 true). 포트 0 이면 임의 포트. */
+  web?: boolean;
+  webPort?: number;
+  /** 이 프로젝트만 처리한다(웹의 즉시 tick·기동용). */
+  onlyProject?: string;
+  /** 하트비트·백오프를 건너뛰고 기동한다(웹에서 사람이 명시적으로 누른 경우). */
+  forceLaunch?: boolean;
 }
 
 /**
@@ -37,7 +44,10 @@ export async function tickProject(
 ): Promise<boolean> {
   const log = options.log;
   const name = proj.id || "?";
-  const { decision, reactivated } = await decideProject(proj, { settings });
+  const { decision, reactivated } = await decideProject(proj, {
+    settings,
+    force: options.forceLaunch,
+  });
   if (reactivated) log?.info(name, "active", "completed → active 재활성화(장부에 진행 가능 작업 확인)");
 
   switch (decision.action) {
@@ -93,8 +103,16 @@ export async function runTick(options: DaemonOptions): Promise<{ handled: number
     return { handled: 0, failed: 0 };
   }
 
+  const targets = options.onlyProject
+    ? reg.projects.filter((p) => p.id === options.onlyProject)
+    : reg.projects;
+  if (targets.length === 0) {
+    log?.debug(options.onlyProject ?? '-', 'tick', '대상 프로젝트 없음');
+    return { handled: 0, failed: 0 };
+  }
+
   let changed = false;
-  for (const proj of reg.projects) {
+  for (const proj of targets) {
     try {
       if (await tickProject(proj, reg.settings, options)) changed = true;
       handled += 1;
@@ -136,6 +154,27 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<DaemonResu
   }
   log.info("-", "boot", `데몬 시작 pid=${process.pid} interval=${interval}분 registry=${userPaths(env).registry}`);
 
+  let web: { stop: () => Promise<void> } | null = null;
+  if (options.web !== false) {
+    try {
+      const { createWebServer } = await import("../web/server.ts");
+      web = await createWebServer(
+        {
+          log,
+          env,
+          // 웹이 노출하는 것은 **화이트리스트된 동작뿐**이다 — 임의 실행 경로를 주지 않는다
+          requestTick: async (projectId) => runTick({ ...options, env, log, onlyProject: projectId }),
+          requestLaunch: async (projectId) =>
+            runTick({ ...options, env, log, onlyProject: projectId, forceLaunch: true }),
+        },
+        options.webPort ?? 0,
+      );
+    } catch (err) {
+      // 웹이 못 떠도 스케줄러는 돌아야 한다 — 자동 주행이 UI 때문에 멈추면 본말전도다
+      log.error("-", "web", `웹 API 기동 실패(스케줄러는 계속): ${String(err)}`);
+    }
+  }
+
   try {
     const stats = await runScheduler(
       async (tick) => {
@@ -155,6 +194,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<DaemonResu
     await log.flush();
     return { ...stats, acquired: true, reason: lock.reason };
   } finally {
+    await web?.stop().catch(() => {});
     await releaseLock(env);
     if (!options.log) await log.close();
   }

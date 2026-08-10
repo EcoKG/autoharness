@@ -76,6 +76,12 @@ export type Decision =
 export interface DecideOptions {
   now?: number;
   settings?: Partial<RegistrySettings>;
+  /**
+   * 사람이 웹에서 명시적으로 '지금 기동'을 누른 경우.
+   * 백오프와 하트비트 신선도만 건너뛴다 — 일시정지·status·장부 검사는 그대로다.
+   * 사람의 다른 의사표시(PAUSED)를 사람의 이번 클릭이 덮게 두지 않는다.
+   */
+  force?: boolean;
 }
 
 /**
@@ -112,9 +118,9 @@ export async function decideProject(
     return { decision: { action: "skip", reason: `status=${status} — 기동 대상 아님` }, reactivated };
   }
 
-  // 2. 백오프 중이면 쉰다
+  // 2. 백오프 중이면 쉰다(사람이 직접 누른 경우는 예외)
   const retryAt = parseIso(proj.next_retry_at);
-  if (retryAt !== null && retryAt > now) {
+  if (!options.force && retryAt !== null && retryAt > now) {
     return {
       decision: { action: "skip", reason: `백오프 중 — next_retry_at=${proj.next_retry_at}` },
       reactivated,
@@ -174,7 +180,7 @@ export async function decideProject(
   const hb = await loadJson<{ ts?: string }>(paths.heartbeat);
   const hbTs = hb.state === "ok" ? parseIso(hb.value?.ts) : null;
   const staleMin = Number(settings.stale_minutes ?? DEFAULT_STALE_MINUTES);
-  if (hbTs !== null && now - hbTs < staleMin * 60_000) {
+  if (!options.force && hbTs !== null && now - hbTs < staleMin * 60_000) {
     return {
       decision: {
         action: "skip",
