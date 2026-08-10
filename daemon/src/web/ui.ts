@@ -130,6 +130,14 @@ export const UI_HTML = `<!doctype html>
       <div id="blocked"></div>
     </section>
 
+    <section id="approvalBox" hidden>
+      <h2>승인 대기</h2>
+      <p class="muted" style="margin:0 0 8px">
+        사람 판단이 필요해 봉인된 작업입니다. 되돌리면 다음 주행에서 다시 시도합니다.
+      </p>
+      <div id="approvals"></div>
+    </section>
+
     <section>
       <h2>훅 배선</h2>
       <div id="wiring" class="muted">프로젝트를 고르면 확인합니다.</div>
@@ -346,6 +354,58 @@ export const UI_HTML = `<!doctype html>
       setText(r, b.reason);
       p.append(t, r);
       box.append(p);
+    });
+  }
+
+  /**
+   * 승인 대기 큐.
+   *
+   * 사람 경계에 걸린 작업은 blocked 로 봉인되고 사유가 last_error 에 남는다. 그런데 그것을
+   * **다시 살릴 흐름이 없었다** — 봉인된 채 쌓이기만 했고, 되살리려면 CLI 로 id 를 정확히
+   * 쳐야 했다. 자율 주행 도구에서 "사람이 판단해 다시 넣는" 자리는 제어판의 핵심이다.
+   *
+   * 되돌리기가 시도 횟수를 지운다는 사실을 버튼에 미리 적는다 — 눌러 놓고 나중에 아는
+   * 것과는 다르다.
+   */
+  function renderApprovals(tasks) {
+    var box = $("approvals");
+    box.replaceChildren();
+    var waiting = (tasks || []).filter(function (t) { return t.status === "blocked"; });
+    $("approvalBox").hidden = waiting.length === 0;
+    if (!waiting.length) return;
+
+    waiting.forEach(function (t) {
+      var row = document.createElement("div");
+      row.style.borderTop = "1px solid var(--line)";
+      row.style.padding = "8px 0";
+
+      var head = document.createElement("div");
+      head.className = "row";
+      var id = document.createElement("strong");
+      id.className = "mono";
+      setText(id, t.id);
+      var title = document.createElement("span");
+      title.className = "muted";
+      setText(title, t.title);
+      head.append(id, title);
+
+      var why = document.createElement("p");
+      why.className = "muted";
+      why.style.cssText = "margin:4px 0; white-space:pre-wrap";
+      setText(why, t.last_error || "사유 기록 없음");
+
+      var actions = document.createElement("div");
+      actions.className = "row";
+      var again = document.createElement("button");
+      setText(again, "승인하고 다시 넣기");
+      again.title = t.attempts > 0
+        ? "시도 횟수 " + t.attempts + " 이 0 으로 초기화됩니다"
+        : "다음 주행에서 다시 시도합니다";
+      again.addEventListener("click", function () { setTaskState(t.id, "pending"); });
+      actions.append(again);
+
+      row.append(head, why, actions);
+      box.append(row);
     });
   }
 
@@ -586,9 +646,15 @@ export const UI_HTML = `<!doctype html>
         maxAttempts = r.max_attempts || 0;
         renderTasks(r.tasks || []);
         renderBlockers(r.blockers || []);
+        renderApprovals(r.tasks || []);
         fillConfig(r.commands, r.max_attempts);
       })
-      .catch(function (e) { renderTasks([]); renderBlockers([]); message(e.message, true); });
+      .catch(function (e) {
+        renderTasks([]);
+        renderBlockers([]);
+        renderApprovals([]);
+        message(e.message, true);
+      });
   }
 
   function select(id) {

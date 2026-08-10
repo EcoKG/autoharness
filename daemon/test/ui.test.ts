@@ -380,3 +380,37 @@ describe("지난 세션 로그", () => {
     expect(UI_HTML).toContain("기록 없음");
   });
 });
+
+/**
+ * 승인 대기 큐.
+ *
+ * 사람 경계에 걸린 작업은 blocked 로 봉인되고 사유가 last_error 에 남는다. 그런데 그것을
+ * 다시 살릴 흐름이 없었다 — 봉인된 채 쌓이기만 했고, 되살리려면 CLI 로 id 를 정확히 쳐야
+ * 했다. 자율 주행 도구에서 "사람이 판단해 다시 넣는" 자리는 제어판의 핵심이다.
+ */
+describe("승인 대기 큐", () => {
+  test("봉인된 작업을 모아 보여 준다", () => {
+    expect(UI_HTML).toContain("renderApprovals");
+    expect(UI_HTML).toContain("승인 대기");
+    expect(UI_HTML).toContain('t.status === "blocked"');
+  });
+
+  test("봉인 사유를 함께 보여 준다 — 사유 없이는 판단할 수 없다", () => {
+    expect(UI_HTML).toContain("t.last_error");
+    expect(UI_HTML).toContain("사유 기록 없음");
+  });
+
+  test("되돌리기가 시도 횟수를 지운다는 사실을 버튼에 미리 적는다", () => {
+    expect(UI_HTML).toContain("0 으로 초기화됩니다");
+  });
+
+  test("대기 중인 것이 없으면 절이 사라진다", () => {
+    expect(UI_HTML).toContain('id="approvalBox" hidden');
+  });
+
+  test("done 으로는 보내지 않는다 — 승인은 재시도이지 완료 처리가 아니다", () => {
+    const approval = UI_HTML.slice(UI_HTML.indexOf("renderApprovals"), UI_HTML.indexOf("renderTasks"));
+    expect(approval).toContain('setTaskState(t.id, "pending")');
+    expect(approval).not.toContain('"done"');
+  });
+});
