@@ -50,6 +50,16 @@ export const SETTINGS_FILES: readonly string[] = ["settings.json", "settings.loc
  */
 export const ENGINE_BASENAMES: readonly string[] = ["harness_engine.py", "autoharness"];
 
+/**
+ * 훅 명령이 대상 저장소를 못 박는 방법 — 설치 경로가 훅 명령 끝에 붙여야 하는 인자.
+ *
+ * 엔진 '경로'를 고정하는 것과는 다른 축이다. `--repo` 가 없으면 엔진의 기본값이 `.` 이라
+ * **현재 작업 디렉토리**가 저장소가 된다. 실측: 같은 훅에 같은 페이로드를 먹였을 때 루트는
+ * exit 2(차단), 하위 디렉토리는 exit 0(통과)였고 하위에 `.claude/` 가 새로 생겼다 —
+ * 커밋 게이트와 Stop 게이트가 cwd 하나로 사라지고 발화 마커·하트비트도 그리로 흩어진다.
+ */
+export const REPO_PIN_FLAG = '--repo "${CLAUDE_PROJECT_DIR}"';
+
 /** 인터프리터가 cwd 기준으로 여는 스크립트 — 이름만 써도 PATH 로 해석되지 않는다. */
 const SCRIPT_EXT_RE = /\.(py|js|ts|mjs|cjs|sh)$/i;
 const TOKEN_RE = /"([^"]*)"|'([^']*)'|(\S+)/g;
@@ -66,6 +76,7 @@ export interface WiringInfo {
   readonly settings_states: Record<string, LoadState>;
   readonly missing_hooks: string[];
   readonly cwd_dependent_hooks: string[];
+  readonly repo_unpinned_hooks: string[];
   readonly done_total: number;
   readonly done_without_commit: number;
   readonly warning: string | null;
@@ -183,6 +194,23 @@ export function cwdDependentHooksFrom(files: readonly SettingsFile[]): string[] 
   return [...weak].sort();
 }
 
+/** 훅 명령이 대상 저장소를 cwd 에 맡기는가 — `--repo` 가 없으면 엔진이 cwd 를 저장소로 본다. */
+export function hookCommandIsRepoUnpinned(command: string): boolean {
+  if (!command || !engineTokenIn(command)) return false;
+  return !command.split(/\s+/).includes("--repo");
+}
+
+/** 대상 저장소를 못 박지 않은 훅 명령 목록(정렬). */
+export function repoUnpinnedHooksFrom(files: readonly SettingsFile[]): string[] {
+  const weak = new Set<string>();
+  for (const file of files) {
+    for (const { command } of iterHookCommands(file.settings)) {
+      if (hookCommandIsRepoUnpinned(command)) weak.add(command.trim());
+    }
+  }
+  return [...weak].sort();
+}
+
 /**
  * 훅 배선 상태 판정.
  *
@@ -224,6 +252,7 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
   const corrupt = files.filter((f) => f.state === "corrupt").map((f) => f.name).sort();
   const missing = MARKER_HOOK_OPS.filter((op) => !(op in matchers));
   const weakHooks = cwdDependentHooksFrom(files);
+  const unpinnedHooks = repoUnpinnedHooksFrom(files);
 
   const info = {
     state,
@@ -235,6 +264,7 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
     settings_states: settingsStates,
     missing_hooks: [...missing],
     cwd_dependent_hooks: weakHooks,
+    repo_unpinned_hooks: unpinnedHooks,
     done_total: done.length,
     done_without_commit: noCommit.length,
     warning: null as string | null,
@@ -265,6 +295,13 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
       `[AutoHarness 경고] 훅 ${weakHooks.length}건이 엔진을 상대 경로로 가리킵니다 — 훅은 프로젝트 ` +
         "루트가 아니라 현재 작업 디렉토리에서 실행되므로, 하위 디렉토리로 이동하면 게이트가 전부 " +
         "죽습니다. `${CLAUDE_PROJECT_DIR}` 나 절대 경로로 바꾸십시오.",
+    );
+  }
+  if (unpinnedHooks.length > 0) {
+    warnings.push(
+      `[AutoHarness 경고] 훅 ${unpinnedHooks.length}건이 대상 저장소를 지정하지 않습니다(--repo 없음) — ` +
+        "엔진이 현재 작업 디렉토리를 저장소로 삼으므로, 하위 디렉토리에서 명령을 실행하면 장부를 " +
+        `찾지 못해 커밋 게이트와 Stop 게이트가 조용히 통과합니다. 훅 명령 끝에 \`${REPO_PIN_FLAG}\` 를 붙이십시오.`,
     );
   }
   if (state === WIRING_INACTIVE) warnings.unshift(inactiveWarning(repo, info));

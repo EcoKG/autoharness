@@ -282,11 +282,33 @@ ENGINE_REF = '"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py"'
 # 상대 경로 시절의 형태 — 기존 저장소를 마이그레이션할 때 이걸로 식별한다
 LEGACY_ENGINE_REF = "scripts/harness_engine.py"
 
+# 엔진 경로를 고정해도 **대상 저장소**는 여전히 cwd 를 따른다 — `--repo` 기본값이 "." 이라
+# 하위 디렉토리에서 훅을 부르면 엔진이 그곳을 저장소로 삼는다. 실측: 같은 hook-prebash 에
+# 같은 페이로드를 먹였을 때 루트는 exit 2(차단), 하위 디렉토리는 exit 0(통과)였고 하위에
+# .claude/ 가 새로 생겼다. 커밋 게이트·Stop 게이트가 cwd 하나로 사라지고, 발화 마커와
+# 하트비트도 그리로 흩어져 배선 진단이 발화를 못 본다. 대상 저장소도 못 박는다.
+REPO_REF = '--repo "${CLAUDE_PROJECT_DIR}"'
+
+HOOK_OPS = ("brief", "hook-prebash", "hook-postbash", "hook-stop")
+
+
+def hook_command_for(op):
+    return "%s %s %s %s" % (HOOK_PY, ENGINE_REF, op, REPO_REF)
+
+
+def hook_op_in_command(command):
+    """훅 명령이 부르는 op. 꼬리 토큰이 아니라 op 집합으로 찾는다 — 뒤에 인자가 붙어도 안전."""
+    for token in (command or "").split():
+        if token in HOOK_OPS:
+            return token
+    return None
+
+
 HOOK_DEFS = [
-    ("SessionStart", None, HOOK_PY + " " + ENGINE_REF + " brief"),
-    ("PreToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " " + ENGINE_REF + " hook-prebash"),
-    ("PostToolUse", COMMAND_TOOL_MATCHER, HOOK_PY + " " + ENGINE_REF + " hook-postbash"),
-    ("Stop", None, HOOK_PY + " " + ENGINE_REF + " hook-stop"),
+    ("SessionStart", None, hook_command_for("brief")),
+    ("PreToolUse", COMMAND_TOOL_MATCHER, hook_command_for("hook-prebash")),
+    ("PostToolUse", COMMAND_TOOL_MATCHER, hook_command_for("hook-postbash")),
+    ("Stop", None, hook_command_for("hook-stop")),
 ]
 
 PERMISSION_ALLOW = [
@@ -299,6 +321,14 @@ def cwd_dependent_hook_command(command):
     """이 훅 명령이 cwd 에 종속되는가 — 즉 하위 디렉토리에서 죽는가. 판정은 엔진과 공유한다."""
     path = eng.engine_path_in_command(command)
     return bool(path) and not eng.path_is_rooted(path)
+
+
+def repo_unpinned_hook_command(command):
+    """이 훅 명령이 대상 저장소를 cwd 에 맡기는가 — `--repo` 가 없으면 엔진이 cwd 를 저장소로 본다.
+
+    엔진 경로를 고정한 것과는 다른 축이다: 경로가 절대여도 저장소가 흔들리면 하위 디렉토리에서
+    커밋 게이트·Stop 게이트가 조용히 사라진다(실측). 판정은 엔진과 공유한다."""
+    return eng.hook_command_is_repo_unpinned(command)
 
 
 def _is_harness_hook_item(item, op):
@@ -342,7 +372,7 @@ def merge_settings(repo):
 
     merged_events, skipped_events, migrated_events = [], [], []
     for event, matcher, command in HOOK_DEFS:
-        op = command.split()[-1]
+        op = hook_op_in_command(command)
         entries = hooks.get(event)
         if not isinstance(entries, list):
             entries = []
@@ -366,6 +396,11 @@ def merge_settings(repo):
                         # ENGINE_REF 의 따옴표와 겹쳐 `""..."" ` 가 된다
                         target = quoted if quoted in h["command"] else old_path
                         h["command"] = h["command"].replace(target, ENGINE_REF, 1)
+                        changed = True
+                    if isinstance(h, dict) and repo_unpinned_hook_command(h.get("command")):
+                        # 대상 저장소를 못 박는다 — 없으면 하위 디렉토리에서 게이트가 사라진다.
+                        # 이미 --repo 가 있으면 이 분기에 걸리지 않으므로 재실행해도 중복되지 않는다.
+                        h["command"] = h["command"].rstrip() + " " + REPO_REF
                         changed = True
             (migrated_events if changed else skipped_events).append(event)
             continue

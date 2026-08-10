@@ -87,7 +87,7 @@ Bun 단일 EXE 의 콜드 스타트를 실측해 이 예산을 지키는지 확�
 
 | 항목 | v1 | v2 | 영향 |
 |---|---|---|---|
-| 훅 명령 | `python scripts/harness_engine.py hook-prebash` | `<EXE> hook-prebash` | 대상 저장소 `settings.json` 갱신 필요 |
+| 훅 명령 | `python scripts/harness_engine.py hook-prebash` | `<EXE> hook-prebash --repo "${CLAUDE_PROJECT_DIR}"` | 대상 저장소 `settings.json` 갱신 필요. 엔진 경로와 **대상 저장소를 둘 다** 못 박는다 — `--repo` 를 생략하면 cwd 가 저장소가 돼 하위 디렉토리에서 게이트가 조용히 사라진다(v1 실측) |
 | 저장소 내 엔진 사본 | `scripts/harness_engine.py` | 없음(전역 EXE 참조) | 저장소가 가벼워지지만 EXE 설치에 의존 |
 | 워치독 | OS 스케줄러 등록 | 데몬 내부 스케줄러 | `watchdog_install` 은 **로그온 자동 시작 등록**으로 의미가 바뀐다(도구 이름은 유지) |
 

@@ -342,6 +342,28 @@ def path_is_rooted(path):
     return len(path) > 1 and path[1] == ":"   # C:/... 윈도우 절대 경로
 
 
+def hook_command_is_repo_unpinned(command):
+    """훅 명령이 대상 저장소를 cwd 에 맡기는가 — `--repo` 가 없으면 엔진이 cwd 를 저장소로 삼는다.
+
+    엔진 '경로'를 고정하는 것과는 다른 축이다. 경로가 절대여도 저장소가 흔들리면 하위
+    디렉토리에서 장부를 못 찾아 커밋 게이트와 Stop 게이트가 조용히 통과한다 — 실측으로
+    루트 exit 2(차단) 대 하위 exit 0(통과) 차이를 확인했다."""
+    if not command or not engine_path_in_command(command):
+        return False
+    return "--repo" not in command.split()
+
+
+def repo_unpinned_hooks(repo):
+    """대상 저장소를 못 박지 않은 훅 명령 목록(정렬)."""
+    weak = set()
+    for name in SETTINGS_FILES:
+        settings = load_json(os.path.join(rp(repo)["claude_dir"], name))
+        for _event, command, _matcher in _iter_hook_commands(settings):
+            if hook_command_is_repo_unpinned(command):
+                weak.add(command.strip())
+    return sorted(weak)
+
+
 def cwd_dependent_hooks(repo):
     """엔진을 상대 경로로 가리켜 cwd 에 종속되는 훅 명령 목록(정렬).
 
@@ -404,11 +426,13 @@ def hook_wiring_status(repo, tracker=None):
 
     # cwd 종속 훅: 등록돼 있어도 하위 디렉토리에서는 죽는다 — 등록 여부만 보면 안 보인다
     weak_hooks = cwd_dependent_hooks(repo)
+    # 저장소 미고정 훅: 경로가 절대여도 --repo 가 없으면 대상 저장소가 cwd 를 따라 흔들린다
+    unpinned_hooks = repo_unpinned_hooks(repo)
 
     info = {"state": state, "registered": registered, "fired": fired, "last_fire": last_fire,
             "matchers": matchers, "uncovered_tools": uncovered,
             "settings_states": states, "missing_hooks": missing_ops,
-            "cwd_dependent_hooks": weak_hooks,
+            "cwd_dependent_hooks": weak_hooks, "repo_unpinned_hooks": unpinned_hooks,
             "done_total": len(done), "done_without_commit": len(no_commit), "warning": None}
 
     extra_warnings = []
@@ -426,6 +450,12 @@ def hook_wiring_status(repo, tracker=None):
             "[AutoHarness 경고] 훅 %d건이 엔진을 상대 경로로 가리킵니다 — 훅은 프로젝트 루트가 "
             "아니라 현재 작업 디렉토리에서 실행되므로, 하위 디렉토리로 이동하면 게이트가 전부 "
             "죽습니다. `${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py` 로 바꾸십시오." % len(weak_hooks))
+    if unpinned_hooks:
+        extra_warnings.append(
+            "[AutoHarness 경고] 훅 %d건이 대상 저장소를 지정하지 않습니다(--repo 없음) — 엔진이 "
+            "현재 작업 디렉토리를 저장소로 삼으므로, 하위 디렉토리에서 명령을 실행하면 장부를 "
+            "찾지 못해 커밋 게이트와 Stop 게이트가 조용히 통과합니다. 훅 명령 끝에 "
+            "`--repo \"${CLAUDE_PROJECT_DIR}\"` 를 붙이십시오." % len(unpinned_hooks))
 
     if state == WIRING_INACTIVE:
         extra_warnings.insert(0, _wiring_warning(repo, info))

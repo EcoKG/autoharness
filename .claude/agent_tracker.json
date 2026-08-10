@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T03:49:05.148148+00:00",
+  "updated_at": "2026-08-10T04:02:01.816513+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -741,7 +741,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/ts-wiring-diagnosis-20260810T034737Z.log",
-      "commit": null,
+      "commit": "72d2960",
       "started_at": "2026-08-10T03:47:37.536127+00:00",
       "finished_at": "2026-08-10T03:49:05.148148+00:00",
       "test_cmd": null
@@ -990,6 +990,21 @@
       "commit": "ba9c517",
       "started_at": "2026-08-10T02:28:19.324835+00:00",
       "finished_at": "2026-08-10T02:29:26.242680+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "hook-repo-arg-cwd",
+      "title": "훅의 --repo 기본값이 cwd 라 하위 디렉토리에서 게이트가 통째로 사라진다 — 실측: 임시 저장소에서 같은 hook-prebash 에 같은 페이로드(in_progress 작업 + git commit)를 먹였을 때 저장소 루트는 exit 2(차단), 하위 디렉토리는 exit 0(통과)였고 하위 디렉토리에 harness-heartbeat.json·harness-hooks-seen.json·harness-state.json 이 새로 생겼다. 이 저장소에도 daemon/.claude/ 에 같은 흔적이 추적된 채 남아 있다. 원인: settings.json 의 훅 명령이 --repo 를 주지 않아 엔진이 cwd 를 대상 저장소로 삼는다 — hook-path-cwd-independence 는 엔진 파일 경로의 cwd 종속만 고쳤고 대상 저장소 인자는 그대로 남았다. 결과 ① 커밋 게이트가 하위 디렉토리에서 무력화된다(그곳에 장부가 없으니 통과) ② Stop 게이트도 같은 이유로 조용히 풀려 헤드리스 세션이 조기 종료된다 ③ 발화 마커가 하위 디렉토리로 흩어져 루트의 배선 진단이 발화를 못 봐 active 를 inactive 로 오보고할 수 있다 ④ 하트비트가 갱신되지 않아 워치독의 이중 기동 방지 근거가 사라진다. 수행: ① harness_mcp.py HOOK_DEFS 의 훅 명령에 --repo \"${CLAUDE_PROJECT_DIR}\" 추가 ② merge_settings 가 --repo 없는 기존 훅을 감지해 마이그레이션(백업 포함, 경로 마이그레이션과 같은 방식·중복 추가 금지) ③ 배선 진단이 --repo 누락 훅을 cwd 종속과 함께 보고 ④ v2 daemon 의 설치·진단 경로에도 같은 규칙 반영 ⑤ 루트↔하위 디렉토리 게이트 동등성, 마이그레이션, 오탐 경계를 tests/ 회귀로 고정 ⑥ 이미 흩어진 daemon/.claude/ 런타임 파일은 git 추적에서 제외",
+      "path": "bin/harness_mcp.py",
+      "deps": [],
+      "priority": 5,
+      "status": "done",
+      "attempts": 1,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/hook-repo-arg-cwd-20260810T040028Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T03:57:39.007673+00:00",
+      "finished_at": "2026-08-10T04:02:01.816513+00:00",
       "test_cmd": null
     }
   ]

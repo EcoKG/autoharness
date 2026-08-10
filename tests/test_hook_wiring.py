@@ -35,8 +35,11 @@ PY = sys.executable
 OK_CMD = '"%s" -c "print(\'ok\')"' % PY
 
 # 정상 설치가 내보내는 훅 명령 형태. 훅은 프로젝트 루트가 아니라 현재 작업 디렉토리에서
-# 실행되므로 엔진은 ${CLAUDE_PROJECT_DIR} 로 뿌리내려야 한다(상대 경로면 cd 한 순간 죽는다).
-HOOK_CMD = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" %s'
+# 실행되므로 엔진 경로는 ${CLAUDE_PROJECT_DIR} 로 뿌리내려야 하고(상대 경로면 cd 한 순간
+# 죽는다), 대상 저장소도 --repo 로 못 박아야 한다(생략하면 cwd 가 저장소가 돼 하위
+# 디렉토리에서 커밋 게이트·Stop 게이트가 조용히 사라진다). 두 축 모두 갖춘 형태만이
+# '정상 설치'이므로 이 상수는 저장소 고정까지 포함한다.
+HOOK_CMD = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" %s --repo "${CLAUDE_PROJECT_DIR}"'
 
 # 실제 훅 호출 페이로드 — Claude Code 런타임이 session_id/hook_event_name 을 채운다
 REAL_PAYLOAD = {"session_id": "abc-123", "hook_event_name": "PreToolUse",

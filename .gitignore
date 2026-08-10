@@ -1,9 +1,11 @@
 __pycache__/
 *.pyc
-.claude/harness-logs/
-.claude/harness-state.json
-.claude/harness-heartbeat.json
-.claude/harness-hooks-seen.json
-.claude/HARNESS_PAUSED
-.claude/settings.json.bak-*
+# 하네스 런타임 산출물 — 어느 깊이에서든 무시한다. 종전 패턴은 루트에만 걸려
+# 훅이 하위 디렉토리에 흘린 daemon/.claude/*.json 이 그대로 커밋됐다.
+**/.claude/harness-logs/
+**/.claude/harness-state.json
+**/.claude/harness-heartbeat.json
+**/.claude/harness-hooks-seen.json
+**/.claude/HARNESS_PAUSED
+**/.claude/settings.json.bak-*
 CLAUDE.md.bak-*

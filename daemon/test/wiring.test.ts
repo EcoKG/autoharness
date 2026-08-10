@@ -20,9 +20,11 @@ import { MARKER_HOOK_OPS } from "../src/hooks/hooks.ts";
 import {
   WIRING_ACTIVE,
   WIRING_INACTIVE,
+  REPO_PIN_FLAG,
   WIRING_NOT_REGISTERED,
   cwdDependentHooksFrom,
   engineTokenIn,
+  hookCommandIsRepoUnpinned,
   hookWiringStatus,
   matcherCovers,
   pathIsRooted,
@@ -40,13 +42,17 @@ afterEach(async () => {
 const V1_ENGINE = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py"';
 const V2_ENGINE = "autoharness";
 
-/** 하네스 훅 4종을 settings.json 에 심는다. ops 를 줄이면 부분 등록이 된다. */
+/**
+ * 하네스 훅 3종을 settings.json 에 심는다. ops 를 줄이면 부분 등록이 된다.
+ * 기본은 **올바른 설치**(저장소 고정 포함) — 그래야 "경고 없음" 단정이 의미를 갖는다.
+ */
 async function writeSettings(opts: {
   engine?: string;
   matcher?: string;
   ops?: readonly string[];
   name?: string;
   raw?: string;
+  repoPin?: boolean;
 }): Promise<void> {
   const path = join(repoPaths(dir).claudeDir, opts.name ?? "settings.json");
   if (opts.raw !== undefined) {
@@ -56,13 +62,15 @@ async function writeSettings(opts: {
   const engine = opts.engine ?? V1_ENGINE;
   const matcher = opts.matcher ?? "Bash|PowerShell";
   const ops = opts.ops ?? MARKER_HOOK_OPS;
-  const entry = (op: string) => ({ matcher, hooks: [{ type: "command", command: `${engine} ${op}` }] });
+  const pin = opts.repoPin === false ? "" : ` ${REPO_PIN_FLAG}`;
+  const cmd = (op: string) => `${engine} ${op}${pin}`;
+  const entry = (op: string) => ({ matcher, hooks: [{ type: "command", command: cmd(op) }] });
   const settings: Record<string, unknown> = { hooks: {} };
   const hooks = settings["hooks"] as Record<string, unknown[]>;
   if (ops.includes("hook-prebash")) hooks["PreToolUse"] = [entry("hook-prebash")];
   if (ops.includes("hook-postbash")) hooks["PostToolUse"] = [entry("hook-postbash")];
   if (ops.includes("hook-stop")) {
-    hooks["Stop"] = [{ hooks: [{ type: "command", command: `${engine} hook-stop` }] }];
+    hooks["Stop"] = [{ hooks: [{ type: "command", command: cmd("hook-stop") }] }];
   }
   await writeFile(path, JSON.stringify(settings, null, 2), "utf8");
 }
@@ -243,6 +251,41 @@ describe("cwd 종속 훅 감지", () => {
       },
     ];
     expect(cwdDependentHooksFrom(files)).toEqual([]);
+  });
+});
+
+describe("대상 저장소 고정", () => {
+  test("--repo 가 없으면 저장소가 cwd 를 따라 흔들린다 — 드러낸다", async () => {
+    await writeSettings({ repoPin: false });
+    await markFired();
+    const info = await hookWiringStatus(dir);
+    expect(info.repo_unpinned_hooks.length).toBe(3);
+    expect(info.warning).toContain("--repo");
+  });
+
+  test("--repo 를 못 박으면 경고가 사라진다", async () => {
+    await writeSettings({});
+    await markFired();
+    const info = await hookWiringStatus(dir);
+    expect(info.repo_unpinned_hooks).toEqual([]);
+    expect(info.warning).toBeNull();
+  });
+
+  test("경로 고정과 저장소 고정은 서로 다른 축이다", () => {
+    const rootedButUnpinned = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" hook-prebash';
+    expect(pathIsRooted(engineTokenIn(rootedButUnpinned)!)).toBe(true);
+    expect(hookCommandIsRepoUnpinned(rootedButUnpinned)).toBe(true);
+    expect(hookCommandIsRepoUnpinned(`${rootedButUnpinned} ${REPO_PIN_FLAG}`)).toBe(false);
+  });
+
+  test("하네스와 무관한 훅은 저장소 미고정으로 잡지 않는다 (오탐 금지)", () => {
+    expect(hookCommandIsRepoUnpinned("npm run lint")).toBe(false);
+    expect(hookCommandIsRepoUnpinned("")).toBe(false);
+  });
+
+  test("v2 EXE 훅도 같은 규칙을 받는다", () => {
+    expect(hookCommandIsRepoUnpinned("autoharness hook-stop")).toBe(true);
+    expect(hookCommandIsRepoUnpinned(`autoharness hook-stop ${REPO_PIN_FLAG}`)).toBe(false);
   });
 });
 
