@@ -9,7 +9,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "build": "bun run scripts/build.ts",
-    "bench:startup": "bun run scripts/bench-startup.ts"
+    "bench:startup": "bun run scripts/bench-startup.ts",
+    "parity": "bun run scripts/parity.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
