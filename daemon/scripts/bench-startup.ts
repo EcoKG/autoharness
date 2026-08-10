@@ -5,7 +5,8 @@
  * daemon/DESIGN.md 3절이 정한 예산은 **p95 150ms**. 이 스크립트는 그 수치를
  * 측정만 하고 판정은 사람이 읽을 수 있게 출력한다 — 예산 초과를 조용히 넘기지 않는다.
  */
-import { stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -26,13 +27,42 @@ function percentile(sorted: readonly number[], p: number): number {
   return sorted[Math.max(0, idx)]!;
 }
 
+/**
+ * **실제 훅 경로를 잰다.** `version` 은 아무것도 읽지 않아 실측치가 낙관적으로 나온다.
+ * 매 Bash 호출마다 실제로 도는 것은 hook-prebash 이고, 그것은 stdin 을 읽고 장부·설정을
+ * 열고 명령을 판정한다 — 예산이 걸린 대상은 그 전체다.
+ */
+const repo = await mkdtemp(join(tmpdir(), "ah-bench-"));
+const home = await mkdtemp(join(tmpdir(), "ah-benchhome-"));
+await mkdir(join(repo, ".claude"), { recursive: true });
+const benchEnv = { ...process.env, AUTOHARNESS_HOME: home, AUTOHARNESS_NO_DELEGATE: "1" };
+const payload = JSON.stringify({
+  session_id: "bench",
+  hook_event_name: "PreToolUse",
+  tool_input: { command: "git status" },
+});
+
+// 장부가 있는 상태를 재는 것이 현실이다 — 부재 상태는 이른 반환이라 더 빠르다
+await Bun.spawn([EXE, "init", "--repo", repo, "--project", "bench", "--objective", "o",
+                 "--source", "A", "--target", "B", "--test", "exit 0"],
+                { env: benchEnv, stdout: "ignore", stderr: "ignore" }).exited;
+await Bun.spawn([EXE, "add-task", "--repo", repo, "--id", "t1", "--title", "작업"],
+                { env: benchEnv, stdout: "ignore", stderr: "ignore" }).exited;
+
 const samples: number[] = [];
 for (let i = 0; i < RUNS; i++) {
   const started = performance.now();
-  const proc = Bun.spawn([EXE, "version"], { stdout: "ignore", stderr: "ignore" });
+  const proc = Bun.spawn([EXE, "hook-prebash", "--repo", repo], {
+    env: benchEnv, stdin: "pipe", stdout: "ignore", stderr: "ignore",
+  });
+  proc.stdin.write(payload);
+  await proc.stdin.end();
   await proc.exited;
   samples.push(performance.now() - started);
 }
+
+await rm(repo, { recursive: true, force: true });
+await rm(home, { recursive: true, force: true });
 
 samples.sort((a, b) => a - b);
 const p50 = percentile(samples, 50);
@@ -40,6 +70,7 @@ const p95 = percentile(samples, 95);
 const p99 = percentile(samples, 99);
 const withinBudget = p95 < BUDGET_P95_MS;
 
+console.log(`[bench] 대상      : hook-prebash (매 Bash 호출마다 도는 경로)`);
 console.log(`[bench] 실행 횟수 : ${RUNS}`);
 console.log(`[bench] p50       : ${p50.toFixed(1)}ms`);
 console.log(`[bench] p95       : ${p95.toFixed(1)}ms  (예산 ${BUDGET_P95_MS}ms)`);
