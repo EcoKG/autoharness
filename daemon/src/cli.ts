@@ -195,6 +195,35 @@ export async function cmdStatus(flags: Flags): Promise<number> {
   return EXIT.OK;
 }
 
+export async function cmdDetect(flags: Flags): Promise<number> {
+  const { detect } = await import("./core/detect.ts");
+  try {
+    console.log(JSON.stringify(await detect(str(flags, "repo") ?? "."), null, 2));
+    return EXIT.OK;
+  } catch (err) {
+    return fail(String(err instanceof Error ? err.message : err));
+  }
+}
+
+export async function cmdModelRecommend(flags: Flags): Promise<number> {
+  const { modelRecommend } = await import("./core/model.ts");
+  const result = await modelRecommend({
+    repo: str(flags, "repo") ?? null,
+    source: str(flags, "source") ?? null,
+    target: str(flags, "target") ?? null,
+    notes: str(flags, "notes") ?? null,
+  });
+  console.log(JSON.stringify(result, null, 2));
+  return EXIT.OK;
+}
+
+export async function cmdSyncCommit(flags: Flags): Promise<number> {
+  const { syncCommit } = await import("./hooks/hooks.ts");
+  const sha = await syncCommit(str(flags, "repo") ?? ".", false);
+  console.log(JSON.stringify({ ok: sha !== null, commit: sha }));
+  return EXIT.OK;
+}
+
 export async function cmdRender(flags: Flags): Promise<number> {
   const repo = str(flags, "repo") ?? ".";
   const tracker = await requireTracker(repo);

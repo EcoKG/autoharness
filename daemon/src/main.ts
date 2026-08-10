@@ -83,6 +83,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     case "status":
     case "render":
     case "heartbeat":
+    case "detect":
+    case "model-recommend":
+    case "sync-commit":
     case "run": {
       const cli = await import("./cli.ts");
       const flags = cli.parseFlags(rest);
@@ -94,9 +97,16 @@ export async function main(argv: readonly string[]): Promise<number> {
         status: cli.cmdStatus,
         render: cli.cmdRender,
         heartbeat: cli.cmdHeartbeat,
+        detect: cli.cmdDetect,
+        "model-recommend": cli.cmdModelRecommend,
+        "sync-commit": cli.cmdSyncCommit,
         run: cli.cmdRun,
       } as const;
       return handlers[mode](flags);
+    }
+    case "mcp": {
+      const { serve } = await import("./mcp/protocol.ts");
+      return serve();
     }
     case "selftest": {
       const { cmdSelftest } = await import("./core/selftest.ts");
