@@ -108,6 +108,24 @@ export async function main(argv: readonly string[]): Promise<number> {
       const { serve } = await import("./mcp/protocol.ts");
       return serve();
     }
+    case "daemon": {
+      const cli = await import("./cli.ts");
+      const flags = cli.parseFlags(rest);
+      const { ensureRegistry, runDaemon } = await import("./daemon/daemon.ts");
+      await ensureRegistry();
+      const controller = new AbortController();
+      // 콘솔에서 Ctrl+C 로 내릴 수 있어야 한다 — 잠금을 남기고 죽으면 다음 기동이 막힌다
+      for (const sig of ["SIGINT", "SIGTERM"] as const) {
+        process.on(sig, () => controller.abort());
+      }
+      const interval = Number(flags["interval"]);
+      const result = await runDaemon({
+        // 값이 없거나 말이 안 되면 기본 간격을 쓴다 — 0 이나 NaN 으로 바쁜 루프를 만들지 않는다
+        intervalMinutes: Number.isFinite(interval) && interval > 0 ? interval : undefined,
+        signal: controller.signal,
+      });
+      return result.acquired ? EXIT.OK : EXIT.USAGE;
+    }
     case "selftest": {
       const { cmdSelftest } = await import("./core/selftest.ts");
       return cmdSelftest();
