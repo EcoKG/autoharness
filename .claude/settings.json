@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" brief --repo \"${CLAUDE_PROJECT_DIR}\""
+            "command": "\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" brief --repo \"${CLAUDE_PROJECT_DIR}\""
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-prebash --repo \"${CLAUDE_PROJECT_DIR}\""
+            "command": "\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" hook-prebash --repo \"${CLAUDE_PROJECT_DIR}\""
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-postbash --repo \"${CLAUDE_PROJECT_DIR}\""
+            "command": "\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" hook-postbash --repo \"${CLAUDE_PROJECT_DIR}\""
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-stop --repo \"${CLAUDE_PROJECT_DIR}\""
+            "command": "\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" hook-stop --repo \"${CLAUDE_PROJECT_DIR}\""
           }
         ]
       }
@@ -46,7 +46,9 @@
   "permissions": {
     "allow": [
       "Bash(bash scripts/agent_harness.sh:*)",
-      "Bash(python scripts/harness_engine.py:*)"
+      "Bash(python scripts/harness_engine.py:*)",
+      "Bash(\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" run:*)",
+      "Bash(\"C:\\Users\\ruinp\\.claude\\autoharness\\bin\\autoharness.exe\" next:*)"
     ]
   }
 }
