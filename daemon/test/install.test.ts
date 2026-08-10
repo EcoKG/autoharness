@@ -44,7 +44,10 @@ let env: NodeJS.ProcessEnv = {};
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "ah-inst-"));
   work = await mkdtemp(join(tmpdir(), "ah-instsrc-"));
-  env = { ...process.env, AUTOHARNESS_HOME: home };
+  // **APPDATA 까지 격리한다.** AUTOHARNESS_HOME 만 바꾸면 자동 시작 경로는 여전히
+  // 실제 사용자 시작프로그램 폴더를 가리킨다 — 그래서 uninstall 테스트가 사용자의
+  // 자동 시작을 실제로 지웠다(실측). 이 한 줄이 그 사고의 최종 방어선이다.
+  env = { ...process.env, AUTOHARNESS_HOME: home, APPDATA: work };
   await mkdir(userPaths(env).runtimeDir, { recursive: true });
 });
 afterEach(async () => {
@@ -147,9 +150,8 @@ describe("등록·해제", () => {
     expect(r.detail).toContain("이미 해제된 상태");
   });
 
-  test("자동 시작 경로는 반드시 격리된 env 로만 만진다", async () => {
+  test("자동 시작 경로는 반드시 격리된 env 로만 만진다 (직접 호출)", async () => {
     // 실측 사고: env 를 안 주면 폴백이 **실제 사용자 시작프로그램 폴더**에 쓴다.
-    // 한 테스트가 만들고 다른 테스트가 지워 우연히 상쇄됐지만, 비결정적 오염이다.
     const source = await readFile(join(import.meta.dir, "install.test.ts"), "utf8");
     const calls = source.match(/(registerAutostart|unregisterAutostart|autostartStatus)\(\{[^}]*\}/gs) ?? [];
     const winCalls = calls.filter((c) => c.includes('"win32"'));
@@ -158,6 +160,41 @@ describe("등록·해제", () => {
       const isolated = c.includes("env:") || c.includes("writeUnit:");
       expect(isolated, `격리되지 않은 호출: ${c.slice(0, 120)}`).toBe(true);
     }
+  });
+
+  test("테스트 env 자체가 APPDATA 까지 격리돼 있다", async () => {
+    // env 를 전달해도 그 env 가 실제 APPDATA 를 담고 있으면 아무 소용이 없다.
+    expect(env["APPDATA"]).toBe(work);
+    expect(startupFolderPath(env).startsWith(work)).toBe(true);
+    expect(startupFolderPath(env)).not.toBe(startupFolderPath(process.env));
+  });
+
+  test("간접 경로도 env 를 흘려보낸다 — 가드가 직접 호출만 봐서 놓쳤던 자리", async () => {
+    // 실측 사고: uninstall(env) 은 격리돼 있었지만 안쪽 unregisterAutostart 에 env 를
+    // 전달하지 않아, bun test 를 돌릴 때마다 **사용자의 실제 자동 시작이 해제**됐다.
+    const source = await readFile(join(import.meta.dir, "..", "src", "install", "install.ts"), "utf8");
+    const inner = source.match(/(registerAutostart|unregisterAutostart|autostartStatus)\(\{[^}]*\}/gs) ?? [];
+    expect(inner.length).toBeGreaterThanOrEqual(3);
+    for (const c of inner) {
+      expect(c.includes("env"), `env 를 전달하지 않는 호출: ${c.slice(0, 140)}`).toBe(true);
+    }
+  });
+
+  test("uninstall 이 실제 사용자 폴더를 건드리지 않는다", async () => {
+    // 격리된 env 를 주면 그 안에서만 지워야 한다. 실제 경로가 대상이 되면 안 된다.
+    const launcher = startupFolderPath({ APPDATA: work });
+    await mkdir(join(work, "Microsoft/Windows/Start Menu/Programs/Startup"), { recursive: true });
+    await writeFile(launcher, "격리된 런처", "utf8");
+
+    const realPath = startupFolderPath(process.env);
+    const realExisted = await Bun.file(realPath).exists();
+
+    await uninstall({
+      env: { ...env, APPDATA: work }, runner: recorder({ code: 1 }), platform: "win32",
+    });
+
+    expect(await Bun.file(launcher).exists()).toBe(false); // 격리본은 지워졌고
+    expect(await Bun.file(realPath).exists()).toBe(realExisted); // 실제본은 그대로다
   });
 
   test("systemd 가 없으면 지원하지 않는다고 밝힌다 — 되는 척하지 않는다", async () => {

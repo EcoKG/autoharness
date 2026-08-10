@@ -203,7 +203,7 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     steps.push(step("autostart", "skipped", "--autostart 를 주면 로그온 자동 시작을 등록합니다."));
   } else {
     const r: AutostartResult = await registerAutostart({
-      exePath: target, runner: options.runner, platform, dryRun,
+      exePath: target, runner: options.runner, platform, dryRun, env,
     });
     steps.push(step("autostart", r.ok ? "ok" : "failed", `${r.mechanism}: ${r.detail}`));
   }
@@ -229,8 +229,11 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Install
   const dryRun = options.dryRun === true;
   const steps: Step[] = [];
 
+  // **env 를 반드시 전달한다.** 넘기지 않으면 startupFolderPath 가 process.env 를 보고
+  // **실제 사용자 시작프로그램 폴더**를 가리킨다 — 격리된 테스트가 사용자의 자동 시작을
+  // 조용히 해제하던 실측 사고의 원인이었다.
   const auto = await unregisterAutostart({
-    runner: options.runner, platform: options.platform ?? process.platform, dryRun,
+    runner: options.runner, platform: options.platform ?? process.platform, dryRun, env,
   });
   steps.push(step("autostart", auto.ok ? "ok" : "skipped", auto.detail));
 
@@ -268,7 +271,7 @@ export async function installStatus(options: UninstallOptions = {}) {
     skill_dir: userPaths(env).skillDir,
     skill_installed: await isDir(userPaths(env).skillDir),
     autostart: await autostartStatus({
-      runner: options.runner, platform: options.platform ?? process.platform,
+      runner: options.runner, platform: options.platform ?? process.platform, env,
     }),
   };
 }

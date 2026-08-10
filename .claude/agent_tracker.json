@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T06:38:01.847634+00:00",
+  "updated_at": "2026-08-10T07:14:46.148417+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1047,7 +1047,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/migration-live-apply-20260810T063451Z.log",
-      "commit": null,
+      "commit": "ed6945b",
       "started_at": "2026-08-10T06:34:51.971177+00:00",
       "finished_at": "2026-08-10T06:37:36.641713+00:00",
       "test_cmd": null
@@ -1110,6 +1110,66 @@
       "commit": "2c1dc37",
       "started_at": "2026-08-10T06:28:38.950627+00:00",
       "finished_at": "2026-08-10T06:31:29.710346+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "web-mcp-shell-exposure",
+      "title": "웹 API 의 /api/mcp/call 이 임의 셸 실행을 노출한다 (적대 검증 high) — server.ts 파일 머리말이 \"임의 셸 실행을 노출하지 않는다 — DESIGN 8절의 사람 경계\" 라고 못 박아 두고, 프로젝트 동작은 pause/resume/tick/launch 화이트리스트로 좁혔는데, 정작 /api/mcp/call 은 HANDLERS 전체를 필터 없이 노출한다. 그중 harness_run 은 cmd 인자를 받아 러너가 셸로 실행한다 — 즉 토큰 하나로 사용자 권한 전체의 원격 코드 실행이 된다. 화이트리스트를 둔 이유가 통째로 무력화되며, 토큰 유출 시 피해가 \"장부 열람\" 에서 \"임의 명령 실행\" 으로 뛴다. 수행: ① 위임 경로가 노출할 도구를 명시적 화이트리스트로 좁힌다(상태 조회·장부 조작 등 부작용이 한정된 것만) ② harness_run 의 cmd 처럼 셸로 직행하는 인자는 위임 경로에서 거부한다 ③ 거부를 조용히 하지 말고 사유를 응답에 남긴다 ④ 화이트리스트 밖 도구와 위험 인자가 차단되는지, 허용 도구는 그대로 동작하는지 회귀로 고정한다",
+      "path": "daemon/src/web/server.ts",
+      "deps": [],
+      "priority": 1,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "commit-gate-task-mismatch",
+      "title": "커밋 게이트가 last_run.task 를 진행 중 작업과 대조하지 않는다 (적대 검증 high) — 게이트는 \"진행 중 작업의 검증 통과 기록이 없으면 커밋 차단\" 인데, 실제로는 last_run.ok 만 보고 그 기록이 **어느 작업의 것인지** 확인하지 않는다. 도달 경로: 작업 A 가 실패해 status=failed 로 남은 채 작업 B 를 돌려 통과시키면 last_run={task:B, ok:true} 가 되고, 이후 A 는 한 번도 검증을 통과한 적이 없는데 커밋이 열린다. CLAUDE.md 8절이 \"훅이 기계적으로 강제한다\" 고 선언한 계약이 이 경로에서 무너진다. v1(harness_engine.py)과 v2(hooks/gate.ts) 양쪽 같은 로직이므로 둘 다 고친다. 수행: ① 통과 기록의 task 가 게이트 대상 작업과 일치할 때만 통과시킨다 ② 진행 중 작업이 여럿이면 전부 일치를 요구할지 하나라도 일치면 될지 규칙을 정해 명시한다 ③ 기존 통과 동작(정당한 커밋)이 막히지 않는지 확인한다 ④ 불일치 기록으로는 열리지 않음을 v1·v2 회귀로 고정하고 교차 검증 대조에도 넣는다",
+      "path": "bin/harness_engine.py",
+      "deps": [],
+      "priority": 2,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "uninstall-env-leak",
+      "title": "uninstall 이 env 를 전달하지 않아 테스트가 사용자의 실제 시작프로그램 런처를 지운다 (적대 검증 high) — 실측 확정: install --autostart 로 만든 AutoHarnessDaemon.cmd 가 이후 검증 실행 중 사라졌고, 원인은 install.ts 의 uninstall() 이 unregisterAutostart 에 env 를 넘기지 않아 startupFolderPath(process.env) 가 **실제 사용자 폴더**를 가리키는 것이다. describe(\"제거\") 테스트가 격리된 env 를 주는데도 그 값이 안쪽으로 전달되지 않아, bun test 를 돌릴 때마다 사용자의 자동 시작이 조용히 해제된다. 앞서 넣은 격리 가드는 직접 호출만 검사해 이 간접 경로를 놓쳤다. 수행: ① uninstall·install·installStatus 가 env 를 자동 시작 계층까지 일관되게 전달한다 ② 격리 가드를 간접 경로까지 덮도록 넓힌다(테스트가 실제 시작프로그램 폴더 경로를 만지면 실패) ③ 테스트 실행 전후로 실제 폴더가 불변임을 확인하는 회귀를 넣는다",
+      "path": "daemon/src/install/install.ts",
+      "deps": [],
+      "priority": 1,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/uninstall-env-leak-20260810T071216Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T07:12:16.071031+00:00",
+      "finished_at": "2026-08-10T07:14:46.148417+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "install-flag-fallthrough",
+      "title": "install 이 인식하지 못한 플래그를 전부 기본 설치 실행으로 흘려보낸다 (적대 검증 medium) — install --help 처럼 조회 의도의 명령이 실제 설치(EXE 복사·스킬 복사·MCP 재등록)를 수행한다. 실제로 점검 중 발생했다. 오타 플래그도 같은 경로를 탄다. install 은 부작용 명령이므로 의도하지 않은 실행이 기본값이면 안 된다. 수행: ① --help 를 인식해 사용법만 출력한다 ② 알 수 없는 플래그는 거부하고 사용법을 보인다(조용히 설치하지 않는다) ③ 부작용이 있는 모드는 명시적 의도를 요구하도록 정리한다 ④ 회귀로 고정한다",
+      "path": "daemon/src/main.ts",
+      "deps": [],
+      "priority": 5,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]
