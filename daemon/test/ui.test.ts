@@ -228,8 +228,10 @@ describe("작업 상세", () => {
   });
 
   test("시도는 한도와 함께 보여 준다", () => {
+    // "4" 와 "4/5" 는 다른 정보다. 다만 **언제 봉인되는지의 판정 문구는 쓰지 않는다** —
+    // 그것은 서버가 정하고 "막힌 곳" 카드가 말한다(규칙이 갈라지지 않게).
     expect(UI_HTML).toContain("maxAttempts");
-    expect(UI_HTML).toContain("다음 실패에 봉인됩니다");
+    expect(UI_HTML).toContain('attemptsCell.className = "err"');
   });
 
   test("되돌리기 버튼이 시도 횟수 초기화를 미리 알린다", () => {
@@ -281,5 +283,40 @@ describe("훅 배선 카드", () => {
   test("harness_status 는 위임 허용 목록에 있다 — 카드가 실제로 데이터를 받을 수 있다", async () => {
     const { DELEGATABLE_TOOLS } = await import("../src/mcp/tools.ts");
     expect(DELEGATABLE_TOOLS.has("harness_status")).toBe(true);
+  });
+});
+
+/**
+ * 막힌 곳 요약 — 판정은 서버, 화면은 그리기만.
+ */
+describe("막힌 곳 요약 카드", () => {
+  test("서버가 준 사유를 그린다", () => {
+    expect(UI_HTML).toContain("renderBlockers");
+    expect(UI_HTML).toContain("막힌 곳");
+  });
+
+  test("화면이 판정을 다시 계산하지 않는다", () => {
+    // 서버가 만든 사유를 받아 그리기만 해야 한다. 화면이 사유 문자열을 조립하기 시작하면
+    // 그 순간부터 두 곳이 갈라지고, 갈라진 화면이 "정상" 이라 말한다.
+    expect(UI_HTML).toContain("r.blockers");
+    // 규칙을 설명하는 주석에 이름이 나오는 것은 정상이다 — 금지하는 것은 **호출**이다
+    expect(UI_HTML).not.toContain("eligibleNext(");
+    expect(UI_HTML).not.toContain("deadlockedPending(");
+    for (const serverPhrase of ["봉인됨 —", "다음 실패에 봉인됩니다\"", "장부에 없음)"]) {
+      expect(UI_HTML, `사유 조립이 화면으로 새어 나왔습니다: ${serverPhrase}`)
+        .not.toContain(serverPhrase);
+    }
+  });
+
+  test("막힌 것이 없으면 절이 사라진다", () => {
+    expect(UI_HTML).toContain('id="blockedBox" hidden');
+  });
+
+  test("API 가 사유를 함께 준다", async () => {
+    const r = await fetch(`${base}/api/projects/${encodeURIComponent(UNIQUE_ID)}/tasks`, {
+      headers: { authorization: `Bearer ${server.token}` },
+    });
+    const body = (await r.json()) as { blockers?: unknown[] };
+    expect(Array.isArray(body.blockers)).toBe(true);
   });
 });

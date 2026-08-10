@@ -15,7 +15,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { atomicWriteJson } from "../core/atomic.ts";
-import { loadTracker, statusCounts, eligibleNext, deadlockedPending, saveTracker, findTask, setTaskStatus, renderSafe } from "../core/ledger.ts";
+import { loadTracker, statusCounts, eligibleNext, deadlockedPending, blockers, saveTracker, findTask, setTaskStatus, renderSafe } from "../core/ledger.ts";
 import { userPaths } from "../core/paths.ts";
 import { findProject, loadRegistryChecked, mutateRegistry } from "../core/registry.ts";
 import { isTaskStatus, nowIso } from "../core/schema.ts";
@@ -295,6 +295,7 @@ async function handleGet(
       repo: proj.repo,
       counts: statusCounts(tracker),
       max_attempts: tracker.max_attempts,
+      blockers: blockers(tracker),
       tasks: tracker.tasks,
     });
   }

@@ -114,6 +114,11 @@ export const UI_HTML = `<!doctype html>
       <p id="actionMsg" class="muted"></p>
     </section>
 
+    <section id="blockedBox" hidden>
+      <h2>막힌 곳</h2>
+      <div id="blocked"></div>
+    </section>
+
     <section>
       <h2>훅 배선</h2>
       <div id="wiring" class="muted">프로젝트를 고르면 확인합니다.</div>
@@ -291,6 +296,34 @@ export const UI_HTML = `<!doctype html>
     row.parentNode.insertBefore(tr, row.nextSibling);
   }
 
+  /**
+   * 막힌 곳 요약.
+   *
+   * **판정은 서버가 한다.** 화면이 eligibleNext·deadlockedPending 을 다시 계산하면 두 곳이
+   * 갈라지고, 갈라진 화면이 "정상" 이라 말하는 순간이 v1 이 죽은 방식이다. 여기서는
+   * 서버가 만든 사유를 그리기만 한다. 막힌 것이 없으면 절 자체가 사라진다.
+   */
+  function renderBlockers(list) {
+    var box = $("blocked");
+    box.replaceChildren();
+    $("blockedBox").hidden = !list || !list.length;
+    if (!list || !list.length) return;
+    list.forEach(function (b) {
+      var p = document.createElement("p");
+      p.style.margin = "4px 0";
+      var cls = b.kind === "blocked" ? "error" : b.kind === "attempts" ? "paused" : "";
+      p.append(badge(b.kind === "blocked" ? "봉인" : b.kind === "attempts" ? "한도 임박" : "대기", cls));
+      var t = document.createElement("span");
+      t.className = "mono";
+      setText(t, " " + b.id + " ");
+      var r = document.createElement("span");
+      r.className = "muted";
+      setText(r, b.reason);
+      p.append(t, r);
+      box.append(p);
+    });
+  }
+
   function renderTasks(tasks) {
     lastTasks = tasks;
     var body = $("tasks");
@@ -310,9 +343,10 @@ export const UI_HTML = `<!doctype html>
       tr.append(st);
       // 한도가 코앞이면 그 사실이 보여야 한다 — "4" 와 "4/5" 는 다른 정보다
       var attemptsCell = cell(maxAttempts ? t.attempts + "/" + maxAttempts : String(t.attempts));
+      // 한도에 가까우면 눈에 띄게만 한다. **판정 문구는 쓰지 않는다** — 언제 봉인되는지는
+      // 서버가 정하고 "막힌 곳" 카드가 말한다. 여기서 같은 문장을 쓰면 규칙이 바뀔 때 갈라진다.
       if (maxAttempts && t.attempts >= maxAttempts - 1 && t.status !== "done") {
         attemptsCell.className = "err";
-        attemptsCell.title = "다음 실패에 봉인됩니다";
       }
       tr.append(attemptsCell);
       tr.append(cell(t.commit || "-", "mono"));
@@ -443,8 +477,12 @@ export const UI_HTML = `<!doctype html>
 
   function loadTasks() {
     return api("/api/projects/" + encodeURIComponent(selected) + "/tasks")
-      .then(function (r) { maxAttempts = r.max_attempts || 0; renderTasks(r.tasks || []); })
-      .catch(function (e) { renderTasks([]); message(e.message, true); });
+      .then(function (r) {
+        maxAttempts = r.max_attempts || 0;
+        renderTasks(r.tasks || []);
+        renderBlockers(r.blockers || []);
+      })
+      .catch(function (e) { renderTasks([]); renderBlockers([]); message(e.message, true); });
   }
 
   function select(id) {

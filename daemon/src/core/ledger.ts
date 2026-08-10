@@ -129,6 +129,71 @@ export function deadlockedPending(tracker: Tracker): Task[] {
   return tracker.tasks.filter((t) => t.status === "pending" && !doable.has(t.id));
 }
 
+/** 오류 요약의 첫 줄만 — 요약 상자에 전문을 쏟지 않는다(전문은 작업 상세에 있다). */
+function firstLine(text: string): string {
+  const i = text.indexOf("\n");
+  return i < 0 ? text : text.slice(0, i);
+}
+
+/** 왜 이 작업이 막혀 있는가. */
+export interface Blocker {
+  id: string;
+  title: string;
+  /** blocked | attempts | deadlock */
+  kind: "blocked" | "attempts" | "deadlock";
+  /** 사람이 읽을 사유 — 원인 의존까지 이름으로 짚는다. */
+  reason: string;
+}
+
+/**
+ * 막힌 곳 요약 — **판정은 여기서만 한다.**
+ *
+ * deadlockedPending 은 '누가' 막혔는지만 알려 주고 '왜' 는 말하지 않는다. 화면에서 그
+ * 이유를 다시 계산하게 두면 두 곳이 갈라지고, 갈라진 화면이 "정상" 이라고 말하는 순간이
+ * 정확히 v1 이 죽은 방식이다. 그래서 사유까지 서버가 만들어 내려보낸다.
+ */
+export function blockers(tracker: Tracker): Blocker[] {
+  const byId = new Map(tracker.tasks.map((t) => [t.id, t]));
+  const maxAtt = tracker.max_attempts ?? DEFAULT_MAX_ATTEMPTS;
+  const out: Blocker[] = [];
+
+  for (const t of tracker.tasks) {
+    if (t.status === "blocked") {
+      out.push({
+        id: t.id,
+        title: t.title,
+        kind: "blocked",
+        reason: t.last_error ? `봉인됨 — ${firstLine(t.last_error)}` : "봉인됨",
+      });
+    } else if (t.status === "failed" && t.attempts >= maxAtt - 1) {
+      out.push({
+        id: t.id,
+        title: t.title,
+        kind: "attempts",
+        reason: `시도 ${t.attempts}/${maxAtt} — 다음 실패에 봉인됩니다`,
+      });
+    }
+  }
+
+  for (const t of deadlockedPending(tracker)) {
+    // 무엇이 이 작업을 붙잡고 있는지 이름으로 짚는다 — "교착" 세 글자로는 손을 못 댄다
+    const causes = (t.deps ?? []).map((d) => {
+      const dep = byId.get(d);
+      if (!dep) return `${d}(장부에 없음)`;
+      if (dep.status === "blocked") return `${d}(봉인됨)`;
+      if (dep.id === t.id) return `${d}(자기 자신)`;
+      return `${d}(${dep.status})`;
+    });
+    out.push({
+      id: t.id,
+      title: t.title,
+      kind: "deadlock",
+      reason: causes.length ? `대기 중 — ${causes.join(", ")}` : "의존이 없는데도 진행 불가",
+    });
+  }
+  return out;
+}
+
 export interface AddTaskError {
   ok: false;
   reason: string;

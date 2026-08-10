@@ -21,6 +21,7 @@ import {
   renderProgress,
   renderSafe,
   saveTracker,
+  blockers,
   setTaskStatus,
   statusCounts,
   writeHeartbeat,
@@ -303,5 +304,62 @@ describe("되돌리기와 시도 횟수", () => {
     const r = setTaskStatus(t, "blocked");
     expect(t.attempts).toBe(3);
     expect(r.ok && r.attemptsCleared).toBeUndefined();
+  });
+});
+
+/**
+ * 막힌 곳 판정은 **서버(장부 모듈)에서만** 한다.
+ *
+ * deadlockedPending 은 '누가' 막혔는지만 알려 주고 '왜' 는 말하지 않는다. 화면에서 그 이유를
+ * 다시 계산하게 두면 두 곳이 갈라지고, 갈라진 화면이 "정상" 이라 말하는 순간이 v1 이 죽은
+ * 방식이다. 그래서 사유까지 여기서 만든다.
+ */
+describe("막힌 곳 요약", () => {
+  function tracker(): ReturnType<typeof createTracker> {
+    return createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+  }
+
+  test("봉인된 작업을 사유와 함께 짚는다", () => {
+    const t = tracker();
+    t.tasks = [{ ...newTask("a", "작업 A"), status: "blocked", last_error: "첫 줄\n둘째 줄" }];
+    const b = blockers(t);
+    expect(b.length).toBe(1);
+    expect(b[0]!.kind).toBe("blocked");
+    expect(b[0]!.reason).toContain("첫 줄");
+    expect(b[0]!.reason).not.toContain("둘째 줄"); // 요약에 전문을 쏟지 않는다
+  });
+
+  test("한도 임박을 미리 알린다", () => {
+    const t = tracker();
+    t.max_attempts = 5;
+    t.tasks = [{ ...newTask("a", "작업"), status: "failed", attempts: 4 }];
+    const b = blockers(t);
+    expect(b[0]!.kind).toBe("attempts");
+    expect(b[0]!.reason).toContain("4/5");
+  });
+
+  test("교착은 원인 의존을 이름으로 짚는다 — '교착' 세 글자로는 손을 못 댄다", () => {
+    const t = tracker();
+    t.tasks = [
+      { ...newTask("a", "작업 A"), status: "blocked" },
+      { ...newTask("b", "작업 B", { deps: ["a"] }), status: "pending" },
+    ];
+    const b = blockers(t).filter((x) => x.kind === "deadlock");
+    expect(b.length).toBe(1);
+    expect(b[0]!.id).toBe("b");
+    expect(b[0]!.reason).toContain("a(봉인됨)");
+  });
+
+  test("장부에 없는 의존도 이름으로 드러낸다", () => {
+    const t = tracker();
+    t.tasks = [{ ...newTask("b", "작업 B", { deps: ["유령"] }), status: "pending" }];
+    const b = blockers(t).filter((x) => x.kind === "deadlock");
+    expect(b[0]!.reason).toContain("유령(장부에 없음)");
+  });
+
+  test("막힌 것이 없으면 빈 목록이다 — 없는 경고를 만들지 않는다", () => {
+    const t = tracker();
+    t.tasks = [newTask("a", "작업"), { ...newTask("b", "다른 작업"), status: "done" }];
+    expect(blockers(t).length).toBe(0);
   });
 });
