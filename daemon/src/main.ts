@@ -102,6 +102,18 @@ export async function main(argv: readonly string[]): Promise<number> {
       const { cmdSelftest } = await import("./core/selftest.ts");
       return cmdSelftest();
     }
+    case "hook-prebash":
+    case "hook-postbash":
+    case "hook-stop":
+    case "brief": {
+      const cli = await import("./cli.ts");
+      const repo = (cli.parseFlags(rest)["repo"] as string | undefined) ?? ".";
+      const hooks = await import("./hooks/hooks.ts");
+      if (mode === "hook-prebash") return hooks.hookPreBash(repo);
+      if (mode === "hook-postbash") return hooks.hookPostBash(repo);
+      if (mode === "hook-stop") return hooks.hookStop(repo);
+      return hooks.cmdBrief(repo);
+    }
     default:
       break;
   }

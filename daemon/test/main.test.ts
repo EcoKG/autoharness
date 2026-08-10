@@ -64,9 +64,11 @@ describe("디스패치", () => {
   });
 
   test("미구현 모드를 0 으로 보고하지 않는다", async () => {
-    // 조용한 실패 방지 — 구현되기 전에는 성공처럼 보이면 안 된다
-    for (const mode of ["run", "daemon", "mcp", "hook-prebash"]) {
-      expect(await main([mode])).not.toBe(EXIT.OK);
+    // 조용한 실패 방지 — 구현되기 전에는 성공처럼 보이면 안 된다.
+    // 구현이 진행되면 이 목록은 줄어든다(계약은 그대로: 미구현은 0 이 아니다).
+    // stdin 을 읽는 훅 모드는 여기서 부르지 않는다 — 입력을 기다려 테스트가 멈춘다.
+    for (const mode of ["daemon", "mcp", "install"]) {
+      expect(await main([mode]), mode).not.toBe(EXIT.OK);
     }
   });
 
