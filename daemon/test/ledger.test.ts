@@ -22,6 +22,7 @@ import {
   renderSafe,
   saveTracker,
   blockers,
+  setConfig,
   updateTaskPlan,
   setTaskStatus,
   statusCounts,
@@ -436,5 +437,66 @@ describe("작업 계획 변경", () => {
   test("숫자가 아닌 우선순위를 거부한다", () => {
     const t = t3();
     expect(updateTaskPlan(t, findTask(t, "a")!, { priority: Number.NaN }).ok).toBe(false);
+  });
+});
+
+/**
+ * 검증 명령·한도 변경.
+ *
+ * init 때 정해진 뒤로 바꿀 방법이 없었다. 검증 명령은 자동화의 **통과 기준**인데 그것을 못
+ * 바꾸면 도구가 자기 규칙에 갇힌다. 장부를 손으로 고치는 것은 규칙상 금지다.
+ */
+describe("설정 변경", () => {
+  function t(): ReturnType<typeof createTracker> {
+    return createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+  }
+
+  test("검증 명령을 바꾼다", () => {
+    const tr = t();
+    const r = setConfig(tr, { test: "npm test" });
+    expect(r.ok).toBe(true);
+    expect(tr.commands.test).toBe("npm test");
+    expect(r.changed).toContain("test");
+  });
+
+  test("빈 검증 명령을 거부한다 — 검증 없는 주행은 done 을 아무렇게나 만든다", () => {
+    const tr = t();
+    expect(setConfig(tr, { test: "" }).ok).toBe(false);
+    expect(setConfig(tr, { test: "   " }).ok).toBe(false);
+    expect(tr.commands.test).toBe("exit 0"); // 원래 값이 살아 있다
+  });
+
+  test("build·lint 는 빈 문자열로 해제된다", () => {
+    const tr = t();
+    setConfig(tr, { build: "make" });
+    expect(tr.commands.build).toBe("make");
+    setConfig(tr, { build: "" });
+    expect(tr.commands.build).toBeNull();
+  });
+
+  test("시도 한도를 바꾼다", () => {
+    const tr = t();
+    expect(setConfig(tr, { maxAttempts: 3 }).ok).toBe(true);
+    expect(tr.max_attempts).toBe(3);
+  });
+
+  test("말이 안 되는 한도를 거부한다", () => {
+    const tr = t();
+    expect(setConfig(tr, { maxAttempts: 0 }).ok).toBe(false);
+    expect(setConfig(tr, { maxAttempts: 2.5 }).ok).toBe(false);
+    expect(setConfig(tr, { timeoutSec: -1 }).ok).toBe(false);
+  });
+
+  test("바꿀 것이 없으면 성공이라 하지 않는다", () => {
+    expect(setConfig(t(), {}).ok).toBe(false);
+  });
+
+  test("한도를 줄이면 선택 규칙이 즉시 따라온다", () => {
+    // 설정이 판정에 실제로 반영되는지 — 값만 바뀌고 동작이 그대로면 의미가 없다
+    const tr = t();
+    tr.tasks = [{ ...newTask("a", "A"), status: "failed", attempts: 3 }];
+    expect(eligibleNext(tr)!.id).toBe("a"); // 기본 한도 5 에서는 재시도 대상
+    setConfig(tr, { maxAttempts: 3 });
+    expect(eligibleNext(tr)).toBeNull(); // 한도에 닿아 더는 고르지 않는다
   });
 });

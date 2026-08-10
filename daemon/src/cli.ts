@@ -18,6 +18,7 @@ import {
   newTask,
   renderSafe,
   saveTracker,
+  setConfig,
   setTaskStatus,
   updateTaskPlan,
   statusCounts,
@@ -164,6 +165,53 @@ export async function cmdSetTask(flags: Flags): Promise<number> {
   await renderSafe(repo, tracker);
   console.log(JSON.stringify(
     { ok: true, id, status: task.status, priority: task.priority, deps: task.deps },
+    null,
+    2,
+  ));
+  return EXIT.OK;
+}
+
+/**
+ * 검증 명령·한도 변경.
+ *
+ * `--try` 를 주면 **저장하기 전에 그 명령을 한 번 돌려 본다.** 검증 명령을 잘못 넣으면 그
+ * 뒤 모든 작업이 실패하는데, 그 사실은 다음 주행에서야 드러난다. 여기서 종료 코드를 보고
+ * 저장 여부를 정할 수 있어야 한다.
+ */
+export async function cmdSetConfig(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+
+  const change: Parameters<typeof setConfig>[1] = {};
+  const test = str(flags, "test");
+  if (test !== undefined) change.test = test;
+  const build = str(flags, "build");
+  if (build !== undefined) change.build = build;
+  const lint = str(flags, "lint");
+  if (lint !== undefined) change.lint = lint;
+  const timeout = str(flags, "timeout");
+  if (timeout !== undefined) change.timeoutSec = Number(timeout);
+  const maxAttempts = str(flags, "max-attempts");
+  if (maxAttempts !== undefined) change.maxAttempts = Number(maxAttempts);
+
+  // 시험 실행은 저장 전에 한다 — 통과 기준을 깨뜨린 채 저장하지 않기 위해서다
+  if (flags["try"] === true && change.test !== undefined) {
+    console.log(`[시험 실행] ${change.test}`);
+    const proc = Bun.spawn(["bash", "-lc", change.test], { cwd: repo, stdout: "inherit", stderr: "inherit" });
+    const code = await proc.exited;
+    if (code !== 0) {
+      return fail(`시험 실행이 종료 코드 ${code} 로 끝났습니다 — 저장하지 않았습니다.`);
+    }
+    console.log("[시험 실행] 통과");
+  }
+
+  const r = setConfig(tracker, change);
+  if (!r.ok) return fail(r.reason ?? "설정을 바꾸지 못했습니다");
+  await saveTracker(repo, tracker);
+  await renderSafe(repo, tracker);
+  console.log(JSON.stringify(
+    { ok: true, changed: r.changed, commands: tracker.commands, max_attempts: tracker.max_attempts },
     null,
     2,
   ));

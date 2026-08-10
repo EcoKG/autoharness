@@ -61,6 +61,16 @@ const CASES: Case[] = [
   { mode: "run", args: ["--repo", repo, "--task", "t1"], expect: 0, contains: "exit=0" },
   { mode: "next", args: ["--repo", repo], expect: 3, note: "할 일이 없으면 3" },
   { mode: "set-task", args: ["--repo", repo, "--id", "t1", "--status", "pending"], expect: 0 },
+  {
+    mode: "set-config",
+    args: ["--repo", repo, "--test", "exit 0", "--max-attempts", "3"],
+    expect: 0, contains: "max_attempts",
+  },
+  {
+    mode: "set-config",
+    args: ["--repo", repo, "--test", ""],
+    expect: 2, note: "빈 검증 명령은 거부한다 — 검증 없는 주행을 만들지 않는다",
+  },
   { mode: "sync-commit", args: ["--repo", repo], expect: 0 },
   { mode: "brief", args: ["--repo", repo], expect: 0, contains: "AutoHarness" },
   { mode: "hook-prebash", args: ["--repo", repo], stdin: HOOK_PAYLOAD, expect: 0 },

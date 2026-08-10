@@ -188,6 +188,66 @@ function hasCycle(tracker: Tracker): boolean {
   return tracker.tasks.some((t) => walk(t.id));
 }
 
+/** 설정 변경 결과 — 무엇이 바뀌었는지 남긴다. */
+export interface ConfigChange {
+  ok: boolean;
+  reason?: string;
+  changed?: string[];
+}
+
+/**
+ * 검증 명령·한도를 나중에 바꾼다.
+ *
+ * 종전에는 init 때 정해진 뒤로 바꿀 방법이 없었다. 검증 명령은 **자동화의 통과 기준**인데
+ * 그것을 못 바꾸면 도구가 자기 규칙에 갇힌다. 장부를 손으로 고치는 것은 규칙상 금지다.
+ *
+ * 빈 test 를 거부하는 이유: 검증 없는 주행은 done 을 아무렇게나 만든다. build·lint 는
+ * 빈 문자열로 해제할 수 있지만 test 는 그럴 수 없다.
+ */
+export function setConfig(
+  tracker: Tracker,
+  change: {
+    test?: string;
+    build?: string | null;
+    lint?: string | null;
+    timeoutSec?: number;
+    maxAttempts?: number;
+  },
+): ConfigChange {
+  const changed: string[] = [];
+
+  if (change.test !== undefined) {
+    if (!change.test.trim()) {
+      return { ok: false, reason: "검증 명령은 비울 수 없습니다 — 검증 없는 주행은 done 을 아무렇게나 만듭니다." };
+    }
+    tracker.commands.test = change.test;
+    changed.push("test");
+  }
+  if (change.build !== undefined) {
+    tracker.commands.build = change.build === "" ? null : change.build;
+    changed.push("build");
+  }
+  if (change.lint !== undefined) {
+    tracker.commands.lint = change.lint === "" ? null : change.lint;
+    changed.push("lint");
+  }
+  if (change.timeoutSec !== undefined) {
+    if (!Number.isFinite(change.timeoutSec) || change.timeoutSec <= 0) {
+      return { ok: false, reason: `타임아웃은 양수여야 합니다: ${String(change.timeoutSec)}` };
+    }
+    tracker.commands.timeout_sec = change.timeoutSec;
+    changed.push("timeout_sec");
+  }
+  if (change.maxAttempts !== undefined) {
+    if (!Number.isInteger(change.maxAttempts) || change.maxAttempts < 1) {
+      return { ok: false, reason: `시도 한도는 1 이상의 정수여야 합니다: ${String(change.maxAttempts)}` };
+    }
+    tracker.max_attempts = change.maxAttempts;
+    changed.push("max_attempts");
+  }
+  return changed.length ? { ok: true, changed } : { ok: false, reason: "바꿀 항목이 없습니다." };
+}
+
 /** 오류 요약의 첫 줄만 — 요약 상자에 전문을 쏟지 않는다(전문은 작업 상세에 있다). */
 function firstLine(text: string): string {
   const i = text.indexOf("\n");

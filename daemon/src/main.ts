@@ -27,6 +27,7 @@ export const MODES = [
   "init",
   "add-task",
   "set-task",
+  "set-config",
   "heartbeat",
   "sync-commit",
   "model-recommend",
@@ -98,6 +99,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     case "init":
     case "add-task":
     case "set-task":
+    case "set-config":
     case "next":
     case "status":
     case "render":
@@ -112,6 +114,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         init: cli.cmdInit,
         "add-task": cli.cmdAddTask,
         "set-task": cli.cmdSetTask,
+        "set-config": cli.cmdSetConfig,
         next: cli.cmdNext,
         status: cli.cmdStatus,
         render: cli.cmdRender,
