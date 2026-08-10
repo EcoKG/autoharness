@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T02:29:26.242680+00:00",
+  "updated_at": "2026-08-10T02:33:14.526324+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -634,13 +634,13 @@
         "ts-toolchain"
       ],
       "priority": 20,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/ts-core-io-20260810T023211Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T02:32:11.689412+00:00",
+      "finished_at": "2026-08-10T02:33:14.526324+00:00",
       "test_cmd": null
     },
     {
@@ -987,7 +987,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/hook-path-cwd-independence-20260810T022819Z.log",
-      "commit": null,
+      "commit": "ba9c517",
       "started_at": "2026-08-10T02:28:19.324835+00:00",
       "finished_at": "2026-08-10T02:29:26.242680+00:00",
       "test_cmd": null
