@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-07T13:22:29.990966+00:00",
+  "updated_at": "2026-08-10T01:59:23.085800+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -606,9 +606,375 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/refresh-loop-engine-audit-round-20260807T132120Z.log",
-      "commit": null,
+      "commit": "2b8e38f",
       "started_at": "2026-08-07T13:21:20.479769+00:00",
       "finished_at": "2026-08-07T13:22:29.990966+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "ts-toolchain",
+      "title": "G1 기반: Bun 도입과 프로젝트 스캐폴딩 — 이 PC 에 Bun 이 없다(실측: node v24.13.0/npm 11.6.2 만 있음). daemon/ 아래 Bun 프로젝트를 세운다: package.json, tsconfig(strict), 테스트 러너(bun test), 린트/포맷 최소 설정, 그리고 `bun build --compile` 로 EXE 가 실제로 나오는지 최소 예제로 확인한다. 산출물 크기·빌드 시간·콜드 스타트를 실측해 기록할 것 — daemon/DESIGN.md 3절의 훅 시작 예산(p95 150ms) 달성 가능 여부를 여기서 판단한다. 달성 불가로 보이면 그 사실을 근거와 함께 남기고 훅 위임 경로를 별도 작업으로 제안한다. 검증 명령은 이 단계에서 daemon 테스트를 포함하도록 scripts/run_checks.py 에 배선한다(파이썬 검증은 그대로 유지).",
+      "path": "daemon",
+      "deps": [],
+      "priority": 10,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-core-io",
+      "title": "G1 기반: 원자적 파일 IO 와 공용 타입 — v1 이 실측으로 얻은 규칙을 그대로 옮긴다. ① JSON 쓰기는 같은 디렉토리 임시 파일 → rename, rename 이 일시적 EPERM/EBUSY(OneDrive 동기화·백신 잠금)를 맞으면 0.1→0.2→0.4→0.8초 지수 백오프로 총 5회 재시도(v1 replace_with_retry). 다른 오류는 즉시 전파. ② 장부·레지스트리·설정 로더는 **부재와 파손을 구분**한다(ok|missing|corrupt) — v1 에서 이 둘을 뭉갠 것이 게이트를 통째로 무력화한 근인이었다. ③ 모든 텍스트 IO 는 UTF-8 고정. ④ 타임스탬프는 ISO8601 UTC. 장부·레지스트리 타입을 daemon/DESIGN.md 4절 스키마대로 선언하고 런타임 검증기를 붙인다.",
+      "path": "daemon/src/core",
+      "deps": [
+        "ts-toolchain"
+      ],
+      "priority": 20,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-ledger",
+      "title": "G2 엔진: 장부(진실 원천) 구현 — init/add-task/set-task/next/render/status/brief/heartbeat/sync-commit. 선택 규칙은 v1 그대로: in_progress → attempts<max 인 failed → deps 전부 done 인 pending, 각 그룹 내 priority 낮은 순 그다음 id 순. add-task 는 자기·순환·미존재 의존을 거부(exit 2). 교착 pending(의존이 미존재·blocked·순환)은 next/brief/status 가 deadlocked 로 구분 보고하되 종료 코드 계약은 유지(next 는 0/3). set-task 는 pending/blocked 만 허용 — done 은 run 성공으로만 생긴다. PROGRESS.md 렌더는 장부 파생물이며 렌더 실패가 결과 판정을 뒤집지 않게 격리한다.",
+      "path": "daemon/src/core",
+      "deps": [
+        "ts-core-io"
+      ],
+      "priority": 30,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-runner",
+      "title": "G2 엔진: 러너와 종료 코드 계약 — build→test→lint 스테이지 실행, 로그 파일 기록, 오류 요약, 장부 갱신, PROGRESS 재렌더. **종료 코드 0/1/2/3/4 는 절대 기준이다**(daemon/DESIGN.md 4절). blocked 작업 지정·blocked 만 남은 상태도 4. 오류 요약은 강한 신호(Traceback/[ERROR]/AssertionError/FAILED 등)를 먼저 채우고 약한 매칭을 남은 자리에 넣는다 — v1 에서 잡음이 60줄 상한을 먹어 진짜 오류가 잘려 나가던 결함의 해법이다. 스테이지 실행 중 5분 주기 하트비트 갱신. 자식 출력 디코드는 UTF-8 우선, 실패 시 로케일 코드페이지 폴백(한국어 Windows 도구의 cp949 원문 보존).",
+      "path": "daemon/src/core",
+      "deps": [
+        "ts-ledger"
+      ],
+      "priority": 40,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-selftest",
+      "title": "G2 엔진: selftest 이식 — v1 과 동일한 7종 15항목(장부 초기화 / 실패 경로 exit1+attempts / 성공 경로 exit0+done / 한도 exit4+blocked / 의존성 게이팅 전후 / PROGRESS 렌더 / 더미 정리)을 임시 샌드박스에서 실행하고 PASS/FAIL 을 출력한다. 실제 저장소·레지스트리·설치본을 오염시키지 않아야 한다. 종료 코드 0/1.",
+      "path": "daemon/src/core",
+      "deps": [
+        "ts-runner"
+      ],
+      "priority": 50,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-command-analysis",
+      "title": "G3 훅: 토큰 기반 명령 판정 이식 — v1 이 적대 검증으로 다듬은 결과를 그대로 옮긴다. 따옴표를 존중해 토큰화한 뒤 연산자에서 세그먼트를 끊고(문자열 안 ;·|·개행이 분할점이 되면 안 된다), 역슬래시 줄바꿈을 접고, 선행 환경변수 대입과 수식어(env/nohup/timeout N/nice -n N/sudo -u user/xargs)를 인자 수까지 고려해 건너뛴 뒤 첫 토큰 basename 으로 판정한다. git 전역 옵션(-C/-c/--git-dir 등)을 건너뛰고 실제 서브커맨드를 식별한다. 래퍼(bash -c, sh -c, powershell -Command 및 접두사 축약, -EncodedCommand)는 재귀 분석(최대 3단). **파싱 실패를 그냥 통과시키지 않는다** — 위험 키워드가 보이면 게이트로 승격한다(fail-open 이 곧 우회 경로였다). 차단 대상은 두 축: 원격 변경(git push/subtree push, gh 쓰기 동사, gh api 쓰기 메서드)과 되돌릴 수 없는 로컬 파괴 (reset --hard, clean +force, branch -D, checkout --, restore(--staged 제외), stash drop/clear, reflog expire/delete, worktree remove, filter-branch, update-ref -d). rebase 는 의도적 제외. 커밋 트리거는 commit 외에 revert/cherry-pick/merge/am 도 포함하되 각 서브커맨드의 --no-commit/-n/--abort/--skip/--quit 는 제외.",
+      "path": "daemon/src/hooks",
+      "deps": [
+        "ts-core-io"
+      ],
+      "priority": 60,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-hooks",
+      "title": "G3 훅: 훅 3종 + brief 이식 — hook-prebash(금지 명령 게이트·커밋 게이트·발화 마커·하트비트), hook-postbash(커밋 SHA 동기화, prebash 마커로 새 커밋 생성 검증해 오귀속 방지), hook-stop(자율 주행 게이트, 진전 가드 3회). **게이트 처리는 컨텍스트가 정한다**: 헤드리스(CLAUDE_AUTOHARNESS=1)=deny(exit 2+stderr), 대화형·일시정지=ask(exit 0 + hookSpecificOutput.permissionDecision). 두 게이트가 같은 판정 함수를 쓴다. 훅은 fail-open 이되 침묵하지 않는다 — 하트비트 쓰기 실패 등은 stderr 에 남긴다. 발화 마커는 stdin 에 Claude Code 런타임 필드(session_id 등)가 있을 때만 기록한다(사람이 흉내 낸 호출과 구분).",
+      "path": "daemon/src/hooks",
+      "deps": [
+        "ts-command-analysis",
+        "ts-ledger"
+      ],
+      "priority": 70,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-wiring-diagnosis",
+      "title": "G3 훅: 훅 배선 진단 이식 — 등록 여부 × 발화 마커로 not_registered/active/inactive 를 판정하고, matcher 커버리지(명령 실행 도구 전부를 덮는가), 부분 등록(누락된 훅), 설정 파일 상태(ok/missing/corrupt)를 함께 보고한다. 설정 파손을 '미등록(수동 운용)'으로 오판하지 않아야 한다. 훅을 등록하지 않은 저장소는 경고 대상이 아니다(오탐 금지). 경고만 하고 주행을 막지 않는다.",
+      "path": "daemon/src/hooks",
+      "deps": [
+        "ts-hooks"
+      ],
+      "priority": 80,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-mcp-server",
+      "title": "G4 MCP: JSON-RPC 2.0 stdio 서버와 도구 14종 — 개행 구분 JSON-RPC, initialize/ping/tools/list/tools/call 처리, notification(id 없음)은 무응답, 미지 request 는 -32601, 잘못된 줄에도 크래시 금지. 도구 이름과 입출력은 daemon/DESIGN.md 4절 목록 그대로 유지한다(외부 계약). 데몬이 떠 있으면 로컬 HTTP 로 위임하고, 없으면 인프로세스로 직접 수행하는 폴백을 갖춘다 — 두 경로의 결과가 같아야 한다. harness_run 만은 실제 종료 코드(0/1/2/3/4)를 그대로 전달한다.",
+      "path": "daemon/src/mcp",
+      "deps": [
+        "ts-ledger",
+        "ts-runner"
+      ],
+      "priority": 90,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-scheduler",
+      "title": "G5 데몬: 자체 스케줄러 — OS 스케줄러를 쓰지 않고 자기 시계로 interval(기본 15분) tick 을 돈다. setInterval 누적 드리프트와 절전 복귀·시간 변경으로 인한 시계 점프를 견디도록 '다음 실행 시각 기준 재계산' 방식으로 구현한다. 단일 인스턴스 잠금(pid+mtime, 죽은 pid 는 탈취). tick 끝에 last_tick 기록하되 저장은 디스크 재읽기 후 **이번 주기에 실제로 바꾼 프로젝트의 소유 필드만** 병합한다(통째 되쓰기로 MCP 변경이 사라지던 결함 방지). 장시간 무중단 동작이 목표이므로 누수·핸들 누적이 없어야 한다.",
+      "path": "daemon/src/daemon",
+      "deps": [
+        "ts-ledger"
+      ],
+      "priority": 100,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-supervisor",
+      "title": "G5 데몬: 프로젝트 판단과 세션 기동 — v1 판단 순서를 그대로 지킨다(status→백오프→PAUSED→장부→진행 가능 작업→하트비트→기동). completed 는 종점이 아니다: 장부에 진행 가능 작업이 생기면 active 로 되살린다. 빈 장부(적재 전)는 completed 로 봉인하지 않는다. 교착 pending 이 있으면 completed 가 아니라 needs_human. 기동은 claude -p + CLAUDE_AUTOHARNESS=1, probe 90초. 분류 우선순위 고정: 생존 또는 rc=0 → ok(카운터 리셋) / 사용량 패턴 → limit(지수 백오프, 영구 포기 없음, 연속 초과 시 needs_attention 신호) / 그 외 → error(5회 연속 시 정지). 사용량 패턴은 오탐·미탐 양쪽을 실측으로 고정한다.",
+      "path": "daemon/src/daemon",
+      "deps": [
+        "ts-scheduler",
+        "ts-runner"
+      ],
+      "priority": 110,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-console-log",
+      "title": "G5 데몬: 콘솔 로깅과 회전 — 데몬의 모든 판단·행동을 콘솔(stdout)에 한 줄씩 찍고 동시에 파일에 남긴다. 레벨·프로젝트·행동 종류를 구조화해 웹에서 필터링 가능하게 한다(JSON 라인 + 사람이 읽는 텍스트 병행). 파일은 크기 상한 초과 시 회전한다. 콘솔 출력은 WebSocket 스트림의 원천이므로 라인 단위로 즉시 플러시돼야 한다.",
+      "path": "daemon/src/daemon",
+      "deps": [
+        "ts-scheduler"
+      ],
+      "priority": 120,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-web-api",
+      "title": "G6 웹: REST API 와 인증 — 127.0.0.1 에만 바인드하고 토큰을 필수로 한다. 토큰은 기동 시 생성해 ~/.claude/autoharness/web-token 에 권한을 좁혀 저장하고 모든 요청에서 검증한다(없으면 401). 상태 변경은 POST + 토큰 헤더만 허용하고 쿠키 인증을 쓰지 않는다(CSRF 방어). 엔드포인트: GET /api/status, /api/projects, /api/projects/:id/tasks, /api/logs / POST /api/projects/:id/pause|resume|tick|launch, /api/tasks/:id/state. **임의 셸 실행을 노출하지 않는다** — 화이트리스트된 동작만. 이것은 daemon/DESIGN.md 8절의 사람 경계다.",
+      "path": "daemon/src/web",
+      "deps": [
+        "ts-supervisor",
+        "ts-console-log"
+      ],
+      "priority": 130,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-web-console",
+      "title": "G6 웹: WebSocket 콘솔 스트림과 명령 전송 — /ws/console 로 콘솔 라인을 실시간 전달하고, 웹에서 화이트리스트된 명령(일시정지/재개/즉시 tick/세션 기동/작업 상태 전환)을 보낼 수 있게 한다. WS 도 토큰 검증을 거친다. 연결 끊김·재연결·백프레셔(느린 클라이언트가 데몬을 막지 않을 것)를 처리한다. 구독은 읽기 전용이고 명령은 별도 REST 경로를 쓴다 — 스트림과 제어를 섞지 않는다.",
+      "path": "daemon/src/web",
+      "deps": [
+        "ts-web-api"
+      ],
+      "priority": 140,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-web-ui",
+      "title": "G6 웹: 단일 페이지 UI — 데몬이 정적 자원으로 서빙한다. 화면: 전체 상태 요약, 프로젝트 목록과 각 상태·백오프·다음 예정, 선택 프로젝트의 장부(작업 목록·상태·시도·커밋), 실시간 콘솔, 제어 버튼. 외부 CDN 을 쓰지 않는다(오프라인 동작). 토큰은 사용자가 붙여넣거나 로컬 파일에서 읽어 세션 스토리지에 둔다.",
+      "path": "daemon/src/web",
+      "deps": [
+        "ts-web-console"
+      ],
+      "priority": 150,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-exe-build",
+      "title": "G7 패키징: 단일 EXE 빌드 — bun build --compile 로 웹 정적 자원까지 포함한 단일 실행 파일을 만든다. argv 모드 분기(daemon/mcp/hook-*/run/next/...)가 EXE 에서 전부 동작하는지 실측한다. 훅 모드 콜드 스타트를 100회 측정해 p95 를 기록하고 계약(150ms)을 지키는지 판정한다. 빌드 산출물 크기와 빌드 시간도 기록한다. 재현 가능한 빌드 스크립트를 남긴다.",
+      "path": "daemon",
+      "deps": [
+        "ts-web-ui",
+        "ts-mcp-server",
+        "ts-hooks",
+        "ts-selftest"
+      ],
+      "priority": 160,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-install-autostart",
+      "title": "G7 패키징: 설치와 로그온 자동 시작 — EXE 설치, 스킬 문서 배치, MCP 등록, 그리고 **로그온 트리거**로 데몬 자동 시작을 건다. 이 PC 에서 시간 트리거는 0x800710E0 으로 실행되지 않지만 로그온 트리거는 정상임이 실측됐다(daemon/DESIGN.md 0절) — 따라서 시간 트리거를 쓰지 않는다. watchdog_install 도구는 이름을 유지하되 의미가 '로그온 자동 시작 등록'으로 바뀐다. 설치 후 데몬이 실제로 떠서 tick 을 도는지, 재로그온 후에도 뜨는지 실측 확인한다. 제거 경로도 함께 만든다.",
+      "path": "daemon/src/install",
+      "deps": [
+        "ts-exe-build"
+      ],
+      "priority": 170,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-repo-migration",
+      "title": "G7 패키징: 기존 저장소 마이그레이션 — 이미 주행 중인 두 프로젝트(autoharness, LieDetectorOCR)의 **장부와 진행 상태를 보존한 채** 훅 배선만 v1(python scripts/harness_engine.py)에서 v2(EXE)로 교체한다. settings.json 은 백업 후 갱신하고, matcher 커버리지도 함께 최신화한다. v1 훅과 v2 훅이 잠시 공존해도 장부가 깨지지 않아야 한다(같은 스키마·같은 원자적 쓰기). 롤백 절차를 문서화한다. 파괴적 마이그레이션은 사람 경계다.",
+      "path": "daemon/src/install",
+      "deps": [
+        "ts-install-autostart"
+      ],
+      "priority": 180,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-test-parity",
+      "title": "G8 검증: 기존 350건과 등가인 테스트 이식 — v1 tests/ 의 회귀 의도를 TypeScript 로 옮긴다. 특히 적대 검증으로 얻은 것들을 빠짐없이: 토큰 판정(인용부호 안 언급·줄 연속·수식어 접두·래퍼 우회·판정 불가 게이트·gh 쓰기·파괴적 git), 게이트 컨텍스트 판정, 훅 matcher 커버리지와 마이그레이션, 레지스트리 쓰기 무결성(파손 대피·갱신 소실 방지), 워치독 상태 전이 3갈래와 completed 재활성화, 사용량 분류 오탐/미탐, 조용한 실패 3종, 배선 진단 사각, 커밋 게이트 범위, 워치독 진단(결과 코드 해석·로케일 파싱·실행 흔적 나이·유예 경계). **테스트를 약화시켜 통과시키지 않는다** — 이식 중 의도가 바뀌면 사유를 커밋 메시지에 명시한다.",
+      "path": "daemon/test",
+      "deps": [
+        "ts-hooks",
+        "ts-runner",
+        "ts-supervisor"
+      ],
+      "priority": 190,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-cross-validation",
+      "title": "G8 검증: v1↔v2 교차 검증 — 같은 장부·같은 입력에 대해 Python v1 과 TypeScript v2 의 next/status/run 이 같은 종료 코드와 같은 장부 변화를 내는지 대조하는 하네스를 만든다. 무작위 장부를 생성해 두 구현에 같은 연산 열을 먹이고 결과를 비교하는 방식을 권장한다(속성 기반). 불일치가 나오면 어느 쪽이 계약에 맞는지 판정해 기록한다. 이것이 마이그레이션 안전성의 실측 근거이며, 통과 전에는 v1 Python 자산을 삭제하지 않는다(사람 경계).",
+      "path": "daemon/test",
+      "deps": [
+        "ts-test-parity",
+        "ts-selftest"
+      ],
+      "priority": 200,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-daemon-soak",
+      "title": "G8 검증: 데몬 지속 동작 실측 — OS 스케줄러 없이 데몬이 장시간 tick 을 유지하는지 확인한다. 가속 시계로 수백 tick 을 돌려 드리프트·누수·핸들 누적이 없는지 보고, 실제 환경에서도 last_tick 이 계속 갱신되는지 관측한다. 절전 복귀·시간 변경 시나리오를 포함한다. 이 항목이 통과해야 '자동 부활이 실제로 동작한다' 고 말할 수 있다 — v1 이 바로 이 지점에서 조용히 실패했다.",
+      "path": "daemon/test",
+      "deps": [
+        "ts-install-autostart",
+        "ts-scheduler"
+      ],
+      "priority": 210,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]
