@@ -16,9 +16,12 @@ import { join } from "node:path";
 
 import { userPaths } from "../src/core/paths.ts";
 import {
+  STARTUP_LAUNCHER,
   TASK_NAME,
   autostartStatus,
   registerAutostart,
+  startupFolderPath,
+  startupLauncherBody,
   systemdUnit,
   unregisterAutostart,
   windowsRegisterArgs,
@@ -128,10 +131,13 @@ describe("등록·해제", () => {
   });
 
   test("해제는 멱등하다 — 등록이 없어도 실패로 다루지 않는다", async () => {
+    // 없는 것을 지우려 했다고 오류를 내면 재실행이 불가능해진다.
+    // 호출이 끝난 뒤 자동 시작이 없으면 성공이다.
     const r = await unregisterAutostart({
-      runner: recorder({ code: 1 }), platform: "win32",
+      runner: recorder({ code: 1 }), platform: "win32", env: { APPDATA: join(work, "빈곳") },
     });
-    expect(r.detail).toContain("등록 없음");
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("이미 해제된 상태");
   });
 
   test("systemd 가 없으면 지원하지 않는다고 밝힌다 — 되는 척하지 않는다", async () => {
@@ -167,6 +173,110 @@ describe("등록·해제", () => {
     expect(
       (await autostartStatus({ runner: recorder({ code: 1 }), platform: "win32" })).registered,
     ).toBe(false);
+  });
+});
+
+/**
+ * 실측: 이 PC 에서 `schtasks /Create /SC ONLOGON` 이 `/RU` 유무와 무관하게 "Access is denied"
+ * 로 거부되고 `Register-ScheduledTask` 도 같다. 작업 스케줄러 등록에 권한이 필요한 환경이
+ * 실재한다. 거기서 자동 시작을 포기하면 **v2 의 자동 부활 보장이 통째로 무효**가 된다 —
+ * v1 이 실패한 바로 그 지점이므로, 승격이 필요 없는 폴백이 있어야 한다.
+ */
+describe("승격 없는 자동 시작 폴백", () => {
+  const denied = () => recorder({ code: 1, stderr: "ERROR: Access is denied." });
+
+  test("스케줄러가 거부하면 시작프로그램 폴더로 넘어간다", async () => {
+    const written: Array<[string, string]> = [];
+    const r = await registerAutostart({
+      exePath: "C:/bin/autoharness.exe",
+      runner: denied(), platform: "win32", env: { APPDATA: work },
+      writeUnit: async (p, b) => void written.push([p, b]),
+    });
+    expect(r.ok).toBe(true);
+    expect(r.mechanism).toBe("startup-folder");
+    expect(written[0]![0]).toContain("Startup");
+    expect(written[0]![0]).toContain(STARTUP_LAUNCHER);
+  });
+
+  test("폴백 사실과 사유를 숨기지 않는다", async () => {
+    const r = await registerAutostart({
+      exePath: "C:/bin/autoharness.exe",
+      runner: denied(), platform: "win32", env: { APPDATA: work },
+      writeUnit: async () => {},
+    });
+    expect(r.detail).toContain("Access is denied");
+    expect(r.detail).toContain("시작프로그램");
+    expect(r.detail).toContain("지우면 해제");
+  });
+
+  test("스케줄러가 되면 폴백을 쓰지 않는다", async () => {
+    const written: string[] = [];
+    const r = await registerAutostart({
+      exePath: "C:/bin/autoharness.exe",
+      runner: recorder(), platform: "win32", env: { APPDATA: work },
+      writeUnit: async (p) => void written.push(p),
+    });
+    expect(r.mechanism).toBe("schtasks-onlogon");
+    expect(written.length).toBe(0);
+  });
+
+  test("런처가 콘솔 창을 남기지 않는다", () => {
+    const body = startupLauncherBody("C:/Program Files/ah/autoharness.exe");
+    expect(body).toContain("@echo off");
+    expect(body).toContain("/min");
+    expect(body).toContain('"C:/Program Files/ah/autoharness.exe" daemon'); // 공백 경로 보호
+    expect(body).toContain("지우면 자동 시작이 해제"); // 사용자가 되돌릴 방법을 파일 안에 남긴다
+  });
+
+  test("둘 다 실패하면 성공이라 하지 않는다", async () => {
+    const r = await registerAutostart({
+      exePath: "C:/bin/autoharness.exe",
+      runner: denied(), platform: "win32", env: { APPDATA: work },
+      writeUnit: async () => {
+        throw new Error("폴더에 쓸 수 없습니다");
+      },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.mechanism).toBe("unsupported");
+    expect(r.detail).toContain("쓰지 못했습니다");
+  });
+
+  test("해제는 두 수단을 모두 정리한다", async () => {
+    const launcher = startupFolderPath({ APPDATA: work });
+    await mkdir(join(work, "Microsoft/Windows/Start Menu/Programs/Startup"), { recursive: true });
+    await writeFile(launcher, "launcher", "utf8");
+
+    const r = await unregisterAutostart({
+      runner: denied(), platform: "win32", env: { APPDATA: work },
+    });
+    expect(r.ok).toBe(true);
+    expect(await Bun.file(launcher).exists()).toBe(false); // 런처가 지워졌다
+  });
+
+  test("등록이 아예 없으면 제거할 것이 없다고 말한다", async () => {
+    const r = await unregisterAutostart({
+      runner: denied(), platform: "win32", env: { APPDATA: join(work, "빈곳") },
+    });
+    expect(r.detail).toContain("제거할 등록이 없습니다");
+    expect(r.ok).toBe(true); // 멱등 — 없던 것도 성공이다
+  });
+
+  test("상태 조회가 폴백 등록도 찾아낸다", async () => {
+    const launcher = startupFolderPath({ APPDATA: work });
+    await mkdir(join(work, "Microsoft/Windows/Start Menu/Programs/Startup"), { recursive: true });
+    await writeFile(launcher, "launcher", "utf8");
+
+    const s = await autostartStatus({ runner: denied(), platform: "win32", env: { APPDATA: work } });
+    expect(s.registered).toBe(true);
+    expect(s.mechanism).toBe("startup-folder");
+    expect(s.raw).toContain(STARTUP_LAUNCHER);
+  });
+
+  test("둘 다 없으면 미등록이다 — 오탐 금지", async () => {
+    const s = await autostartStatus({
+      runner: denied(), platform: "win32", env: { APPDATA: join(work, "빈곳") },
+    });
+    expect(s.registered).toBe(false);
   });
 });
 

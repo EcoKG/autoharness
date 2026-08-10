@@ -11,6 +11,36 @@
  */
 export const TASK_NAME = "AutoHarnessDaemon";
 export const SYSTEMD_UNIT = "autoharness-daemon.service";
+export const STARTUP_LAUNCHER = "AutoHarnessDaemon.cmd";
+
+/**
+ * 시작프로그램 폴더 경로 — **승격이 필요 없는 로그온 자동 시작 수단.**
+ *
+ * 실측: 이 PC 에서 `schtasks /Create /SC ONLOGON` 이 `/RU` 유무와 무관하게 "Access is
+ * denied" 로 거부되고 PowerShell `Register-ScheduledTask` 도 같다. 작업 스케줄러 등록에
+ * 권한이 필요한 환경이 실재한다는 뜻이다. 그 환경에서 자동 시작을 포기하면 v2 의 자동
+ * 부활 보장이 통째로 무효가 된다 — v1 이 실패한 바로 그 지점이므로 폴백이 필수다.
+ *
+ * 이 폴더는 사용자가 눈으로 확인하고 지울 수 있다는 점에서 레지스트리 Run 키보다 낫다.
+ */
+export function startupFolderPath(env: NodeJS.ProcessEnv = process.env): string {
+  const appData = env["APPDATA"] ?? `${env["USERPROFILE"] ?? ""}/AppData/Roaming`;
+  return `${appData}/Microsoft/Windows/Start Menu/Programs/Startup/${STARTUP_LAUNCHER}`;
+}
+
+/**
+ * 시작프로그램 런처 내용.
+ * `start "" /min` 으로 띄우고 즉시 반환한다 — 로그온마다 콘솔 창이 남아 있으면 안 된다.
+ */
+export function startupLauncherBody(exePath: string): string {
+  return [
+    "@echo off",
+    "rem AutoHarness 데몬 로그온 자동 시작 (작업 스케줄러 등록이 권한으로 거부될 때의 폴백)",
+    "rem 이 파일을 지우면 자동 시작이 해제됩니다.",
+    `start "" /min "${exePath}" daemon`,
+    "",
+  ].join("\r\n");
+}
 
 export interface CommandResult {
   code: number;
@@ -72,6 +102,7 @@ export function systemdUnit(exePath: string): string {
 export interface AutostartOptions {
   exePath: string;
   runner?: CommandRunner;
+  env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   dryRun?: boolean;
   taskName?: string;
@@ -82,7 +113,7 @@ export interface AutostartOptions {
 
 export interface AutostartResult {
   ok: boolean;
-  mechanism: "schtasks-onlogon" | "systemd-user" | "unsupported";
+  mechanism: "schtasks-onlogon" | "startup-folder" | "systemd-user" | "unsupported";
   commands: string[][];
   detail: string;
 }
@@ -106,14 +137,40 @@ export async function registerAutostart(options: AutostartOptions): Promise<Auto
 
   if (platform === "win32") {
     const r = await run(runner, windowsRegisterArgs(options.exePath, options.taskName), dryRun, commands);
+    if (r.code === 0) {
+      return {
+        ok: true,
+        mechanism: "schtasks-onlogon",
+        commands,
+        detail: `로그온 트리거로 등록했습니다: ${options.taskName ?? TASK_NAME}`,
+      };
+    }
+
+    // 스케줄러 등록이 권한으로 거부되는 환경이 실재한다(실측). 자동 시작을 포기하면
+    // 자동 부활 보장이 통째로 무효가 되므로, 승격이 필요 없는 수단으로 넘어간다.
+    const reason = (r.stderr || r.stdout).trim().slice(0, 200);
+    const launcher = startupFolderPath(options.env ?? process.env);
+    commands.push(["write", launcher]);
+    if (!dryRun) {
+      try {
+        await (options.writeUnit ?? defaultWriteUnit)(launcher, startupLauncherBody(options.exePath));
+      } catch (err) {
+        return {
+          ok: false,
+          mechanism: "unsupported",
+          commands,
+          detail:
+            `스케줄러 등록이 거부됐고(${reason}) 시작프로그램 폴더에도 쓰지 못했습니다: ${String(err)}`,
+        };
+      }
+    }
     return {
-      ok: r.code === 0,
-      mechanism: "schtasks-onlogon",
+      ok: true,
+      mechanism: "startup-folder",
       commands,
       detail:
-        r.code === 0
-          ? `로그온 트리거로 등록했습니다: ${options.taskName ?? TASK_NAME}`
-          : `등록 실패(exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 300)}`,
+        `스케줄러 등록이 거부돼(${reason}) 시작프로그램 폴더로 등록했습니다: ${launcher} ` +
+        "(승격 불필요, 이 파일을 지우면 해제됩니다)",
     };
   }
 
@@ -166,13 +223,32 @@ export async function unregisterAutostart(
   const commands: string[][] = [];
 
   if (platform === "win32") {
+    // 두 수단을 모두 정리한다 — 어느 쪽으로 걸렸는지 몰라도 해제는 확실해야 한다(멱등)
     const r = await run(runner, windowsUnregisterArgs(options.taskName), dryRun, commands);
+    const launcher = startupFolderPath(options.env ?? process.env);
+    let removedLauncher = false;
+    commands.push(["remove", launcher]);
+    if (!dryRun) {
+      // `force: true` 는 파일이 없어도 성공하므로 그것만 보면 "제거했다" 고 잘못 보고한다.
+      // 실제로 있던 것을 지웠을 때만 제거로 센다.
+      const existed = await Bun.file(launcher).exists();
+      if (existed) {
+        const { rm } = await import("node:fs/promises");
+        removedLauncher = await rm(launcher, { force: true }).then(() => true).catch(() => false);
+      }
+    }
+    const scheduled = r.code === 0;
     return {
-      ok: r.code === 0,
-      mechanism: "schtasks-onlogon",
+      // **멱등**: 이 호출이 끝난 뒤 자동 시작이 없으면 성공이다. 애초에 없었던 것도
+      // 성공이지 실패가 아니다 — 없는 것을 지우려 했다고 오류를 내면 재실행이 불가능해진다.
+      ok: true,
+      mechanism: scheduled ? "schtasks-onlogon" : "startup-folder",
       commands,
-      // 없는 작업을 지우려는 것은 실패가 아니다 — 제거는 멱등해야 한다
-      detail: r.code === 0 ? "자동 시작 등록을 제거했습니다." : `제거 실패 또는 등록 없음(exit ${r.code})`,
+      detail: scheduled
+        ? "스케줄러 등록과 시작프로그램 런처를 모두 제거했습니다."
+        : removedLauncher
+          ? "시작프로그램 런처를 제거했습니다(스케줄러 등록 없음)."
+          : "제거할 등록이 없습니다(이미 해제된 상태).",
     };
   }
   const disable = await run(runner, ["systemctl", "--user", "disable", "--now", SYSTEMD_UNIT], dryRun, commands);
@@ -191,7 +267,7 @@ export interface AutostartStatus {
 }
 
 export async function autostartStatus(
-  options: Pick<AutostartOptions, "runner" | "platform" | "taskName"> = {},
+  options: Pick<AutostartOptions, "runner" | "platform" | "taskName" | "env"> = {},
 ): Promise<AutostartStatus> {
   const platform = options.platform ?? process.platform;
   const runner = options.runner ?? realRunner;
@@ -199,7 +275,17 @@ export async function autostartStatus(
     const r = await runner(windowsQueryArgs(options.taskName)).catch(() => ({
       code: 1, stdout: "", stderr: "",
     }));
-    return { registered: r.code === 0, mechanism: "schtasks-onlogon", raw: (r.stdout || r.stderr).trim() };
+    if (r.code === 0) {
+      return { registered: true, mechanism: "schtasks-onlogon", raw: (r.stdout || r.stderr).trim() };
+    }
+    // 스케줄러에 없다고 자동 시작이 없는 것은 아니다 — 폴백 수단도 본다
+    const launcher = startupFolderPath(options.env ?? process.env);
+    const present = await Bun.file(launcher).exists();
+    return {
+      registered: present,
+      mechanism: present ? "startup-folder" : "schtasks-onlogon",
+      raw: present ? launcher : (r.stdout || r.stderr).trim(),
+    };
   }
   const r = await runner(["systemctl", "--user", "is-enabled", SYSTEMD_UNIT]).catch(() => ({
     code: 1, stdout: "", stderr: "",

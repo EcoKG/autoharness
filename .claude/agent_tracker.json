@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T06:16:49.215998+00:00",
+  "updated_at": "2026-08-10T06:24:38.048942+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1077,9 +1077,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/install-source-validation-20260810T061400Z.log",
-      "commit": null,
+      "commit": "b2a6e1f",
       "started_at": "2026-08-10T06:14:00.681755+00:00",
       "finished_at": "2026-08-10T06:16:49.215998+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "autostart-no-elevation",
+      "title": "자동 시작 등록이 권한 승격을 요구해 실패한다 — 승격 없는 폴백이 필요하다. 실측: 이 PC 에서 schtasks /Create /SC ONLOGON 이 /RU 유무와 무관하게 \"Access is denied\" 로 거부되고, PowerShell Register-ScheduledTask 도 같다. 반면 시작프로그램 폴더(%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup)는 쓰기 가능하다. 기존 AutoHarnessWatchdog 작업이 존재하는 것은 과거 관리자 권한 설치의 산물이라 재현되지 않는다. 즉 현재 설계대로면 무인 설치가 이 환경에서 항상 실패한다 — 그리고 자동 시작이 없으면 v2 의 자동 부활 보장이 통째로 무효다(v1 이 실패한 바로 그 지점). 수행: ① win32 에서 schtasks 가 권한으로 거부되면 시작프로그램 폴더에 런처를 놓는 폴백을 쓴다(승격 불필요·사용자가 눈으로 확인하고 지울 수 있음·로그온 시 확실히 실행) ② 어떤 수단으로 걸렸는지 결과와 상태 조회에 그대로 드러낸다 — schtasks 로 걸린 것과 폴더로 걸린 것을 뭉개지 않는다 ③ 해제는 두 수단을 모두 정리한다(멱등) ④ 상태 조회가 두 수단 중 무엇이든 등록됐으면 registered=true 로 보고하되 mechanism 을 구분한다 ⑤ 콘솔 창이 로그온마다 떠 있지 않도록 최소화 실행으로 띄운다 ⑥ 폴백 선택·해제·상태 판정을 회귀로 고정한다",
+      "path": "daemon/src/install/autostart.ts",
+      "deps": [],
+      "priority": 4,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/autostart-no-elevation-20260810T062147Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T06:21:47.397345+00:00",
+      "finished_at": "2026-08-10T06:24:38.048942+00:00",
       "test_cmd": null
     }
   ]
