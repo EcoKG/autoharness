@@ -36,6 +36,7 @@ import {
   installedExePath,
   looksLikeOurExe,
   uninstall,
+  updateBlockedHint,
 } from "../src/install/install.ts";
 
 let home = "";
@@ -549,5 +550,40 @@ describe("상태 조회", () => {
     const s = await installStatus({ env, runner: recorder({ stdout: VERSION }), platform: "win32" });
     expect(s.exe_installed).toBe(true);
     expect(s.autostart.registered).toBe(true);
+  });
+});
+
+/**
+ * 갱신 경로 — 설치기가 가장 자주 만나는 실패다.
+ *
+ * 실측: 데몬이 도는 상태에서 새 빌드를 install 하면 EBUSY 로 실패하는데, 종전에는 오류
+ * 원문만 나와서 무엇을 멈춰야 하는지 알 수 없었다. 받은 다음 바로 하는 일이 갱신이므로
+ * 여기서 막히면 릴리스가 사실상 1회용이 된다.
+ */
+describe("실행 중 갱신 — 막힌 이유와 조치를 함께 말한다", () => {
+  const busy = Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+
+  test("잠금 오류는 멈출 대상과 명령을 알려 준다", () => {
+    const hint = updateBlockedHint(busy, "win32");
+    expect(hint).not.toBeNull();
+    expect(hint).toContain("EBUSY");
+    expect(hint).toContain("Stop-Process");
+  });
+
+  test("플랫폼에 맞는 명령을 준다 — Windows 명령을 리눅스에 주지 않는다", () => {
+    const hint = updateBlockedHint(busy, "linux");
+    expect(hint).toContain("pkill");
+    expect(hint).not.toContain("Stop-Process");
+  });
+
+  test("리눅스의 실행 중 바이너리 오류(ETXTBSY)도 같은 안내를 받는다", () => {
+    const err = Object.assign(new Error("ETXTBSY"), { code: "ETXTBSY" });
+    expect(updateBlockedHint(err, "linux")).not.toBeNull();
+  });
+
+  test("잠금이 아닌 오류를 잠금이라 하지 않는다", () => {
+    const err = Object.assign(new Error("ENOSPC: no space left"), { code: "ENOSPC" });
+    expect(updateBlockedHint(err, "win32")).toBeNull();
+    expect(updateBlockedHint(new Error("코드 없는 오류"), "win32")).toBeNull();
   });
 });

@@ -169,6 +169,26 @@ python ~/.claude/skills/autoharness/bin/harness_engine.py selftest
 `install --status` 는 **파일 존재가 아니라 동작**으로 판정합니다. 파일이 있는데 우리 것이
 아닌 상태(`exe_present: true, exe_installed: false`)를 구분해 보여 줍니다.
 
+## 새 버전으로 갱신 (v2)
+
+설치 명령을 그대로 다시 실행하면 됩니다. 다만 **데몬이 그 파일을 잡고 있으면 덮어쓸 수
+없습니다**(Windows `EBUSY`, 리눅스 `ETXTBSY`). 멈추고 갱신한 뒤 다시 띄웁니다:
+
+```bash
+pkill -f 'autoharness daemon'
+curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --v2
+autoharness daemon &
+```
+
+Windows(PowerShell)에서는 이렇게 멈춥니다:
+
+```bash
+powershell -Command "Get-Process autoharness -ErrorAction SilentlyContinue | Stop-Process -Force"
+```
+
+자동 시작을 등록해 뒀다면 다시 띄울 필요 없이 다음 로그온에 새 버전으로 올라옵니다.
+잠금 때문에 실패하면 설치기가 멈출 대상과 명령을 함께 알려 줍니다.
+
 ---
 
 # 사용법

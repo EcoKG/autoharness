@@ -124,6 +124,27 @@ async function copyTree(src: string, dst: string): Promise<number> {
   return count;
 }
 
+/**
+ * 실행 중인 파일은 덮어쓸 수 없다 — Windows 는 EBUSY/EPERM, 리눅스는 ETXTBSY 로 거절한다.
+ *
+ * 이건 드문 사고가 아니라 **갱신의 기본 경로**다. 설치해서 쓰다가 새 버전을 올리려는 순간,
+ * 그 순간에 데몬과 MCP 서버가 바로 그 파일을 잡고 있다. 원문(`EBUSY: resource busy`)만
+ * 던지면 무엇을 멈춰야 하는지 알 수 없어 갱신이 거기서 멈춘다.
+ */
+export function updateBlockedHint(err: unknown, platform: NodeJS.Platform): string | null {
+  const code = (err as { code?: string } | null)?.code;
+  if (code !== "EBUSY" && code !== "EPERM" && code !== "EACCES" && code !== "ETXTBSY") return null;
+  const stop =
+    platform === "win32"
+      ? 'powershell -Command "Get-Process autoharness -ErrorAction SilentlyContinue | Stop-Process -Force"'
+      : "pkill -f 'autoharness daemon'";
+  return (
+    `설치본이 실행 중이라 덮어쓸 수 없습니다(${code}). 데몬·MCP 서버를 멈춘 뒤 다시 실행하십시오:\n` +
+    `  ${stop}\n` +
+    "  멈춘 뒤 install 을 다시 실행하면 데몬은 다음 기동에서 새 버전으로 올라옵니다."
+  );
+}
+
 export async function install(options: InstallOptions = {}): Promise<InstallResult> {
   const env = options.env ?? process.env;
   const dryRun = options.dryRun === true;
@@ -148,8 +169,9 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
       await copyFile(source, target);
       steps.push(step("exe", "ok", `${basename(source)} → ${target}`));
     } catch (err) {
-      // 실행 중인 파일을 덮어쓰면 Windows 에서 잠금 오류가 난다 — 사유를 그대로 보여 준다
-      steps.push(step("exe", "failed", `복사 실패: ${String(err)}`));
+      // 잠금이면 조치 방법까지 말한다 — 그 외에는 사유를 그대로 보여 준다
+      const hint = updateBlockedHint(err, platform);
+      steps.push(step("exe", "failed", hint ?? `복사 실패: ${String(err)}`));
     }
   }
 
