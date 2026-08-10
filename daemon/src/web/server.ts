@@ -176,19 +176,7 @@ export async function createWebServer(ctx: WebContext, port = 0): Promise<WebSer
       const assets = ctx.staticAssets ?? STATIC_ASSETS;
       if (req.method === "GET") {
         const asset = assets[url.pathname === "/" ? "/index.html" : url.pathname];
-        if (asset) {
-          return new Response(asset.body, {
-            headers: {
-              "content-type": asset.type,
-              "cache-control": "no-store",
-              "x-content-type-options": "nosniff",
-              // 외부 자원을 전혀 불러오지 않는 페이지다 — CSP 로 그 사실을 못 박는다
-              "content-security-policy":
-                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-                + "connect-src 'self'; img-src 'self' data:; form-action 'none'; frame-ancestors 'none'",
-            },
-          });
-        }
+        if (asset) return assetResponse(asset);
       }
 
       if (!tokenMatches(token, bearerToken(req.headers))) return unauthorized();
@@ -251,6 +239,29 @@ export async function createWebServer(ctx: WebContext, port = 0): Promise<WebSer
       await rm(paths.daemonInfo, { force: true });
     },
   };
+}
+
+/**
+ * 정적 자산 응답 — **헤더를 한 곳에서만 만든다.**
+ *
+ * 종전에는 자산을 돌려주는 자리가 둘이었고, 뒤쪽(handleGet 말미)에는 nosniff 도 CSP 도
+ * 없었다. 지금은 앞쪽 분기에 가려 도달하지 않지만, 경로가 하나 늘거나 순서가 바뀌면
+ * 그대로 살아나는 지뢰다. 보안 헤더가 "어느 경로로 나갔느냐" 에 달려 있으면 안 된다.
+ */
+export function assetResponse(asset: { body: string; type: string }): Response {
+  return new Response(asset.body, {
+    headers: {
+      "content-type": asset.type,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      // 외부 자원을 전혀 불러오지 않는 페이지다 — CSP 로 그 사실을 못 박는다
+      "content-security-policy":
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        + "connect-src 'self'; img-src 'self' data:; form-action 'none'; frame-ancestors 'none'; "
+        + "base-uri 'none'; object-src 'none'",
+    },
+  });
 }
 
 async function handleGet(
@@ -320,11 +331,7 @@ async function handleGet(
   }
 
   const asset = ctx.staticAssets?.[path === "/" ? "/index.html" : path];
-  if (asset) {
-    return new Response(asset.body, {
-      headers: { "content-type": asset.type, "cache-control": "no-store" },
-    });
-  }
+  if (asset) return assetResponse(asset);
   return json({ error: `없는 경로입니다: ${path}` }, 404);
 }
 

@@ -17,7 +17,7 @@ import { repoPaths, userPaths } from "../src/core/paths.ts";
 import { UI_HTML } from "../src/web/ui.ts";
 import { defaultRegistry, mutateRegistry, saveRegistry, upsertProject } from "../src/core/registry.ts";
 import { ConsoleLog } from "../src/daemon/log.ts";
-import { BIND_HOST, createWebServer, hostAllowed, type WebServerHandle } from "../src/web/server.ts";
+import { BIND_HOST, assetResponse, createWebServer, hostAllowed, type WebServerHandle } from "../src/web/server.ts";
 import { bearerToken, generateToken, tokenMatches } from "../src/web/token.ts";
 
 let home = "";
@@ -398,5 +398,38 @@ describe("즉시 tick 의 응답은 실제 판단을 담는다", () => {
     // UI 의 문구 생성이 outcomes 를 읽는지 소스로 고정한다(이 페이지는 빌드 없는 문자열이다)
     expect(UI_HTML).toContain("outcomeText");
     expect(UI_HTML).toContain("result.outcomes");
+  });
+});
+
+/**
+ * 자산 응답의 보안 헤더는 **어느 경로로 나가든** 같아야 한다.
+ *
+ * 실측 결함: 자산을 돌려주는 자리가 둘이었고 뒤쪽에는 nosniff 도 CSP 도 없었다. 지금은
+ * 앞 분기에 가려 도달하지 않지만, 경로가 하나 늘거나 순서가 바뀌면 그대로 살아나는
+ * 지뢰다. 헤더가 "어느 코드 경로를 탔느냐" 에 달려 있으면 안 된다.
+ */
+describe("정적 자산 헤더", () => {
+  test("한 곳에서 만든 응답이 필요한 헤더를 모두 갖는다", () => {
+    const r = assetResponse({ body: "x", type: "text/html; charset=utf-8" });
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+    const csp = r.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("object-src 'none'");
+  });
+
+  test("실제로 서빙되는 문서에도 그대로 붙는다", async () => {
+    const r = await fetch(`${base}/`);
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(r.headers.get("content-security-policy")).toContain("default-src 'none'");
+  });
+
+  test("자산 응답을 만드는 곳이 하나다 — 헤더가 갈라질 자리를 남기지 않는다", async () => {
+    const src = await readFile(join(import.meta.dir, "..", "src", "web", "server.ts"), "utf8");
+    const inlineResponses = src.match(/new Response\(asset\.body/g) ?? [];
+    expect(inlineResponses.length).toBe(1); // assetResponse 안의 그것 하나뿐
   });
 });
