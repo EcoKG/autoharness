@@ -7,14 +7,9 @@
  * 추가하면 훅을 포함한 **모든** 모드의 시작 비용이 된다.
  */
 
-/** daemon/DESIGN.md 4절 — 절대 기준. 숫자를 바꾸지 말 것. */
-export const EXIT = {
-  OK: 0,
-  FAIL: 1,
-  USAGE: 2,
-  NO_TASK: 3,
-  BLOCKED: 4,
-} as const;
+import { EXIT } from "./exit.ts";
+
+export { EXIT };
 
 export const MODES = [
   "daemon",
