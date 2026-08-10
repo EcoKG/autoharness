@@ -320,3 +320,36 @@ describe("막힌 곳 요약 카드", () => {
     expect(Array.isArray(body.blockers)).toBe(true);
   });
 });
+
+/**
+ * 콘솔 필터 — 저장소가 여럿이면 지금 콘솔은 읽을 수 없다.
+ *
+ * 그리고 필터를 걸어 둔 것을 잊으면 "아무 일도 안 일어난다" 고 읽는다. 이 화면에서 그것이
+ * 가장 비싼 오해라, 숨긴 줄 수를 항상 표시한다.
+ */
+describe("콘솔 필터", () => {
+  test("프로젝트·검색·고정 수단이 있다", () => {
+    expect(UI_HTML).toContain('id="search"');
+    expect(UI_HTML).toContain('id="pin"');
+    expect(UI_HTML).toContain('id="chips"');
+  });
+
+  test("숨긴 줄 수를 항상 보여 준다", () => {
+    expect(UI_HTML).toContain('id="hidden"');
+    expect(UI_HTML).toContain("줄 숨김");
+  });
+
+  test("백프레셔 알림은 어떤 필터에서도 숨기지 않는다", () => {
+    // 화면이 따라오지 못해 줄을 놓쳤다는 사실은 필터와 무관하게 알아야 한다
+    expect(UI_HTML).toContain('record.action === "stream"');
+  });
+
+  test("고정 중에는 자동 스크롤하지 않는다 — 읽는 자리를 뺏지 않는다", () => {
+    expect(UI_HTML).toContain("pinned");
+    expect(UI_HTML).toContain("atBottom && !pinned");
+  });
+
+  test("프로젝트가 하나뿐이면 칩을 만들지 않는다", () => {
+    expect(UI_HTML).toContain("ids.length < 2");
+  });
+});

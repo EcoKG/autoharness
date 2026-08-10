@@ -139,9 +139,13 @@ export const UI_HTML = `<!doctype html>
         <label class="muted"><input type="radio" name="mode" value="all" checked> 전체</label>
         <label class="muted"><input type="radio" name="mode" value="session"> 세션 출력만</label>
         <label class="muted"><input type="radio" name="mode" value="daemon"> 데몬 판단만</label>
+        <input id="search" type="search" placeholder="줄 검색" style="min-width:160px">
+        <button id="pin" title="자동 스크롤을 멈춥니다">고정</button>
         <span class="sp"></span>
-        <span id="consoleHint" class="muted">주행 중인 Claude Code 세션의 출력이 여기에 흐릅니다.</span>
+        <span id="hidden" class="muted"></span>
       </div>
+      <div id="chips" class="row" style="margin-bottom:8px"></div>
+      <p id="consoleHint" class="muted" style="margin:0 0 6px">주행 중인 Claude Code 세션의 출력이 여기에 흐릅니다.</p>
       <div id="console" aria-live="polite"></div>
     </section>
   </div>
@@ -533,20 +537,64 @@ export const UI_HTML = `<!doctype html>
   }
 
   var consoleMode = "all";
+  var consoleQuery = "";
+  var consoleProject = "";
+  var pinned = false;
+  var projectCounts = {};
 
+  /**
+   * 콘솔 필터.
+   *
+   * **숨긴 줄 수는 항상 보여 준다.** 필터가 걸린 것을 잊으면 "아무 일도 안 일어난다" 고
+   * 읽는다 — 이 화면에서 그것이 가장 비싼 오해다.
+   *
+   * 백프레셔 알림(stream)은 어떤 필터에서도 숨기지 않는다. 화면이 따라오지 못해 줄을
+   * 놓쳤다는 사실은 필터와 무관하게 알아야 한다.
+   */
   function lineVisible(record) {
-    if (consoleMode === "all") return true;
+    if (record.action === "stream") return true;
     var isSession = record.action === "session";
-    return consoleMode === "session" ? isSession : !isSession;
+    if (consoleMode === "session" && !isSession) return false;
+    if (consoleMode === "daemon" && isSession) return false;
+    if (consoleProject && record.project !== consoleProject) return false;
+    if (consoleQuery && (record.text || "").toLowerCase().indexOf(consoleQuery) < 0) return false;
+    return true;
   }
 
   function applyFilter() {
     var box = $("console");
+    var hidden = 0;
     for (var i = 0; i < box.children.length; i++) {
       var el = box.children[i];
-      el.hidden = !lineVisible({ action: el.getAttribute("data-action") });
+      var visible = lineVisible({
+        action: el.getAttribute("data-action"),
+        project: el.getAttribute("data-project"),
+        text: el.textContent
+      });
+      el.hidden = !visible;
+      if (!visible) hidden += 1;
     }
-    box.scrollTop = box.scrollHeight;
+    setText($("hidden"), hidden ? hidden + "줄 숨김" : "");
+    if (!pinned) box.scrollTop = box.scrollHeight;
+  }
+
+  function renderChips() {
+    var box = $("chips");
+    box.replaceChildren();
+    var ids = Object.keys(projectCounts);
+    if (ids.length < 2) return; // 하나뿐이면 칩이 오히려 방해다
+    ids.unshift("");
+    ids.forEach(function (id) {
+      var b = document.createElement("button");
+      setText(b, id ? id + " (" + projectCounts[id] + ")" : "전체");
+      if (consoleProject === id) b.style.borderColor = "var(--accent)";
+      b.addEventListener("click", function () {
+        consoleProject = id;
+        renderChips();
+        applyFilter();
+      });
+      box.append(b);
+    });
   }
 
   function appendLine(record) {
@@ -557,14 +605,20 @@ export const UI_HTML = `<!doctype html>
     // 세션 출력은 데몬 판단과 눈으로 구분돼야 한다 — 섞이면 어느 쪽도 못 읽는다
     line.className = "line lvl-" + record.level + (isSession ? " session" : "");
     line.setAttribute("data-action", record.action);
+    line.setAttribute("data-project", record.project);
     var text = isSession
       ? record.ts.slice(11, 19) + "  " + record.project + " │ " + record.detail
       : record.ts.slice(11, 19) + "  " + record.project + "  " + record.action + "  " + record.detail;
     setText(line, text);
     line.hidden = !lineVisible(record);
     box.append(line);
+    $("consoleHint").hidden = true;
     while (box.childElementCount > 2000) box.removeChild(box.firstChild);
-    if (atBottom) box.scrollTop = box.scrollHeight;
+    projectCounts[record.project] = (projectCounts[record.project] || 0) + 1;
+    renderChips();
+    if (line.hidden) setText($("hidden"), ($("console").querySelectorAll("[hidden]").length) + "줄 숨김");
+    // 고정 중에는 따라가지 않는다 — 읽고 있는 자리를 뺏지 않기 위해서다
+    if (atBottom && !pinned) box.scrollTop = box.scrollHeight;
   }
 
   function connectSocket() {
@@ -618,6 +672,15 @@ export const UI_HTML = `<!doctype html>
   });
   document.querySelectorAll("[data-act]").forEach(function (b) {
     b.addEventListener("click", function () { act(b.getAttribute("data-act")); });
+  });
+  $("search").addEventListener("input", function () {
+    consoleQuery = $("search").value.trim().toLowerCase();
+    applyFilter();
+  });
+  $("pin").addEventListener("click", function () {
+    pinned = !pinned;
+    setText($("pin"), pinned ? "고정 해제" : "고정");
+    if (!pinned) { var b = $("console"); b.scrollTop = b.scrollHeight; }
   });
   document.querySelectorAll('input[name="mode"]').forEach(function (r) {
     r.addEventListener("change", function () {
