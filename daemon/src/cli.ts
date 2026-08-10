@@ -1,0 +1,250 @@
+/**
+ * CLI 모드 구현 — v1 엔진 서브커맨드 대응.
+ *
+ * selftest 가 실제 종료 코드를 검증하려면 CLI 가 먼저 있어야 한다(v1 selftest 도
+ * 엔진을 서브프로세스로 띄워 종료 코드를 본다). 그래서 이미 이식된 장부·러너 위에
+ * 해당 모드를 여기서 배선한다.
+ */
+import { mkdir, rm, writeFile } from "node:fs/promises";
+
+import { EXIT } from "./exit.ts";
+import {
+  addTask,
+  createTracker,
+  deadlockedPending,
+  eligibleNext,
+  findTask,
+  loadTracker,
+  newTask,
+  renderSafe,
+  saveTracker,
+  setTaskStatus,
+  statusCounts,
+  writeHeartbeat,
+} from "./core/ledger.ts";
+import { repoPaths } from "./core/paths.ts";
+import { noEligibleExit, runTask } from "./core/runner.ts";
+import { isTaskStatus, type Tracker } from "./core/schema.ts";
+
+export interface Flags {
+  readonly [key: string]: string | boolean | undefined;
+}
+
+/** `--key value` 와 `--flag` 를 받는 최소 파서. 값이 `--` 로 시작하면 플래그로 본다. */
+export function parseFlags(argv: readonly string[]): Flags {
+  const out: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!;
+    if (!token.startsWith("--")) continue;
+    const key = token.slice(2);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      out[key] = true;
+    } else {
+      out[key] = next;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function str(flags: Flags, key: string): string | undefined {
+  const v = flags[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+function fail(message: string): number {
+  process.stderr.write(`[autoharness] ${message}\n`);
+  return EXIT.USAGE;
+}
+
+/** 장부를 요구하는 모드의 공통 진입 — 부재와 파손을 구분해 알린다. */
+async function requireTracker(repo: string): Promise<Tracker | number> {
+  const r = await loadTracker(repo);
+  if (r.state === "missing") {
+    return fail("장부(.claude/agent_tracker.json)가 없습니다. 먼저 init 을 실행하십시오.");
+  }
+  if (r.state === "corrupt" || !r.tracker) {
+    return fail(`장부가 파손됐습니다: ${r.error ?? "알 수 없는 오류"}`);
+  }
+  return r.tracker;
+}
+
+export async function cmdInit(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const required = ["project", "objective", "source", "target", "test"] as const;
+  for (const key of required) {
+    if (!str(flags, key)) return fail(`--${key} 가 필요합니다`);
+  }
+  const existing = await loadTracker(repo);
+  if (existing.state === "ok" && !flags["force"]) {
+    return fail("이미 장부가 있습니다. 재초기화는 진행 상태를 파괴합니다 (--force 로 강제).");
+  }
+  const tracker = createTracker({
+    project: str(flags, "project")!,
+    objective: str(flags, "objective")!,
+    source: str(flags, "source")!,
+    target: str(flags, "target")!,
+    test: str(flags, "test")!,
+    build: str(flags, "build") ?? null,
+    lint: str(flags, "lint") ?? null,
+    model: str(flags, "model") ?? "claude-opus-5",
+    maxAttempts: Number(str(flags, "max-attempts") ?? 5),
+    timeoutSec: Number(str(flags, "timeout-sec") ?? 1800),
+  });
+  const paths = repoPaths(repo);
+  await mkdir(paths.logs, { recursive: true });
+  await saveTracker(repo, tracker);
+  await writeFile(paths.example, `${JSON.stringify(tracker, null, 2)}\n`, "utf8");
+  await renderSafe(repo, tracker);
+  console.log(JSON.stringify({ ok: true, tracker: paths.tracker }, null, 2));
+  return EXIT.OK;
+}
+
+export async function cmdAddTask(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const id = str(flags, "id");
+  const title = str(flags, "title");
+  if (!id || !title) return fail("--id 와 --title 이 필요합니다");
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+
+  const depsRaw = str(flags, "deps") ?? "";
+  const task = newTask(id, title, {
+    path: str(flags, "path") ?? null,
+    deps: depsRaw ? depsRaw.split(",").map((d) => d.trim()).filter(Boolean) : [],
+    priority: Number(str(flags, "priority") ?? 100),
+    testCmd: str(flags, "test-cmd") ?? null,
+  });
+  const r = addTask(tracker, task);
+  if (!r.ok) return fail(r.reason);
+  await saveTracker(repo, tracker);
+  await renderSafe(repo, tracker);
+  console.log(JSON.stringify({ ok: true, id }, null, 2));
+  return EXIT.OK;
+}
+
+export async function cmdSetTask(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const id = str(flags, "id");
+  if (!id) return fail("--id 가 필요합니다");
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+  const task = findTask(tracker, id);
+  if (!task) return fail(`작업 없음: ${id}`);
+
+  const status = str(flags, "status");
+  if (status !== undefined) {
+    if (!isTaskStatus(status)) return fail(`알 수 없는 상태: ${status}`);
+    const r = setTaskStatus(task, status);
+    if (!r.ok) return fail(r.reason);
+  }
+  const note = str(flags, "note");
+  if (note !== undefined) task.last_error = note;
+  const testCmd = flags["test-cmd"];
+  if (typeof testCmd === "string") task.test_cmd = testCmd === "" ? null : testCmd;
+
+  await saveTracker(repo, tracker);
+  await renderSafe(repo, tracker);
+  console.log(JSON.stringify({ ok: true, id, status: task.status }, null, 2));
+  return EXIT.OK;
+}
+
+export async function cmdNext(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+  const task = eligibleNext(tracker);
+  const dead = deadlockedPending(tracker).map((t) => t.id);
+  if (!task) {
+    const out: Record<string, unknown> = { next: null, counts: statusCounts(tracker) };
+    if (dead.length > 0) out["deadlocked"] = dead;
+    console.log(JSON.stringify(out, null, 2));
+    return EXIT.NO_TASK;
+  }
+  const out: Record<string, unknown> = { next: task };
+  if (dead.length > 0) out["deadlocked"] = dead;
+  console.log(JSON.stringify(out, null, 2));
+  return EXIT.OK;
+}
+
+export async function cmdStatus(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+  const hb = await Bun.file(repoPaths(repo).heartbeat)
+    .json()
+    .catch(() => null);
+  console.log(
+    JSON.stringify(
+      {
+        project: tracker.project,
+        model: tracker.model,
+        counts: statusCounts(tracker),
+        next: eligibleNext(tracker),
+        deadlocked: deadlockedPending(tracker).map((t) => t.id),
+        heartbeat: hb,
+        paused: await Bun.file(repoPaths(repo).pausedFlag).exists(),
+      },
+      null,
+      2,
+    ),
+  );
+  return EXIT.OK;
+}
+
+export async function cmdRender(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+  await renderSafe(repo, tracker);
+  console.log("PROGRESS.md 재렌더 완료");
+  return EXIT.OK;
+}
+
+export async function cmdHeartbeat(flags: Flags): Promise<number> {
+  await writeHeartbeat(str(flags, "repo") ?? ".", "manual");
+  console.log(JSON.stringify({ ok: true }));
+  return EXIT.OK;
+}
+
+export async function cmdRun(flags: Flags): Promise<number> {
+  const repo = str(flags, "repo") ?? ".";
+  const tracker = await requireTracker(repo);
+  if (typeof tracker === "number") return tracker;
+
+  const wanted = str(flags, "task");
+  const customCmd = str(flags, "cmd") ?? null;
+  let task = wanted ? findTask(tracker, wanted) : (eligibleNext(tracker) ?? undefined);
+
+  if (wanted && !task) return fail(`작업 없음: ${wanted}`);
+  if (!task) {
+    const r = noEligibleExit(tracker);
+    console.log(r.message);
+    return r.exitCode;
+  }
+  if (wanted) {
+    if (task.status === "blocked") {
+      console.log(`HARNESS RESULT task=${task.id} exit=4 (이미 blocked — 사람 판단 필요)`);
+      return EXIT.BLOCKED;
+    }
+    if (task.status === "done" && !customCmd) return fail(`이미 done 인 작업입니다: ${task.id}`);
+    if (task.status === "pending") {
+      const done = new Set(tracker.tasks.filter((t) => t.status === "done").map((t) => t.id));
+      const missing = (task.deps ?? []).filter((d) => !done.has(d));
+      if (missing.length > 0) return fail(`선행 작업 미완료: ${task.id} → ${missing.join(", ")}`);
+    }
+  }
+
+  const outcome = await runTask(repo, tracker, task, { customCmd });
+  console.log(outcome.message);
+  for (const line of outcome.summary.slice(0, outcome.exitCode === EXIT.BLOCKED ? 10 : undefined)) {
+    console.log(`  ${line}`);
+  }
+  return outcome.exitCode;
+}
+
+/** 테스트·selftest 가 임시 저장소를 정리할 때 쓴다. */
+export async function removeDir(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
+}

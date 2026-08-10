@@ -74,6 +74,38 @@ export async function main(argv: readonly string[]): Promise<number> {
     return EXIT.OK;
   }
 
+  const rest = argv.slice(1);
+  switch (mode) {
+    case "init":
+    case "add-task":
+    case "set-task":
+    case "next":
+    case "status":
+    case "render":
+    case "heartbeat":
+    case "run": {
+      const cli = await import("./cli.ts");
+      const flags = cli.parseFlags(rest);
+      const handlers = {
+        init: cli.cmdInit,
+        "add-task": cli.cmdAddTask,
+        "set-task": cli.cmdSetTask,
+        next: cli.cmdNext,
+        status: cli.cmdStatus,
+        render: cli.cmdRender,
+        heartbeat: cli.cmdHeartbeat,
+        run: cli.cmdRun,
+      } as const;
+      return handlers[mode](flags);
+    }
+    case "selftest": {
+      const { cmdSelftest } = await import("./core/selftest.ts");
+      return cmdSelftest();
+    }
+    default:
+      break;
+  }
+
   // 아직 이식되지 않은 모드 — 후속 작업(daemon/DESIGN.md 3절 표)에서 채운다.
   // "미구현" 을 성공으로 보고하지 않는다: 설정 오류와 같은 등급인 2 로 끝낸다.
   console.error(`[autoharness] 아직 구현되지 않은 모드입니다: ${mode}`);

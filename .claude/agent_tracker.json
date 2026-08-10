@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T02:43:28.025060+00:00",
+  "updated_at": "2026-08-10T03:27:49.105485+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -672,7 +672,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/ts-runner-20260810T024215Z.log",
-      "commit": null,
+      "commit": "527b5d5",
       "started_at": "2026-08-10T02:42:15.940137+00:00",
       "finished_at": "2026-08-10T02:43:28.025060+00:00",
       "test_cmd": null
@@ -685,13 +685,13 @@
         "ts-runner"
       ],
       "priority": 50,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/ts-selftest-20260810T032629Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T03:26:29.579166+00:00",
+      "finished_at": "2026-08-10T03:27:49.105485+00:00",
       "test_cmd": null
     },
     {
