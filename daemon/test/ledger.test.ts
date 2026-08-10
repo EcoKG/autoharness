@@ -275,3 +275,33 @@ describe("하트비트", () => {
     expect(typeof hb.pid).toBe("number");
   });
 });
+
+/**
+ * 되돌리기가 시도 횟수를 지운다는 사실을 **말해야 한다.**
+ *
+ * pending 으로 되돌리면 attempts 가 0 이 된다(v1 과 같은 규칙이라 바꾸지 않는다). 그런데
+ * attempts 야말로 "이 작업이 몇 번 실패했는가" 의 유일한 단서다. 말없이 지우면 봉인 직전이던
+ * 작업이 새 작업처럼 보이고, 사람은 같은 실패를 다시 다섯 번 겪는다.
+ */
+describe("되돌리기와 시도 횟수", () => {
+  test("지운 횟수를 결과에 담는다", () => {
+    const t = { ...newTask("t", "작업"), status: "blocked" as const, attempts: 4 };
+    const r = setTaskStatus(t, "pending");
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.attemptsCleared).toBe(4);
+    expect(t.attempts).toBe(0); // 규칙 자체는 그대로다
+  });
+
+  test("지울 것이 없으면 담지 않는다 — 없는 경고를 만들지 않는다", () => {
+    const t = { ...newTask("t", "작업"), status: "blocked" as const, attempts: 0 };
+    const r = setTaskStatus(t, "pending");
+    expect(r.ok && r.attemptsCleared).toBeUndefined();
+  });
+
+  test("blocked 로 보낼 때는 시도 횟수를 건드리지 않는다", () => {
+    const t = { ...newTask("t", "작업"), status: "failed" as const, attempts: 3 };
+    const r = setTaskStatus(t, "blocked");
+    expect(t.attempts).toBe(3);
+    expect(r.ok && r.attemptsCleared).toBeUndefined();
+  });
+});

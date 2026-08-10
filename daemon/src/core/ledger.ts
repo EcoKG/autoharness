@@ -136,6 +136,15 @@ export interface AddTaskError {
 export interface AddTaskOk {
   ok: true;
   task: Task;
+  /**
+   * pending 으로 되돌리면서 시도 횟수를 지웠는가.
+   *
+   * 되돌리기는 attempts 를 0 으로 만든다(v1 과 같은 규칙이다). 그런데 attempts 야말로
+   * "이 작업이 몇 번이나 실패했는가" 를 말해 주는 **유일한 단서**다. 말없이 지우면
+   * 봉인 직전이던 작업이 새 작업처럼 보이고, 사람은 같은 실패를 다시 다섯 번 겪는다.
+   * 규칙 자체는 계약이라 바꾸지 않는다 — 대신 지웠다는 사실을 알린다.
+   */
+  attemptsCleared?: number;
 }
 
 /**
@@ -180,8 +189,10 @@ export function setTaskStatus(task: Task, status: TaskStatus): AddTaskOk | AddTa
     };
   }
   task.status = status;
-  if (status === "pending") task.attempts = 0;
-  return { ok: true, task };
+  if (status !== "pending") return { ok: true, task };
+  const cleared = task.attempts;
+  task.attempts = 0;
+  return cleared > 0 ? { ok: true, task, attemptsCleared: cleared } : { ok: true, task };
 }
 
 const STATUS_ICON: Record<TaskStatus, string> = {

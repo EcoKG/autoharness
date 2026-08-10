@@ -388,6 +388,7 @@ async function handlePost(
     // done 은 여기서 만들 수 없다 — run 성공으로만 생긴다(장부 규칙을 웹이 우회하지 않는다)
     const r = setTaskStatus(task, status);
     if (!r.ok) return json({ error: r.reason }, 400);
+    const attemptsCleared = r.attemptsCleared ?? 0;
     if (typeof body["note"] === "string") task.last_error = body["note"];
     await saveTracker(proj.repo, tracker);
     await renderSafe(proj.repo, tracker);
@@ -401,8 +402,14 @@ async function handlePost(
         }
       }, env).catch(() => {});
     }
-    ctx.log.info(projectId, "task_state", `${taskId} → ${status} (웹 요청)`);
-    return json({ ok: true, id: taskId, status: task.status });
+    ctx.log.info(
+      projectId,
+      "task_state",
+      attemptsCleared
+        ? `${taskId} → ${status} (웹 요청, 시도 ${attemptsCleared} → 0)`
+        : `${taskId} → ${status} (웹 요청)`,
+    );
+    return json({ ok: true, id: taskId, status: task.status, attemptsCleared });
   }
 
   if (path === "/api/mcp/call") {

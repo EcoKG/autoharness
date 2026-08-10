@@ -138,6 +138,10 @@ export async function cmdSetTask(flags: Flags): Promise<number> {
     if (!isTaskStatus(status)) return fail(`알 수 없는 상태: ${status}`);
     const r = setTaskStatus(task, status);
     if (!r.ok) return fail(r.reason);
+    // 시도 횟수를 지웠으면 말한다 — 그 숫자가 "몇 번 실패했는가" 의 유일한 단서다
+    if (r.attemptsCleared) {
+      console.log(`[주의] ${task.id}: 시도 횟수 ${r.attemptsCleared} → 0 으로 초기화했습니다.`);
+    }
   }
   const note = str(flags, "note");
   if (note !== undefined) task.last_error = note;

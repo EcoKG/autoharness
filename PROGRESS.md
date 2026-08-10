@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T16:43:09.974478+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T16:48:53.817269+00:00
 
-## 현황: done 87 / 98  (in_progress 0, failed 0, blocked 1, pending 10)
+## 현황: done 88 / 98  (in_progress 0, failed 0, blocked 1, pending 9)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -55,9 +55,9 @@
 | watchdog-completed-transitions | 워치독의 completed 전이가 서로 다른 세 상태를 하나로 뭉갠다 (동일 결함 3건 확인) — 4단계가 eligible_next 가 None 이면 blocked 유무만 보고 completed 로 마감한다. ① 작업이 아직 적재되지 않은 상태(init 직후 빈 장부)도 completed 로 봉인된다. 실측: init 과 첫 task_add 사이에 틱이 한 번 돌면 프로젝트가 completed 가 되고, 이후 CLI add-task 로 작업을 넣어도 레지스트리는 completed 로 남아 워치독이 1단계에서 스킵해 헤드리스 세션을 다시는 띄우지 않는다. 로그에는 '완료 전이'로 남아 성공처럼 보인다. ② 엔진이 1급 개념으로 다루는 교착 pending(의존이 미존재·순환이라 영영 실행 불가)을 보지 않아, 실행 불가 작업이 남았는데 needs_human 이 아니라 completed 로 마감한다. 해법: 빈 장부는 completed 로 전이하지 않고, deadlocked_pending 이 있으면 needs_human 으로 전이한다. 상태 전이 규칙 변경이므로 DESIGN.md 7·10 절을 함께 갱신한다. | ✅ done | 0/5 | - | - |
 | commit-gate-scope | 커밋 게이트가 git commit 문자 그대로만 잡는다 (동일 결함 2건 확인) — invokes_git_commit 이 서브커맨드 정확 일치만 보므로, 커밋을 만드는 다른 경로(revert, merge, cherry-pick, rebase --continue, am, stash 의 내부 커밋)가 게이트를 켜지 않는다. 검증 통과 기록 없이도 이력이 늘어나고, postbash 의 sync_commit 도 돌지 않아 커밋 SHA 가 장부에 기록되지 않는다. 해법: 커밋을 생성하는 서브커맨드 집합으로 확장하되, --no-commit 류 플래그가 붙은 경우는 제외해 오탐을 막는다. 차단이 아니라 게이트 트리거 판정이므로 허용/차단 매트릭스와 함께 고정한다. | ✅ done | 0/5 | - | - |
 | fix-tick-button-truthful | 즉시 tick 이 건너뛰어졌는데도 완료라고 보고하던 것 수정 — 판단 결과를 반환값에 싣는다 | ✅ done | 0/5 | d69ecdb | - |
-| fix-asset-response-headers | 자산 응답 경로의 CSP·nosniff 누락 제거 — 헤더를 한 곳으로 모아 경로가 늘어도 새지 않게 | ✅ done | 0/5 | - | - |
+| fix-asset-response-headers | 자산 응답 경로의 CSP·nosniff 누락 제거 — 헤더를 한 곳으로 모아 경로가 늘어도 새지 않게 | ✅ done | 0/5 | 976e729 | - |
 | usage-limit-classification | 사용량 초과 분류의 오탐과 무한 반복 (동일 결함 2건 확인) — ① 패턴 중 overloaded 와 quota 가 문맥 조건 없이 맨몸으로 들어 있어, 헤드리스 자식의 통합 로그에 그 단어가 우연히 등장하면(테스트 출력·소스 인용 등) 정상 실패를 사용량 초과로 오분류한다. 429 만 문맥 조건을 갖고 있어 규칙이 비일관하다. ② limit 분기는 limit_hits 만 올리고 consecutive_errors 와 status 를 전혀 건드리지 않으며 상한도 없다 — 사용량 초과로 오분류된 상태가 지속되면 360분 간격으로 영원히 재시도하며 사람에게 신호가 가지 않는다. error 분기는 5회로 정지하는 것과 대조된다. 해법: 맨몸 패턴에도 API 오류 문맥 조건을 붙이고, limit_hits 가 일정 횟수를 넘으면 사람 확인 신호를 남긴다(영구 포기 금지 원칙은 유지하되 상태로 드러낸다). | ✅ done | 0/5 | 0962e9e | - |
-| fix-retry-attempts-warning | 재시도가 시도 횟수를 말없이 지우던 것을 화면·CLI 에서 명시 | ⏳ pending | 0/5 | - | - |
+| fix-retry-attempts-warning | 재시도가 시도 횟수를 말없이 지우던 것을 화면·CLI 에서 명시 | ✅ done | 0/5 | - | - |
 | silent-failure-cluster | 조용한 실패 3건 — ① 장부 파손이 모든 게이트를 무력화한다: load_tracker(required=False)가 파손과 부재를 같은 None 으로 뭉개, 장부가 깨지면 커밋 게이트도 Stop 게이트도 조용히 통과한다. ② render 실패가 검증 실패로 위장한다: run 의 마지막 render 호출이 예외를 던지면 검증은 통과했는데 실패로 보고된다. ③ write_heartbeat 의 광범위 except 가 쓰기 실패를 삼켜, 하트비트가 갱신되지 않는 상태를 아무도 모른다 — 워치독의 이중 기동 방지 근거가 사라진다. 해법: 부재와 파손을 구분해 파손은 드러내고, 부작용 없는 마무리 단계의 예외가 결과 판정을 뒤집지 않게 분리하며, 하트비트 쓰기 실패는 최소한 stderr 로 남긴다. | ✅ done | 0/5 | aec62d7 | - |
 | skill-routing-hardening | 라우팅 개정의 후속 빈틈 보강(적대 검증 10에이전트 실측 도출) — ① 안전: 폴백으로 도달한 init 은 훅·권한 우회·워치독을 설치하는 비가역 변경이므로 고지 후 진행(명시 요청은 종전대로), init ⓪단계에 장부 실존 확인 게이트 추가 ② 조용한 실패 차단: resume 0단계에 task_add 적재를 명시하고, 신규 요청 진입 직후 next 가 곧바로 exit 3 이면 정상 종료가 아니라 적재 누락으로 규정 ③ 대상 저장소 절대경로 확정을 resume 절에도 명시("이 프로젝트도" 요청에서 현재 cwd 장부 오독 방지) ④ 오분기 해소: resume vs resume-project 를 HARNESS_PAUSED 플래그로 분기, status 행에 진단성 질의 포함, ops 행 신설(watchdog_uninstall·model_set·task_set — "그만 돌려"가 resume 으로 뒤집히는 정반대 오분기 차단) ⑤ 원칙 3(direct) 명명 및 원칙 3→2 평가 순서 고정, 단계 수 미상 요청(버그·CI 수정)의 승격 기준, git push 훅 차단으로 배포는 검증·로컬 커밋까지라는 한계선 명시 + 회귀 테스트 확충 | ✅ done | 1/5 | - | - |
 | wiring-diagnosis-gaps | 훅 배선 진단의 사각 2건 — ① 부분 등록을 경고하지 않는다: 훅 4종 중 일부만 등록된 저장소에서 등록된 것 하나만 발화해도 active 로 보고해, 나머지 게이트가 없는 상태를 드러내지 않는다. ② 설정 파싱 실패가 미등록으로 위장한다: load_json 이 파일 부재(OSError)와 JSON 파손(ValueError)을 같은 None 으로 뭉개, settings.json 이 깨지면 '훅 미등록(수동 운용)'으로 판정해 경고 대상에서 빠진다. 실제로는 훅이 전부 죽은 상태인데 오탐 금지 규칙에 가려진다. 해법: 파일 존재 여부와 파싱 성공 여부를 분리해 파손을 별도 상태로 보고하고, 등록된 훅 종류와 기대 집합의 차이를 진단에 싣는다. | ✅ done | 0/5 | 7018836 | - |

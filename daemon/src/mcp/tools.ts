@@ -212,11 +212,13 @@ export const toolTaskSet: ToolHandler = async (a) => {
   const task = findTask(tracker, id);
   if (!task) throw new ToolError(`작업 없음: ${id}`);
 
+  let attemptsCleared = 0;
   const status = optStr(a, "status");
   if (status !== undefined) {
     if (!isTaskStatus(status)) throw new ToolError(`알 수 없는 상태: ${status}`);
     const r = setTaskStatus(task, status);
     if (!r.ok) throw new ToolError(r.reason);
+    if (r.attemptsCleared) attemptsCleared = r.attemptsCleared;
   }
   const note = optStr(a, "note");
   if (note !== undefined) task.last_error = note;
@@ -227,7 +229,7 @@ export const toolTaskSet: ToolHandler = async (a) => {
   await renderSafe(repo, tracker);
   // pending 으로 되돌린 것도 '할 일이 생김'이다 — MCP 경로에만 재활성화가 걸려 있던 비대칭을 없앤다
   const reactivated = eligibleNext(tracker) ? await reactivateRegistrySafely(repo) : false;
-  return { ok: true, id, status: task.status, reactivated };
+  return { ok: true, id, status: task.status, reactivated, attempts_cleared: attemptsCleared };
 };
 
 export const toolHarnessPause: ToolHandler = async (a) => {

@@ -337,7 +337,12 @@ export const UI_HTML = `<!doctype html>
     api("/api/tasks/" + encodeURIComponent(taskId) + "/state", {
       method: "POST",
       body: JSON.stringify({ project: selected, status: status })
-    }).then(function () { message(taskId + " → " + status, false); return loadTasks(); })
+    }).then(function (r) {
+      // 시도 횟수를 지웠으면 반드시 말한다 — 몇 번 실패했는지가 사라지기 때문이다
+      var extra = r && r.attemptsCleared ? " (시도 " + r.attemptsCleared + " → 0 초기화)" : "";
+      message(taskId + " → " + status + extra, false);
+      return loadTasks();
+    })
       .catch(function (e) { message(e.message, true); });
   }
 
