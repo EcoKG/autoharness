@@ -341,9 +341,24 @@ if [ "$DO_WATCHDOG" = "1" ]; then
     command -v crontab >/dev/null 2>&1 || { step "crontab 이 없습니다 (cron 패키지 설치 필요)."; exit 1; }
     mkdir -p "$RUNTIME/logs"
     case "$INTERVAL" in ''|*[!0-9]*) step "AUTOHARNESS_INTERVAL 은 분 단위 정수여야 합니다: $INTERVAL"; exit 1 ;; esac
-    CRON_LINE="*/$INTERVAL * * * * PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin $PY $DST/bin/harness_watchdog.py >> $RUNTIME/logs/cron.log 2>&1"
+    # cron 은 로그인 셸의 PATH 를 물려받지 않는다. 워치독이 하는 일이 claude 를 띄우는
+    # 것이므로 **claude 가 이 PATH 로 해석되지 않으면 워치독은 매 주기 헛돈다** — 등록은
+    # 성공하고 로그만 쌓이므로 조용히 실패한다.
+    # 설치 시점에는 claude 위치를 이미 알고 있다. 그것을 버리지 않고 넣는다.
+    CRON_PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
+    if [ -n "$CLAUDE_BIN" ]; then
+        CRON_PATH="$(dirname "$CLAUDE_BIN"):$CRON_PATH"
+    fi
+    CRON_LINE="*/$INTERVAL * * * * PATH=$CRON_PATH $PY $DST/bin/harness_watchdog.py >> $RUNTIME/logs/cron.log 2>&1"
     ( crontab -l 2>/dev/null | grep -v "$CRON_MARK" || true; echo "$CRON_LINE" ) | crontab -
     step "cron 워치독 등록 완료 (${INTERVAL}분 간격)"
+    # 등록했다고 도는 것은 아니다 — cron 이 쓸 PATH 로 실제 해석되는지 지금 확인한다
+    if ! env -i PATH="$CRON_PATH" sh -c 'command -v claude >/dev/null 2>&1'; then
+        step "주의: cron 의 PATH 에서 claude 를 찾지 못합니다 — 워치독이 매 주기 헛돕니다."
+        step "      claude 설치 경로를 확인한 뒤 crontab -e 로 PATH= 를 고치십시오."
+        step "      현재 cron PATH: $CRON_PATH"
+    fi
     # 설치 시각·주기를 레지스트리에 기록 — watchdog_status 의 유예 판정 기준(오탐 방지).
     # 실패해도 설치를 중단하지 않는다.
     if [ -f "$DST/bin/harness_mcp.py" ]; then

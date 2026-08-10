@@ -177,6 +177,33 @@ class PathGuidanceTest(unittest.TestCase):
         self.assertIn("PATH 에 이미 있습니다", self.src)
 
 
+class CronWatchdogPathTest(unittest.TestCase):
+    """cron 워치독의 PATH — 등록 성공이 곧 동작은 아니다.
+
+    워치독이 하는 일은 claude 를 띄우는 것이다. cron 은 로그인 셸의 PATH 를 물려받지 않으므로,
+    박아 넣은 PATH 로 claude 가 해석되지 않으면 워치독은 매 주기 헛돈다 — 등록은 성공하고
+    로그만 쌓이므로 **조용히** 실패한다. 설치 시점에는 claude 위치를 이미 알고 있는데
+    종전에는 그 값을 버리고 고정 PATH 만 박았다.
+    """
+
+    def setUp(self):
+        self.src = read(INSTALL_SH)
+
+    def test_claude_location_is_reused(self):
+        self.assertIn("CLAUDE_BIN=", self.src, "설치 시점에 찾은 claude 경로를 쓰지 않습니다")
+        self.assertRegex(self.src, r'dirname "\$CLAUDE_BIN"')
+
+    def test_registration_is_verified_not_assumed(self):
+        # 등록 뒤 그 PATH 로 실제 해석되는지 확인해야 조용한 실패를 잡는다
+        self.assertIn('env -i PATH="$CRON_PATH"', self.src)
+        self.assertIn("claude 를 찾지 못합니다", self.src)
+
+    def test_warning_tells_how_to_fix(self):
+        idx = self.src.index("claude 를 찾지 못합니다")
+        tail = self.src[idx:idx + 400]
+        self.assertIn("crontab -e", tail, "고치는 방법이 안내되지 않았습니다")
+
+
 class UpdateBlockedGuidanceTest(unittest.TestCase):
     """갱신이 잠금으로 막혔을 때 — 원문만 남기지 않고 조치를 말한다.
 
