@@ -207,3 +207,40 @@ describe("토큰 파일 위치 안내", () => {
     expect(UI_HTML).not.toContain(userPaths(process.env).webToken);
   });
 });
+
+/**
+ * 작업 행 펼치기 — 원인이 이미 와 있는데 버리고 있었다.
+ *
+ * /api/projects/:id/tasks 는 tracker.tasks 를 통째로 준다. 즉 last_error·last_log_file·
+ * deps·test_cmd 가 전부 브라우저까지 도착해 있는데, 표는 id·상태·시도·커밋만 그리고
+ * 나머지를 버렸다. "왜 실패했나" 를 보려면 화면을 떠나 로그 파일을 직접 열어야 했다.
+ */
+describe("작업 상세", () => {
+  test("상세를 그리는 코드가 있다", () => {
+    expect(UI_HTML).toContain("toggleDetail");
+    expect(UI_HTML).toContain("마지막 오류");
+    expect(UI_HTML).toContain("의존");
+  });
+
+  test("값은 textContent 로만 넣는다 — 오류 문자열이 마크업이 되지 않게", () => {
+    // 상세는 장부 문자열을 그대로 그린다. innerHTML 이 한 군데라도 있으면 그 자체가 결함이다
+    expect(UI_HTML).not.toContain("innerHTML");
+  });
+
+  test("시도는 한도와 함께 보여 준다", () => {
+    expect(UI_HTML).toContain("maxAttempts");
+    expect(UI_HTML).toContain("다음 실패에 봉인됩니다");
+  });
+
+  test("되돌리기 버튼이 시도 횟수 초기화를 미리 알린다", () => {
+    expect(UI_HTML).toContain("0 으로 초기화됩니다");
+  });
+
+  test("API 가 max_attempts 를 함께 준다 — 없으면 화면이 한도를 알 수 없다", async () => {
+    const r = await fetch(`${base}/api/projects/${encodeURIComponent(UNIQUE_ID)}/tasks`, {
+      headers: { authorization: `Bearer ${server.token}` },
+    });
+    const body = (await r.json()) as { max_attempts?: number };
+    expect(typeof body.max_attempts).toBe("number");
+  });
+});

@@ -289,7 +289,14 @@ async function handleGet(
     if (!proj) return json({ error: `프로젝트 없음: ${id}` }, 404);
     const { state, tracker, error } = await loadTracker(proj.repo);
     if (!tracker) return json({ error: `장부를 읽을 수 없습니다(${state}): ${error ?? ""}` }, 409);
-    return json({ id, repo: proj.repo, counts: statusCounts(tracker), tasks: tracker.tasks });
+    // max_attempts 는 작업이 아니라 장부의 값이다 — 함께 주지 않으면 화면이 "4/?" 밖에 못 쓴다
+    return json({
+      id,
+      repo: proj.repo,
+      counts: statusCounts(tracker),
+      max_attempts: tracker.max_attempts,
+      tasks: tracker.tasks,
+    });
   }
 
   const sessions = /^\/api\/projects\/([^/]+)\/sessions$/.exec(path);

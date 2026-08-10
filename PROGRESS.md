@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T16:48:53.817269+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T16:53:11.799127+00:00
 
-## 현황: done 88 / 98  (in_progress 0, failed 0, blocked 1, pending 9)
+## 현황: done 89 / 98  (in_progress 0, failed 0, blocked 1, pending 8)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -57,7 +57,7 @@
 | fix-tick-button-truthful | 즉시 tick 이 건너뛰어졌는데도 완료라고 보고하던 것 수정 — 판단 결과를 반환값에 싣는다 | ✅ done | 0/5 | d69ecdb | - |
 | fix-asset-response-headers | 자산 응답 경로의 CSP·nosniff 누락 제거 — 헤더를 한 곳으로 모아 경로가 늘어도 새지 않게 | ✅ done | 0/5 | 976e729 | - |
 | usage-limit-classification | 사용량 초과 분류의 오탐과 무한 반복 (동일 결함 2건 확인) — ① 패턴 중 overloaded 와 quota 가 문맥 조건 없이 맨몸으로 들어 있어, 헤드리스 자식의 통합 로그에 그 단어가 우연히 등장하면(테스트 출력·소스 인용 등) 정상 실패를 사용량 초과로 오분류한다. 429 만 문맥 조건을 갖고 있어 규칙이 비일관하다. ② limit 분기는 limit_hits 만 올리고 consecutive_errors 와 status 를 전혀 건드리지 않으며 상한도 없다 — 사용량 초과로 오분류된 상태가 지속되면 360분 간격으로 영원히 재시도하며 사람에게 신호가 가지 않는다. error 분기는 5회로 정지하는 것과 대조된다. 해법: 맨몸 패턴에도 API 오류 문맥 조건을 붙이고, limit_hits 가 일정 횟수를 넘으면 사람 확인 신호를 남긴다(영구 포기 금지 원칙은 유지하되 상태로 드러낸다). | ✅ done | 0/5 | 0962e9e | - |
-| fix-retry-attempts-warning | 재시도가 시도 횟수를 말없이 지우던 것을 화면·CLI 에서 명시 | ✅ done | 0/5 | - | - |
+| fix-retry-attempts-warning | 재시도가 시도 횟수를 말없이 지우던 것을 화면·CLI 에서 명시 | ✅ done | 0/5 | 6a3d304 | - |
 | silent-failure-cluster | 조용한 실패 3건 — ① 장부 파손이 모든 게이트를 무력화한다: load_tracker(required=False)가 파손과 부재를 같은 None 으로 뭉개, 장부가 깨지면 커밋 게이트도 Stop 게이트도 조용히 통과한다. ② render 실패가 검증 실패로 위장한다: run 의 마지막 render 호출이 예외를 던지면 검증은 통과했는데 실패로 보고된다. ③ write_heartbeat 의 광범위 except 가 쓰기 실패를 삼켜, 하트비트가 갱신되지 않는 상태를 아무도 모른다 — 워치독의 이중 기동 방지 근거가 사라진다. 해법: 부재와 파손을 구분해 파손은 드러내고, 부작용 없는 마무리 단계의 예외가 결과 판정을 뒤집지 않게 분리하며, 하트비트 쓰기 실패는 최소한 stderr 로 남긴다. | ✅ done | 0/5 | aec62d7 | - |
 | skill-routing-hardening | 라우팅 개정의 후속 빈틈 보강(적대 검증 10에이전트 실측 도출) — ① 안전: 폴백으로 도달한 init 은 훅·권한 우회·워치독을 설치하는 비가역 변경이므로 고지 후 진행(명시 요청은 종전대로), init ⓪단계에 장부 실존 확인 게이트 추가 ② 조용한 실패 차단: resume 0단계에 task_add 적재를 명시하고, 신규 요청 진입 직후 next 가 곧바로 exit 3 이면 정상 종료가 아니라 적재 누락으로 규정 ③ 대상 저장소 절대경로 확정을 resume 절에도 명시("이 프로젝트도" 요청에서 현재 cwd 장부 오독 방지) ④ 오분기 해소: resume vs resume-project 를 HARNESS_PAUSED 플래그로 분기, status 행에 진단성 질의 포함, ops 행 신설(watchdog_uninstall·model_set·task_set — "그만 돌려"가 resume 으로 뒤집히는 정반대 오분기 차단) ⑤ 원칙 3(direct) 명명 및 원칙 3→2 평가 순서 고정, 단계 수 미상 요청(버그·CI 수정)의 승격 기준, git push 훅 차단으로 배포는 검증·로컬 커밋까지라는 한계선 명시 + 회귀 테스트 확충 | ✅ done | 1/5 | - | - |
 | wiring-diagnosis-gaps | 훅 배선 진단의 사각 2건 — ① 부분 등록을 경고하지 않는다: 훅 4종 중 일부만 등록된 저장소에서 등록된 것 하나만 발화해도 active 로 보고해, 나머지 게이트가 없는 상태를 드러내지 않는다. ② 설정 파싱 실패가 미등록으로 위장한다: load_json 이 파일 부재(OSError)와 JSON 파손(ValueError)을 같은 None 으로 뭉개, settings.json 이 깨지면 '훅 미등록(수동 운용)'으로 판정해 경고 대상에서 빠진다. 실제로는 훅이 전부 죽은 상태인데 오탐 금지 규칙에 가려진다. 해법: 파일 존재 여부와 파싱 성공 여부를 분리해 파손을 별도 상태로 보고하고, 등록된 훅 종류와 기대 집합의 차이를 진단에 싣는다. | ✅ done | 0/5 | 7018836 | - |
@@ -68,7 +68,7 @@
 | hook-matcher-coverage | 훅 matcher 커버리지 구멍 차단 — PreToolUse/PostToolUse 가 Bash 도구에만 걸려 다른 명령 실행 도구로는 게이트가 통째로 우회된다. 실측 증거: 이 세션에서 Bash 경로의 원격 반영은 차단됐으나 PowerShell 경로는 무검사로 통과했고, 같은 구멍으로 커밋 게이트도 함께 무력화된다. 원인: harness_mcp.py 의 HOOK_DEFS 가 matcher 를 문자열 "Bash" 로 고정한다. 해결: ① 공식 문서상 matcher 는 정규식·구분자 목록을 지원하므로 "Bash|PowerShell" 로 확대 ② 이미 설치된 저장소는 matcher 가 Bash 인 채로 남으므로 merge_settings 가 기존 하네스 훅 항목의 matcher 를 감지해 갱신하도록 하고, 갱신 시 기존 파일을 백업할 것 ③ 중복 추가 방지 로직이 지금은 이벤트 전체를 json.dumps 해서 harness_engine.py 포함 여부만 보는데, 이 방식은 matcher 가 달라도 같은 것으로 취급해 갱신을 건너뛴다 — 항목 단위로 판정하도록 정밀화 ④ 훅 배선 감지(hook_wiring_status)도 matcher 범위를 함께 보고해 부분 커버리지 상태를 드러낼 것 ⑤ 확대·마이그레이션·중복 방지 경계를 tests/ 회귀로 고정. | ✅ done | 0/5 | c0b67f3 | - |
 | refresh-loop-engine-routing | 주행용 엔진 사본 재갱신 — build_parser() 추출이 반영된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작 확인(개발 원본과 주행 사본의 드리프트 해소) | ✅ done | 0/5 | - | - |
 | ts-ledger | G2 엔진: 장부(진실 원천) 구현 — init/add-task/set-task/next/render/status/brief/heartbeat/sync-commit. 선택 규칙은 v1 그대로: in_progress → attempts<max 인 failed → deps 전부 done 인 pending, 각 그룹 내 priority 낮은 순 그다음 id 순. add-task 는 자기·순환·미존재 의존을 거부(exit 2). 교착 pending(의존이 미존재·blocked·순환)은 next/brief/status 가 deadlocked 로 구분 보고하되 종료 코드 계약은 유지(next 는 0/3). set-task 는 pending/blocked 만 허용 — done 은 run 성공으로만 생긴다. PROGRESS.md 렌더는 장부 파생물이며 렌더 실패가 결과 판정을 뒤집지 않게 격리한다. | ✅ done | 0/5 | 0353f27 | - |
-| web-task-row-expand | 작업 행 펼치기 — 실패 원인·의존 상태·로그 경로. 이미 브라우저에 온 데이터를 버리고 있었다 | ⏳ pending | 0/5 | - | - |
+| web-task-row-expand | 작업 행 펼치기 — 실패 원인·의존 상태·로그 경로. 이미 브라우저에 온 데이터를 버리고 있었다 | ✅ done | 0/5 | - | - |
 | web-hook-wiring-card | 훅 배선 카드 — 훅이 죽었는데 주행이 정상처럼 보이던 v1 의 실패 유형을 화면에서 잡는다 | ⏳ pending | 0/5 | - | - |
 | web-blocked-summary | 막힌 곳 요약 — blocked·한도 임박·교착을 사유와 함께. 판정은 서버가 하고 화면은 그리기만 | ⏳ pending | 0/5 | - | - |
 | web-console-filter | 콘솔 필터·검색·고정 — 저장소가 여럿이면 지금은 읽을 수 없다 | ⏳ pending | 0/5 | - | - |

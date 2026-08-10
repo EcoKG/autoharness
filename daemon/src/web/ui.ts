@@ -145,6 +145,8 @@ export const UI_HTML = `<!doctype html>
   var selected = null;
   var socket = null;
   var state = { projects: [] };
+  var maxAttempts = 0;
+  var lastTasks = [];
 
   var $ = function (id) { return document.getElementById(id); };
   function setText(el, text) { el.textContent = text == null ? "" : String(text); }
@@ -237,7 +239,55 @@ export const UI_HTML = `<!doctype html>
     }
   }
 
+  /**
+   * 작업 상세 — **원인까지 클릭 한 번.**
+   *
+   * last_error·last_log_file·deps·test_cmd 는 이미 /api/projects/:id/tasks 응답에 실려
+   * 브라우저까지 와 있었는데 표가 id·상태·시도·커밋만 그리고 나머지를 버렸다. 그래서
+   * "왜 실패했나" 를 보려면 화면을 떠나 로그 파일을 직접 열어야 했다.
+   */
+  function toggleDetail(task, row) {
+    var next = row.nextSibling;
+    if (next && next.getAttribute && next.getAttribute("data-detail") === task.id) {
+      next.remove();
+      return;
+    }
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-detail", task.id);
+    var td = document.createElement("td");
+    td.colSpan = 5;
+
+    function part(label, value, mono) {
+      if (!value) return;
+      var p = document.createElement("p");
+      p.className = "muted";
+      p.style.margin = "4px 0";
+      var b = document.createElement("strong");
+      setText(b, label + ": ");
+      var v = document.createElement("span");
+      if (mono) v.className = "mono";
+      v.style.whiteSpace = "pre-wrap";
+      setText(v, value);
+      p.append(b, v);
+      td.append(p);
+    }
+
+    if (task.deps && task.deps.length) {
+      // 의존은 이름만으로는 쓸모가 적다 — 그 작업이 지금 어떤 상태인지가 알고 싶은 것이다
+      part("의존", task.deps.map(function (d) {
+        var dep = lastTasks.filter(function (x) { return x.id === d; })[0];
+        return d + "(" + (dep ? dep.status : "장부에 없음") + ")";
+      }).join(", "));
+    }
+    part("전용 검증", task.test_cmd, true);
+    part("로그", task.last_log_file, true);
+    part("마지막 오류", task.last_error, true);
+    tr.append(td);
+    row.parentNode.insertBefore(tr, row.nextSibling);
+  }
+
   function renderTasks(tasks) {
+    lastTasks = tasks;
     var body = $("tasks");
     body.replaceChildren();
     $("notasks").hidden = tasks.length > 0;
@@ -253,7 +303,13 @@ export const UI_HTML = `<!doctype html>
       var st = document.createElement("td");
       st.append(badge(t.status, t.status === "done" ? "active" : t.status));
       tr.append(st);
-      tr.append(cell(String(t.attempts)));
+      // 한도가 코앞이면 그 사실이 보여야 한다 — "4" 와 "4/5" 는 다른 정보다
+      var attemptsCell = cell(maxAttempts ? t.attempts + "/" + maxAttempts : String(t.attempts));
+      if (maxAttempts && t.attempts >= maxAttempts - 1 && t.status !== "done") {
+        attemptsCell.className = "err";
+        attemptsCell.title = "다음 실패에 봉인됩니다";
+      }
+      tr.append(attemptsCell);
       tr.append(cell(t.commit || "-", "mono"));
 
       var act = document.createElement("td");
@@ -261,8 +317,18 @@ export const UI_HTML = `<!doctype html>
       var target = t.status === "blocked" ? "pending" : "blocked";
       var btn = document.createElement("button");
       setText(btn, target === "pending" ? "다시 pending" : "blocked 로");
+      if (target === "pending" && t.attempts > 0) {
+        btn.title = "시도 횟수 " + t.attempts + " 이 0 으로 초기화됩니다";
+      }
       btn.addEventListener("click", function () { setTaskState(t.id, target); });
       act.append(btn);
+      // 실패 원인은 이미 브라우저에 와 있다 — 펼쳐서 보여 준다
+      if (t.last_error || (t.deps && t.deps.length) || t.last_log_file || t.test_cmd) {
+        var more = document.createElement("button");
+        setText(more, "자세히");
+        more.addEventListener("click", function () { toggleDetail(t, tr); });
+        act.append(more);
+      }
       tr.append(act);
 
       var title = document.createElement("tr");
@@ -295,7 +361,7 @@ export const UI_HTML = `<!doctype html>
 
   function loadTasks() {
     return api("/api/projects/" + encodeURIComponent(selected) + "/tasks")
-      .then(function (r) { renderTasks(r.tasks || []); })
+      .then(function (r) { maxAttempts = r.max_attempts || 0; renderTasks(r.tasks || []); })
       .catch(function (e) { renderTasks([]); message(e.message, true); });
   }
 
