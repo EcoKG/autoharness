@@ -28,6 +28,7 @@ import {
 } from "./console.ts";
 import { HANDLERS, ToolError, type ToolArgs } from "../mcp/tools.ts";
 import { bearerToken, ensureToken, tokenMatches } from "./token.ts";
+import { STATIC_ASSETS } from "./ui.ts";
 
 /** 오직 loopback. 이 상수를 설정으로 빼지 않는 것이 설계다. */
 export const BIND_HOST = "127.0.0.1";
@@ -144,6 +145,26 @@ export async function createWebServer(ctx: WebContext, port = 0): Promise<WebSer
         if (!tokenMatches(token, websocketToken(req, url))) return unauthorized();
         const upgraded = srv.upgrade(req, { data: { client: null } });
         return upgraded ? undefined : json({ error: "업그레이드 실패" }, 400);
+      }
+
+      // UI 문서 자체는 토큰 이전에 준다 — 토큰을 입력할 화면이 토큰을 요구하면 들어갈 수가 없다.
+      // 이 페이지는 정적 자원일 뿐이고, 데이터는 전부 인증된 API 로만 나간다.
+      const assets = ctx.staticAssets ?? STATIC_ASSETS;
+      if (req.method === "GET") {
+        const asset = assets[url.pathname === "/" ? "/index.html" : url.pathname];
+        if (asset) {
+          return new Response(asset.body, {
+            headers: {
+              "content-type": asset.type,
+              "cache-control": "no-store",
+              "x-content-type-options": "nosniff",
+              // 외부 자원을 전혀 불러오지 않는 페이지다 — CSP 로 그 사실을 못 박는다
+              "content-security-policy":
+                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                + "connect-src 'self'; img-src 'self' data:; form-action 'none'; frame-ancestors 'none'",
+            },
+          });
+        }
       }
 
       if (!tokenMatches(token, bearerToken(req.headers))) return unauthorized();

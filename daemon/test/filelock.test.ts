@@ -153,16 +153,29 @@ describe("레지스트리가 잠금을 쓴다", () => {
  * 저장 직전 재읽기도 소용없기 때문이다.
  */
 describe("프로세스 간 동시 쓰기", () => {
+  /**
+   * 실제 호출자처럼 행동한다: 잠금 대기가 상한을 넘으면 **다시 시도한다**.
+   * 시끄러운 실패(LockTimeout)는 설계된 동작이므로 그것을 실패로 세면 안 되고, 반대로
+   * 그 때문에 갱신을 포기해도 안 된다. 잠금이 깨졌다면 여기서 갱신이 사라져 테스트가 죽는다.
+   */
   const WRITER = `
 const home = process.argv[2];
 const id = process.argv[3];
 process.env.AUTOHARNESS_HOME = home;
 const { mutateRegistry, upsertProject } = await import(process.argv[4]);
 for (let i = 0; i < 5; i++) {
-  await mutateRegistry((reg) => {
-    upsertProject(reg, { id: id + "-" + i, repo: home + "/" + id + "-" + i,
-                         model: "claude-opus-5", permissionArgs: [] });
-  }, process.env);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await mutateRegistry((reg) => {
+        upsertProject(reg, { id: id + "-" + i, repo: home + "/" + id + "-" + i,
+                             model: "claude-opus-5", permissionArgs: [] });
+      }, process.env);
+      break;
+    } catch (err) {
+      if (attempt >= 20 || !String(err).includes("잠금")) throw err;
+      await Bun.sleep(20 + attempt * 10);
+    }
+  }
 }
 `;
 
