@@ -19,6 +19,13 @@ import { userPaths } from "../core/paths.ts";
 import { findProject, loadRegistryChecked, mutateRegistry } from "../core/registry.ts";
 import { isTaskStatus, nowIso } from "../core/schema.ts";
 import type { ConsoleLog } from "../daemon/log.ts";
+import {
+  BACKLOG_LINES,
+  ConsoleClient,
+  ConsoleHub,
+  READ_ONLY_NOTICE,
+  backlogMessages,
+} from "./console.ts";
 import { HANDLERS, ToolError, type ToolArgs } from "../mcp/tools.ts";
 import { bearerToken, ensureToken, tokenMatches } from "./token.ts";
 
@@ -97,19 +104,48 @@ async function projectSummary(env: NodeJS.ProcessEnv) {
   return { registry_state: reg.state, last_tick: reg.registry.last_tick ?? null, projects };
 }
 
+/**
+ * WebSocket 은 브라우저에서 임의 헤더를 붙일 수 없다. 그래서 토큰을 두 경로로 받는다:
+ *   ① `Sec-WebSocket-Protocol: autoharness.bearer.<token>` — 권장. URL 에 남지 않는다.
+ *   ② `?token=` 질의 문자열 — 폴백(로그·히스토리에 남을 수 있어 차선이다).
+ */
+export function websocketToken(req: Request, url: URL): string | null {
+  const proto = req.headers.get("sec-websocket-protocol");
+  if (proto) {
+    for (const part of proto.split(",")) {
+      const m = /^autoharness\.bearer\.(.+)$/.exec(part.trim());
+      if (m) return m[1]!;
+    }
+  }
+  return url.searchParams.get("token");
+}
+
+export const WS_SUBPROTOCOL_PREFIX = "autoharness.bearer.";
+export const CONSOLE_PATH = "/ws/console";
+
 export async function createWebServer(ctx: WebContext, port = 0): Promise<WebServerHandle> {
   const env = ctx.env ?? process.env;
   const token = await ensureToken(env);
   const paths = userPaths(env);
+  const hub = new ConsoleHub();
+  const unsubscribe = ctx.log.subscribe((record) => hub.broadcast(record));
 
-  const server = Bun.serve({
+  const server = Bun.serve<{ client: ConsoleClient | null }, never>({
     port,
     hostname: BIND_HOST, // 외부 인터페이스 바인드 옵션은 만들지 않는다
-    async fetch(req) {
+    async fetch(req, srv) {
       const url = new URL(req.url);
       if (!hostAllowed(req.headers.get("host"))) {
         return json({ error: "허용되지 않은 Host 입니다." }, 403);
       }
+
+      if (url.pathname === CONSOLE_PATH) {
+        // WS 도 토큰을 거친다 — 인증 없는 스트림은 로그 유출 경로다
+        if (!tokenMatches(token, websocketToken(req, url))) return unauthorized();
+        const upgraded = srv.upgrade(req, { data: { client: null } });
+        return upgraded ? undefined : json({ error: "업그레이드 실패" }, 400);
+      }
+
       if (!tokenMatches(token, bearerToken(req.headers))) return unauthorized();
 
       const path = url.pathname;
@@ -125,6 +161,27 @@ export async function createWebServer(ctx: WebContext, port = 0): Promise<WebSer
         ctx.log.error("-", "web", `요청 처리 중 예외 ${method} ${path}: ${String(err)}`);
         return json({ error: "서버 내부 오류" }, 500);
       }
+    },
+    websocket: {
+      open(ws) {
+        const client = new ConsoleClient(ws);
+        ws.data.client = client;
+        hub.add(client);
+        for (const message of backlogMessages(ctx.log.recent(BACKLOG_LINES))) ws.send(message);
+        ctx.log.debug("-", "web", `콘솔 구독 연결 (총 ${hub.size}개)`);
+      },
+      message(ws) {
+        // 구독은 읽기 전용이다 — 소켓으로는 아무것도 실행되지 않는다
+        ws.send(READ_ONLY_NOTICE);
+      },
+      close(ws) {
+        const client = ws.data.client;
+        if (client) {
+          client.notifyDropsIfAny();
+          hub.remove(client);
+        }
+        ctx.log.debug("-", "web", `콘솔 구독 해제 (남은 ${hub.size}개)`);
+      },
     },
   });
 
@@ -143,6 +200,8 @@ export async function createWebServer(ctx: WebContext, port = 0): Promise<WebSer
     port: server.port!,
     token,
     stop: async () => {
+      unsubscribe();
+      hub.closeAll();
       server.stop(true);
       await rm(paths.daemonInfo, { force: true });
     },
