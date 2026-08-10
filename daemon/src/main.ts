@@ -8,6 +8,7 @@
  */
 
 import { EXIT } from "./exit.ts";
+import { VERSION } from "./version.ts";
 
 export { EXIT };
 
@@ -40,7 +41,8 @@ export function isMode(value: string | undefined): value is Mode {
   return value !== undefined && (MODES as readonly string[]).includes(value);
 }
 
-export const VERSION = "2.0.0-dev";
+// 버전은 src/version.ts 하나가 정한다 — 재수출로 기존 사용처를 그대로 둔다
+export { VERSION } from "./version.ts";
 
 function usage(): string {
   return [

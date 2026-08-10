@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { userPaths } from "../src/core/paths.ts";
+import { VERSION } from "../src/version.ts";
 import {
   STARTUP_LAUNCHER,
   TASK_NAME,
@@ -366,7 +367,7 @@ describe("승격 없는 자동 시작 폴백", () => {
  */
 describe("원본 검증 — 런타임을 설치하고 성공이라 하지 않는다", () => {
   /** version 에 우리 형식으로 답하는 원본(정상). */
-  const goodRunner = recorder({ stdout: "2.0.0-dev\n" });
+  const goodRunner = recorder({ stdout: `${VERSION}\n` });
   /** bun.exe 를 복사했을 때 실제로 나오는 응답. */
   const bunRunner = recorder({ code: 1, stderr: 'error: Script not found "version"' });
 
@@ -379,7 +380,7 @@ describe("원본 검증 — 런타임을 설치하고 성공이라 하지 않는
   test("버전에 제대로 답하면 우리 것으로 본다", async () => {
     const r = await looksLikeOurExe(await candidate(), goodRunner);
     expect(r.ok).toBe(true);
-    expect(r.detail).toContain("2.0.0-dev");
+    expect(r.detail).toContain(VERSION);
   });
 
   test("런타임을 복사한 경우를 잡아낸다", async () => {
@@ -429,7 +430,7 @@ describe("원본 검증 — 런타임을 설치하고 성공이라 하지 않는
 
 describe("설치", () => {
   /** 정상 원본처럼 굴게 하려면 version 응답이 필요하다. */
-  const okRunner = () => recorder({ stdout: "2.0.0-dev\n" });
+  const okRunner = () => recorder({ stdout: `${VERSION}\n` });
 
   async function fakeExe(): Promise<string> {
     const p = join(work, "autoharness.exe");
@@ -544,8 +545,8 @@ describe("상태 조회", () => {
   test("설치 후에는 그것이 드러난다", async () => {
     const src = join(work, "autoharness.exe");
     await writeFile(src, "x", "utf8");
-    await install({ sourceExe: src, env, runner: recorder({ stdout: "2.0.0-dev" }), platform: "win32" });
-    const s = await installStatus({ env, runner: recorder({ stdout: "2.0.0-dev" }), platform: "win32" });
+    await install({ sourceExe: src, env, runner: recorder({ stdout: VERSION }), platform: "win32" });
+    const s = await installStatus({ env, runner: recorder({ stdout: VERSION }), platform: "win32" });
     expect(s.exe_installed).toBe(true);
     expect(s.autostart.registered).toBe(true);
   });

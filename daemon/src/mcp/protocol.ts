@@ -9,9 +9,11 @@
 import { callToolWithFallback } from "./delegate.ts";
 import { HANDLERS, ToolError, type ToolArgs } from "./tools.ts";
 import { TOOLS } from "./schemas.ts";
+import { VERSION } from "../version.ts";
 
 export const SERVER_NAME = "autoharness";
-export const SERVER_VERSION = "2.0.0-dev";
+/** MCP 가 보고하는 버전 — 실행 파일 버전과 갈라지면 안 되므로 같은 출처를 쓴다. */
+export const SERVER_VERSION = VERSION;
 export const PROTOCOL_DEFAULT = "2024-11-05";
 
 export const METHOD_NOT_FOUND = -32601;

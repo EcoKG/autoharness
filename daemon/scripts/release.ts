@@ -15,7 +15,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { VERSION } from "../src/main.ts";
+import { VERSION } from "../src/version.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const OUT_DIR = join(ROOT, "dist", "release");

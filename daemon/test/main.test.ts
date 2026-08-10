@@ -78,7 +78,27 @@ describe("디스패치", () => {
     }
   });
 
-  test("버전 문자열이 비어 있지 않다", () => {
-    expect(VERSION.length).toBeGreaterThan(0);
+  /**
+   * 버전은 한 곳에서만 정해진다(src/version.ts).
+   *
+   * 여기가 갈라지면 조용히 틀린다: 설치기의 원본 검증은 `<exe> version` 출력이 semver 로
+   * 보이는지로 우리 것을 판별하고, MCP 는 serverInfo 로 버전을 보고하며, 릴리스 스크립트는
+   * package.json 이 아니라 코드의 VERSION 으로 태그 이름을 만든다. 셋이 어긋나면
+   * "릴리스 태그는 2.0.0 인데 바이너리는 2.0.0-dev 라고 답하는" 상태가 된다.
+   */
+  test("버전이 semver 형식이다 — 설치기의 원본 검증이 이 형식에 걸려 있다", () => {
+    expect(VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
+  });
+
+  test("package.json 과 코드의 버전이 같다", async () => {
+    const pkg = JSON.parse(
+      await readFile(join(import.meta.dir, "..", "package.json"), "utf8"),
+    ) as { version?: string };
+    expect(pkg.version).toBe(VERSION);
+  });
+
+  test("MCP 가 보고하는 버전이 실행 파일 버전과 같다", async () => {
+    const { SERVER_VERSION } = await import("../src/mcp/protocol.ts");
+    expect(SERVER_VERSION).toBe(VERSION);
   });
 });
