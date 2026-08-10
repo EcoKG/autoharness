@@ -125,6 +125,21 @@ async function copyTree(src: string, dst: string): Promise<number> {
 }
 
 /**
+ * MCP 등록 성공 문구.
+ *
+ * "등록했습니다" 는 **눈앞의 세션에서는 아직 참이 아니다.** 등록은 설정 파일에 쓰이고
+ * 도구는 다음에 시작하는 세션부터 로드된다. 그래서 열어 둔 세션으로 돌아간 사용자는
+ * 도구도 스킬도 찾지 못하고 설치가 실패했다고 읽는다 — rc 파일에 PATH 를 넣고 바로
+ * command not found 를 보는 것과 정확히 같은 부류다.
+ *
+ * v1 설치기 둘(install.ps1·install.sh)에는 이 안내가 있는데 v2 에만 없었다. v2 원라인은
+ * 설치 함수 끝에서 그대로 종료하므로 공용 마무리 안내에 닿지도 않는다.
+ */
+export const MCP_REGISTERED_DETAIL =
+  "사용자 스코프에 autoharness 를 등록했습니다. " +
+  "도구는 새로 시작하는 Claude Code 세션부터 보입니다 — 열려 있는 세션은 재시작하십시오.";
+
+/**
  * 붙여넣으면 **그대로 실행되는** 명령 문자열로 만든다.
  *
  * 종전에는 수동 등록 안내가 첫 토큰(`claude`)을 잘라 냈다. 안내가 "claude CLI 를 찾지
@@ -228,7 +243,7 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
       const r = await exec(mcpArgs);
       steps.push(
         r.code === 0
-          ? step("mcp", "ok", "사용자 스코프에 autoharness 를 등록했습니다.")
+          ? step("mcp", "ok", MCP_REGISTERED_DETAIL)
           : step("mcp", "failed", `등록 실패(exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 200)}`),
       );
     } catch (err) {

@@ -198,6 +198,11 @@ install_v2() {
     }
 
     step ""
+    # v2 는 여기서 종료하므로 아래 공용 마무리 안내(SUMMARY)에 닿지 않는다 — 그래서
+    # "다음에 무엇을 하라" 를 여기서 직접 말한다. 종전에는 v1 만 이 안내를 받았다.
+    step "다음: 새 Claude Code 세션을 열고 대상 저장소에서 /autoharness 로 시작하십시오."
+    step "      (MCP 도구와 스킬은 새로 시작하는 세션부터 보입니다 — 열려 있는 세션은 재시작)"
+    step ""
     step "확인:  $exe install --status"
     step "       $exe selftest"
 

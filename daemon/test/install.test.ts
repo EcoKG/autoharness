@@ -35,6 +35,7 @@ import {
   installStatus,
   installedExePath,
   looksLikeOurExe,
+  MCP_REGISTERED_DETAIL,
   shellCommand,
   uninstall,
   updateBlockedHint,
@@ -621,6 +622,33 @@ describe("안내 명령 — 그대로 붙여넣어 실행된다", () => {
     const mcpStep = dry.steps.find((s) => s.name === "mcp");
     // dry-run 문구는 "(dry-run) " 접두 뒤에 명령이 온다 — 그 명령이 claude 로 시작해야 한다
     expect(mcpStep?.detail).toContain("claude mcp add --scope user autoharness --");
+    await rm(src, { recursive: true, force: true });
+  });
+});
+
+/**
+ * "등록했습니다" 는 눈앞의 세션에서는 아직 참이 아니다 — 그 사실을 말해야 한다.
+ *
+ * 실측 결함: 등록 성공 문구가 완료형으로 끝나서, 열어 둔 세션으로 돌아간 사용자가 도구도
+ * 스킬도 찾지 못하고 설치 실패로 읽었다. v1 설치기 둘에는 이 안내가 있는데 v2 에만 없었고,
+ * v2 원라인은 설치 함수 끝에서 종료해 공용 마무리 안내에 닿지도 않는다.
+ */
+describe("MCP 등록 안내 — 언제부터 보이는지 말한다", () => {
+  test("성공 문구가 새 세션부터임을 밝힌다", () => {
+    expect(MCP_REGISTERED_DETAIL).toContain("새로 시작하는");
+    expect(MCP_REGISTERED_DETAIL).toContain("재시작");
+  });
+
+  test("실제 설치 결과에도 그 문구가 실린다", async () => {
+    const src = await mkdtemp(join(tmpdir(), "ah-mcpnotice-"));
+    const exe = join(src, "autoharness.exe");
+    await writeFile(exe, "x", "utf8");
+    const r = await install({
+      sourceExe: exe, env, runner: recorder({ stdout: VERSION }), platform: "win32",
+    });
+    const mcp = r.steps.find((s) => s.name === "mcp");
+    expect(mcp?.state).toBe("ok");
+    expect(mcp?.detail).toContain("새로 시작하는");
     await rm(src, { recursive: true, force: true });
   });
 });
