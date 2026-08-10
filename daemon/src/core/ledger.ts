@@ -129,6 +129,65 @@ export function deadlockedPending(tracker: Tracker): Task[] {
   return tracker.tasks.filter((t) => t.status === "pending" && !doable.has(t.id));
 }
 
+/**
+ * 우선순위·의존을 나중에 바꾼다.
+ *
+ * 종전에는 둘 다 **작업을 추가할 때만** 정할 수 있었다. 자동화 제어 도구에서 "무엇을 먼저
+ * 할지" 를 나중에 못 바꾸는 것은 큰 구멍이다 — 장부를 손으로 고치는 것 말고 길이 없었고,
+ * 그것은 규칙상 금지돼 있다.
+ *
+ * addTask 와 **같은 검증을 건다.** 자기 의존·미존재 의존·순환을 여기서만 빠뜨리면 교착이
+ * 조용히 만들어진다.
+ */
+export function updateTaskPlan(
+  tracker: Tracker,
+  task: Task,
+  change: { priority?: number; deps?: string[] },
+): AddTaskOk | AddTaskError {
+  if (change.priority !== undefined) {
+    if (!Number.isFinite(change.priority)) {
+      return { ok: false, reason: `우선순위는 숫자여야 합니다: ${String(change.priority)}` };
+    }
+    task.priority = change.priority;
+  }
+
+  if (change.deps !== undefined) {
+    const deps = change.deps;
+    if (deps.includes(task.id)) {
+      return { ok: false, reason: `자기 자신을 의존할 수 없습니다: ${task.id}` };
+    }
+    for (const d of deps) {
+      if (!findTask(tracker, d)) return { ok: false, reason: `없는 작업을 의존합니다: ${d}` };
+    }
+    const previous = task.deps;
+    task.deps = deps;
+    // 순환은 "바꿔 본 뒤" 확인해야 정확하다 — 새 의존이 만드는 고리는 미리 알 수 없다
+    if (hasCycle(tracker)) {
+      task.deps = previous;
+      return { ok: false, reason: `순환 의존이 생깁니다: ${task.id} → ${deps.join(", ")}` };
+    }
+  }
+  return { ok: true, task };
+}
+
+/** 의존 그래프에 고리가 있는가. */
+function hasCycle(tracker: Tracker): boolean {
+  const byId = new Map(tracker.tasks.map((t) => [t.id, t]));
+  const state = new Map<string, 1 | 2>(); // 1=방문 중, 2=끝남
+  const walk = (id: string): boolean => {
+    const mark = state.get(id);
+    if (mark === 1) return true;
+    if (mark === 2) return false;
+    state.set(id, 1);
+    for (const d of byId.get(id)?.deps ?? []) {
+      if (byId.has(d) && walk(d)) return true;
+    }
+    state.set(id, 2);
+    return false;
+  };
+  return tracker.tasks.some((t) => walk(t.id));
+}
+
 /** 오류 요약의 첫 줄만 — 요약 상자에 전문을 쏟지 않는다(전문은 작업 상세에 있다). */
 function firstLine(text: string): string {
   const i = text.indexOf("\n");

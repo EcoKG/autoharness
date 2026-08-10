@@ -19,6 +19,7 @@ import {
   renderSafe,
   saveTracker,
   setTaskStatus,
+  updateTaskPlan,
   statusCounts,
   writeHeartbeat,
 } from "./core/ledger.ts";
@@ -143,6 +144,17 @@ export async function cmdSetTask(flags: Flags): Promise<number> {
       console.log(`[주의] ${task.id}: 시도 횟수 ${r.attemptsCleared} → 0 으로 초기화했습니다.`);
     }
   }
+  // 우선순위·의존을 나중에 바꾼다 — 인자 추가라 기존 사용법은 그대로다
+  const plan: { priority?: number; deps?: string[] } = {};
+  const priority = str(flags, "priority");
+  if (priority !== undefined) plan.priority = Number(priority);
+  const deps = str(flags, "deps");
+  if (deps !== undefined) plan.deps = deps === "" ? [] : deps.split(",").map((d) => d.trim()).filter(Boolean);
+  if (plan.priority !== undefined || plan.deps !== undefined) {
+    const r = updateTaskPlan(tracker, task, plan);
+    if (!r.ok) return fail(r.reason);
+  }
+
   const note = str(flags, "note");
   if (note !== undefined) task.last_error = note;
   const testCmd = flags["test-cmd"];
@@ -150,7 +162,11 @@ export async function cmdSetTask(flags: Flags): Promise<number> {
 
   await saveTracker(repo, tracker);
   await renderSafe(repo, tracker);
-  console.log(JSON.stringify({ ok: true, id, status: task.status }, null, 2));
+  console.log(JSON.stringify(
+    { ok: true, id, status: task.status, priority: task.priority, deps: task.deps },
+    null,
+    2,
+  ));
   return EXIT.OK;
 }
 

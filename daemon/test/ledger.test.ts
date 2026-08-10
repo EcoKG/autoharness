@@ -22,6 +22,7 @@ import {
   renderSafe,
   saveTracker,
   blockers,
+  updateTaskPlan,
   setTaskStatus,
   statusCounts,
   writeHeartbeat,
@@ -361,5 +362,79 @@ describe("막힌 곳 요약", () => {
     const t = tracker();
     t.tasks = [newTask("a", "작업"), { ...newTask("b", "다른 작업"), status: "done" }];
     expect(blockers(t).length).toBe(0);
+  });
+});
+
+/**
+ * 우선순위·의존을 나중에 바꾼다.
+ *
+ * 종전에는 둘 다 작업을 추가할 때만 정할 수 있었다. 자동화 제어 도구에서 "무엇을 먼저
+ * 할지" 를 나중에 못 바꾸는 것은 큰 구멍이다 — 장부를 손으로 고치는 길밖에 없었고 그것은
+ * 규칙상 금지돼 있다.
+ */
+describe("작업 계획 변경", () => {
+  function t3(): ReturnType<typeof createTracker> {
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [newTask("a", "A"), newTask("b", "B"), newTask("c", "C")];
+    return t;
+  }
+
+  test("우선순위를 바꾸면 선택 순서가 따라온다", () => {
+    const t = t3();
+    expect(eligibleNext(t)!.id).toBe("a"); // 같은 우선순위면 id 순
+    const r = updateTaskPlan(t, findTask(t, "c")!, { priority: 1 });
+    expect(r.ok).toBe(true);
+    expect(eligibleNext(t)!.id).toBe("c");
+  });
+
+  test("의존을 나중에 걸 수 있다", () => {
+    const t = t3();
+    updateTaskPlan(t, findTask(t, "a")!, { deps: ["b"] });
+    expect(findTask(t, "a")!.deps).toEqual(["b"]);
+    expect(eligibleNext(t)!.id).toBe("b"); // a 는 b 가 끝나야 한다
+  });
+
+  test("빈 배열로 의존을 푼다", () => {
+    const t = t3();
+    updateTaskPlan(t, findTask(t, "a")!, { deps: ["b"] });
+    updateTaskPlan(t, findTask(t, "a")!, { deps: [] });
+    expect(findTask(t, "a")!.deps).toEqual([]);
+  });
+
+  test("자기 자신 의존을 거부한다", () => {
+    const t = t3();
+    const r = updateTaskPlan(t, findTask(t, "a")!, { deps: ["a"] });
+    expect(r.ok).toBe(false);
+  });
+
+  test("없는 작업 의존을 거부한다", () => {
+    const t = t3();
+    const r = updateTaskPlan(t, findTask(t, "a")!, { deps: ["유령"] });
+    expect(r.ok).toBe(false);
+  });
+
+  /**
+   * 여기가 핵심이다 — addTask 는 새 작업만 보므로 순환을 만들 수 없지만, 나중에 바꾸는
+   * 경로는 기존 그래프에 고리를 만들 수 있다. 이 검증을 빠뜨리면 교착이 조용히 생긴다.
+   */
+  test("순환을 만들면 거부하고 원래대로 되돌린다", () => {
+    const t = t3();
+    updateTaskPlan(t, findTask(t, "b")!, { deps: ["a"] });
+    const r = updateTaskPlan(t, findTask(t, "a")!, { deps: ["b"] });
+    expect(r.ok).toBe(false);
+    expect(findTask(t, "a")!.deps).toEqual([]); // 실패했으면 흔적을 남기지 않는다
+  });
+
+  test("긴 사슬의 순환도 잡는다", () => {
+    const t = t3();
+    updateTaskPlan(t, findTask(t, "b")!, { deps: ["a"] });
+    updateTaskPlan(t, findTask(t, "c")!, { deps: ["b"] });
+    const r = updateTaskPlan(t, findTask(t, "a")!, { deps: ["c"] });
+    expect(r.ok).toBe(false);
+  });
+
+  test("숫자가 아닌 우선순위를 거부한다", () => {
+    const t = t3();
+    expect(updateTaskPlan(t, findTask(t, "a")!, { priority: Number.NaN }).ok).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ import {
   renderSafe,
   saveTracker,
   setTaskStatus,
+  updateTaskPlan,
   statusCounts,
   writeHeartbeat,
 } from "../core/ledger.ts";
@@ -220,6 +221,14 @@ export const toolTaskSet: ToolHandler = async (a) => {
     if (!r.ok) throw new ToolError(r.reason);
     if (r.attemptsCleared) attemptsCleared = r.attemptsCleared;
   }
+  const plan: { priority?: number; deps?: string[] } = {};
+  if (typeof a["priority"] === "number") plan.priority = a["priority"];
+  if (Array.isArray(a["deps"])) plan.deps = (a["deps"] as unknown[]).map(String);
+  if (plan.priority !== undefined || plan.deps !== undefined) {
+    const r = updateTaskPlan(tracker, task, plan);
+    if (!r.ok) throw new ToolError(r.reason);
+  }
+
   const note = optStr(a, "note");
   if (note !== undefined) task.last_error = note;
   const testCmd = a["test_cmd"];
@@ -229,7 +238,15 @@ export const toolTaskSet: ToolHandler = async (a) => {
   await renderSafe(repo, tracker);
   // pending 으로 되돌린 것도 '할 일이 생김'이다 — MCP 경로에만 재활성화가 걸려 있던 비대칭을 없앤다
   const reactivated = eligibleNext(tracker) ? await reactivateRegistrySafely(repo) : false;
-  return { ok: true, id, status: task.status, reactivated, attempts_cleared: attemptsCleared };
+  return {
+    ok: true,
+    id,
+    status: task.status,
+    priority: task.priority,
+    deps: task.deps,
+    reactivated,
+    attempts_cleared: attemptsCleared,
+  };
 };
 
 export const toolHarnessPause: ToolHandler = async (a) => {

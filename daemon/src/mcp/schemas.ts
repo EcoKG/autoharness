@@ -108,6 +108,18 @@ export const TOOLS: ToolDefinition[] = [
           type: "string",
           description: "작업 전용 test 명령 설정 — 빈 문자열이면 해제(전역 test 복귀, 선택)",
         },
+        // 종전에는 둘 다 작업을 추가할 때만 정할 수 있었다. "무엇을 먼저 할지" 를 나중에
+        // 못 바꾸면 장부를 손으로 고치는 길밖에 없는데 그것은 규칙상 금지돼 있다.
+        priority: {
+          type: "number",
+          description: "우선순위 변경 — 낮을수록 먼저(선택)",
+        },
+        deps: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "선행 작업 목록 교체 — 빈 배열이면 의존 해제. 자기 의존·미존재·순환은 거부됩니다(선택)",
+        },
       },
       ["repo_path", "id"],
     ),
