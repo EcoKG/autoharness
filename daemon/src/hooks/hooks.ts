@@ -223,6 +223,10 @@ export async function cmdBrief(repo: string): Promise<number> {
     `현황: done ${c.done}/${tracker.tasks.length}, in_progress ${c.in_progress}, ` +
       `failed ${c.failed}, blocked ${c.blocked}, pending ${c.pending}`,
   );
+  // 배선이 끊겼을 때만 알린다 — 정상·미등록 저장소에 잡음을 더하지 않는다(brief 는 짧아야 한다)
+  const { hookWiringStatus } = await import("./wiring.ts");
+  const wiring = await hookWiringStatus(repo, tracker);
+  if (wiring.warning) console.log(wiring.warning);
   if (dead.length > 0) {
     console.log(`교착 pending ${dead.length}건: ${dead.map((t) => t.id).join(", ")}`);
   }

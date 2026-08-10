@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T03:38:59.465044+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T03:49:05.175678+00:00
 
-## 현황: done 46 / 60  (in_progress 0, failed 0, blocked 0, pending 14)
+## 현황: done 47 / 60  (in_progress 0, failed 0, blocked 0, pending 13)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -51,9 +51,9 @@
 | fix-task-add-reactivation | completed 프로젝트 재활성화 — 주행 완료 후(레지스트리 status=completed) 장부에 새 작업을 추가해도 워치독이 영영 재기동하지 않음. MCP task_add 성공 시 completed 항목을 active 로 되돌리고 백오프 카운터를 리셋하도록 수정(paused/needs_human/error 는 그대로 둠) + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | ts-command-analysis | G3 훅: 토큰 기반 명령 판정 이식 — v1 이 적대 검증으로 다듬은 결과를 그대로 옮긴다. 따옴표를 존중해 토큰화한 뒤 연산자에서 세그먼트를 끊고(문자열 안 ;·|·개행이 분할점이 되면 안 된다), 역슬래시 줄바꿈을 접고, 선행 환경변수 대입과 수식어(env/nohup/timeout N/nice -n N/sudo -u user/xargs)를 인자 수까지 고려해 건너뛴 뒤 첫 토큰 basename 으로 판정한다. git 전역 옵션(-C/-c/--git-dir 등)을 건너뛰고 실제 서브커맨드를 식별한다. 래퍼(bash -c, sh -c, powershell -Command 및 접두사 축약, -EncodedCommand)는 재귀 분석(최대 3단). **파싱 실패를 그냥 통과시키지 않는다** — 위험 키워드가 보이면 게이트로 승격한다(fail-open 이 곧 우회 경로였다). 차단 대상은 두 축: 원격 변경(git push/subtree push, gh 쓰기 동사, gh api 쓰기 메서드)과 되돌릴 수 없는 로컬 파괴 (reset --hard, clean +force, branch -D, checkout --, restore(--staged 제외), stash drop/clear, reflog expire/delete, worktree remove, filter-branch, update-ref -d). rebase 는 의도적 제외. 커밋 트리거는 commit 외에 revert/cherry-pick/merge/am 도 포함하되 각 서브커맨드의 --no-commit/-n/--abort/--skip/--quit 는 제외. | ✅ done | 0/5 | ca93ab7 | - |
 | add-per-task-test-cmd | 사장된 task.test_cmd 활성화 — 장부 스키마에 존재하고 러너가 이미 읽지만(task.test_cmd 우선) 설정 수단이 전무함. add-task/set-task CLI 인자와 MCP task_add/task_set 입력으로 노출 + DESIGN §4/§6 표 갱신 + 회귀 테스트 | ✅ done | 0/5 | - | - |
-| ts-hooks | G3 훅: 훅 3종 + brief 이식 — hook-prebash(금지 명령 게이트·커밋 게이트·발화 마커·하트비트), hook-postbash(커밋 SHA 동기화, prebash 마커로 새 커밋 생성 검증해 오귀속 방지), hook-stop(자율 주행 게이트, 진전 가드 3회). **게이트 처리는 컨텍스트가 정한다**: 헤드리스(CLAUDE_AUTOHARNESS=1)=deny(exit 2+stderr), 대화형·일시정지=ask(exit 0 + hookSpecificOutput.permissionDecision). 두 게이트가 같은 판정 함수를 쓴다. 훅은 fail-open 이되 침묵하지 않는다 — 하트비트 쓰기 실패 등은 stderr 에 남긴다. 발화 마커는 stdin 에 Claude Code 런타임 필드(session_id 등)가 있을 때만 기록한다(사람이 흉내 낸 호출과 구분). | ✅ done | 1/5 | - | - |
+| ts-hooks | G3 훅: 훅 3종 + brief 이식 — hook-prebash(금지 명령 게이트·커밋 게이트·발화 마커·하트비트), hook-postbash(커밋 SHA 동기화, prebash 마커로 새 커밋 생성 검증해 오귀속 방지), hook-stop(자율 주행 게이트, 진전 가드 3회). **게이트 처리는 컨텍스트가 정한다**: 헤드리스(CLAUDE_AUTOHARNESS=1)=deny(exit 2+stderr), 대화형·일시정지=ask(exit 0 + hookSpecificOutput.permissionDecision). 두 게이트가 같은 판정 함수를 쓴다. 훅은 fail-open 이되 침묵하지 않는다 — 하트비트 쓰기 실패 등은 stderr 에 남긴다. 발화 마커는 stdin 에 Claude Code 런타임 필드(session_id 등)가 있을 때만 기록한다(사람이 흉내 낸 호출과 구분). | ✅ done | 1/5 | 2e8ae01 | - |
 | tests-watchdog | 워치독 단위 테스트 구축 — is_usage_limited(429 문맥 오탐 포함)·backoff_pick·pid_alive·잠금 획득/사망 pid 탈취·handle_project 판단 순서(임시 --registry 오버라이드 + --dry-run)를 검증하는 tests/test_watchdog.py 작성. 실제 스케줄러 등록·claude 기동·실 레지스트리 접근 금지 | ✅ done | 0/5 | - | - |
-| ts-wiring-diagnosis | G3 훅: 훅 배선 진단 이식 — 등록 여부 × 발화 마커로 not_registered/active/inactive 를 판정하고, matcher 커버리지(명령 실행 도구 전부를 덮는가), 부분 등록(누락된 훅), 설정 파일 상태(ok/missing/corrupt)를 함께 보고한다. 설정 파손을 '미등록(수동 운용)'으로 오판하지 않아야 한다. 훅을 등록하지 않은 저장소는 경고 대상이 아니다(오탐 금지). 경고만 하고 주행을 막지 않는다. | ⏳ pending | 0/5 | - | - |
+| ts-wiring-diagnosis | G3 훅: 훅 배선 진단 이식 — 등록 여부 × 발화 마커로 not_registered/active/inactive 를 판정하고, matcher 커버리지(명령 실행 도구 전부를 덮는가), 부분 등록(누락된 훅), 설정 파일 상태(ok/missing/corrupt)를 함께 보고한다. 설정 파손을 '미등록(수동 운용)'으로 오판하지 않아야 한다. 훅을 등록하지 않은 저장소는 경고 대상이 아니다(오탐 금지). 경고만 하고 주행을 막지 않는다. | ✅ done | 0/5 | - | - |
 | tests-mcp-protocol | MCP 프로토콜 단위 테스트 구축 — bin/harness_mcp.py 를 서브프로세스 stdio 파이프로 띄워 initialize/ping/tools/list(14종)/미지 메서드(-32601)/tools/call(harness_detect) 왕복을 실측하는 tests/test_mcp_protocol.py 작성. 사용자 레지스트리·설치본 오염 금지(읽기 전용 도구만 호출) | ✅ done | 0/5 | - | - |
 | ts-mcp-server | G4 MCP: JSON-RPC 2.0 stdio 서버와 도구 14종 — 개행 구분 JSON-RPC, initialize/ping/tools/list/tools/call 처리, notification(id 없음)은 무응답, 미지 request 는 -32601, 잘못된 줄에도 크래시 금지. 도구 이름과 입출력은 daemon/DESIGN.md 4절 목록 그대로 유지한다(외부 계약). 데몬이 떠 있으면 로컬 HTTP 로 위임하고, 없으면 인프로세스로 직접 수행하는 폴백을 갖춘다 — 두 경로의 결과가 같아야 한다. harness_run 만은 실제 종료 코드(0/1/2/3/4)를 그대로 전달한다. | ⏳ pending | 0/5 | - | - |
 | docs-consistency | 문서 정합화 — selftest '7종/15항목' 표기 통일(DESIGN §4·§13, install.sh 메시지 기준), 이번 라운드 수정·신규 기능(자기 의존 거부, SHA 오귀속 방지, 재시도, 작업별 test_cmd, completed 재활성화, 하트비트 보강)을 DESIGN.md·README.md·skill/SKILL.md 에 반영하고 종료 코드·경로 계약 교차 검증 | ✅ done | 0/5 | - | - |

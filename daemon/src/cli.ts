@@ -175,6 +175,7 @@ export async function cmdStatus(flags: Flags): Promise<number> {
   const hb = await Bun.file(repoPaths(repo).heartbeat)
     .json()
     .catch(() => null);
+  const { hookWiringStatus } = await import("./hooks/wiring.ts");
   console.log(
     JSON.stringify(
       {
@@ -184,6 +185,7 @@ export async function cmdStatus(flags: Flags): Promise<number> {
         next: eligibleNext(tracker),
         deadlocked: deadlockedPending(tracker).map((t) => t.id),
         heartbeat: hb,
+        hooks: await hookWiringStatus(repo, tracker),
         paused: await Bun.file(repoPaths(repo).pausedFlag).exists(),
       },
       null,
@@ -212,6 +214,11 @@ export async function cmdRun(flags: Flags): Promise<number> {
   const repo = str(flags, "repo") ?? ".";
   const tracker = await requireTracker(repo);
   if (typeof tracker === "number") return tracker;
+
+  // 훅 배선이 끊겼으면 경고만 하고 계속 진행한다(fail-open — 주행을 막지 않는다)
+  const { hookWiringStatus } = await import("./hooks/wiring.ts");
+  const wiring = await hookWiringStatus(repo, tracker);
+  if (wiring.warning) process.stderr.write(`${wiring.warning}\n`);
 
   const wanted = str(flags, "task");
   const customCmd = str(flags, "cmd") ?? null;
