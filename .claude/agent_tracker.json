@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T16:21:58.771926+00:00",
+  "updated_at": "2026-08-10T16:27:41.715902+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1347,7 +1347,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/fix-cron-path-claude-20260810T161919Z.log",
-      "commit": null,
+      "commit": "87101e6",
       "started_at": "2026-08-10T16:19:19.917667+00:00",
       "finished_at": "2026-08-10T16:21:58.771926+00:00",
       "test_cmd": null
@@ -1358,13 +1358,13 @@
       "path": "daemon/src/daemon/log.ts",
       "deps": [],
       "priority": 20,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/fix-log-ring-pollution-20260810T162455Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T16:24:55.162298+00:00",
+      "finished_at": "2026-08-10T16:27:41.715902+00:00",
       "test_cmd": null
     },
     {

@@ -10,7 +10,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ConsoleLog, LOG_LEVELS, formatHuman, type LogRecord } from "../src/daemon/log.ts";
+import { ConsoleLog, LOG_LEVELS, formatHuman, type LogRecord, SESSION_ACTION } from "../src/daemon/log.ts";
 
 let dir = "";
 let logPath = "";
@@ -204,5 +204,53 @@ describe("실패해도 데몬을 막지 않는다", () => {
     l.info("p", "a", "후");
     await l.flush();
     expect((await lines(path)).map((r) => r.detail)).toEqual(["전"]);
+  });
+});
+
+/**
+ * 링 분리 — 세션 출력이 데몬의 판단을 밀어내면 안 된다.
+ *
+ * 실측 구조 결함: 세션 한 줄마다 로그가 한 줄 쌓이는데 하나의 링을 같이 썼다. 세션이
+ * 도는 몇 초 만에 tick·launch·limit·needs_human 같은 판단 줄이 전부 밀려났고, 아침에
+ * "밤새 무슨 일이 있었나" 를 물으면 세션 잡담만 남아 있었다.
+ */
+describe("링 분리 — 판단은 세션 출력에 밀리지 않는다", () => {
+  function make(size: number): ConsoleLog {
+    return new ConsoleLog({ path: join(dir, "split.log"), toStdout: false, ringSize: size });
+  }
+
+  test("세션이 링을 가득 채워도 판단 줄이 남는다", () => {
+    const log = make(5);
+    log.log("info", "p", "launch", "기동");
+    for (let i = 0; i < 50; i += 1) log.log("info", "p", SESSION_ACTION, `줄 ${i}`);
+    const judgments = log.recentJudgments(10);
+    expect(judgments.length).toBe(1);
+    expect(judgments[0]!.detail).toBe("기동");
+  });
+
+  test("recent 는 두 링을 시각순으로 합쳐 돌려준다 — 보는 쪽 계약은 그대로", () => {
+    const log = make(100);
+    log.log("info", "p", "tick", "첫 판단");
+    log.log("info", "p", SESSION_ACTION, "세션 줄");
+    log.log("info", "p", "limit", "마지막 판단");
+    expect(log.recent(10).map((r) => r.detail)).toEqual(["첫 판단", "세션 줄", "마지막 판단"]);
+  });
+
+  test("세션 줄만 따로 볼 수 있다", () => {
+    const log = make(100);
+    log.log("info", "p", "tick", "판단");
+    log.log("info", "p", SESSION_ACTION, "세션");
+    expect(log.recentSession(10).map((r) => r.detail)).toEqual(["세션"]);
+  });
+
+  test("각 링이 독립적으로 잘린다", () => {
+    const log = make(3);
+    for (let i = 0; i < 10; i += 1) {
+      log.log("info", "p", "tick", `판단${i}`);
+      log.log("info", "p", SESSION_ACTION, `세션${i}`);
+    }
+    expect(log.recentJudgments(99).length).toBe(3);
+    expect(log.recentSession(99).length).toBe(3);
+    expect(log.recent(99).length).toBe(6);
   });
 });
