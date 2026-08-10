@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T07:31:44.999563+00:00",
+  "updated_at": "2026-08-10T08:27:54.591925+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -561,7 +561,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/wiring-diagnosis-gaps-20260807T131305Z.log",
-      "commit": null,
+      "commit": "7018836",
       "started_at": "2026-08-07T13:13:05.035810+00:00",
       "finished_at": "2026-08-07T13:14:13.210438+00:00",
       "test_cmd": null
@@ -1170,6 +1170,21 @@
       "commit": "9ea34ee",
       "started_at": "2026-08-10T07:29:09.867326+00:00",
       "finished_at": "2026-08-10T07:31:44.999563+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "release-oneliner-install",
+      "title": "v2 도 원라인 설치가 되게 한다 — 릴리스 바이너리 배포와 install.sh 지원. 현재 v2 는 대상 PC 에 Bun 을 깔고 클론해 빌드해야만 설치된다. v1 은 파이썬 소스라 curl | bash 한 줄로 끝났는데 v2 는 플랫폼별 컴파일 바이너리라 그 경로가 없다. 실측 확인: Windows 에서 bun build --compile --target=bun-linux-x64 로 교차 컴파일한 바이너리가 WSL 에서 그대로 동작한다(version·selftest 15/15·MCP 도구 14종). 네 타깃 전부 빌드되고(linux-x64 90MiB, linux-arm64 89MiB, darwin-arm64 60MiB, windows-x64 94MiB) gzip 으로 34MiB 까지 줄어든다. 수행: ① daemon/scripts/release.ts — 타깃 전부를 교차 컴파일하고 gzip 압축·SHA256 체크섬까지 만들어 dist/release/ 에 모은다(재현 가능하게 크기·시간·체크섬 출력) ② install.sh 에 --v2 경로 추가 — uname 으로 플랫폼을 판정해 릴리스에서 해당 바이너리를 받아 체크섬 검증 후 ~/.claude/autoharness/bin/ 에 설치하고 MCP 등록·자동 시작까지 수행한다. 다운로드 실패·체크섬 불일치는 조용히 넘기지 말고 중단한다 ③ 기본 동작은 v1 유지(비호환 변경 금지) — v2 는 명시적 --v2 opt-in ④ 릴리스가 아직 없을 때의 안내를 명확히 한다(소스 빌드 경로) ⑤ 플랫폼 판정·체크섬 검증·실패 처리를 회귀로 고정한다. 실제 릴리스 발행(gh release create)은 공개 배포이자 되돌리기 어려운 동작이므로 사람 승인 후에만 한다",
+      "path": "daemon/scripts/release.ts",
+      "deps": [],
+      "priority": 2,
+      "status": "done",
+      "attempts": 1,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/release-oneliner-install-20260810T082518Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T08:22:16.345700+00:00",
+      "finished_at": "2026-08-10T08:27:54.591925+00:00",
       "test_cmd": null
     }
   ]

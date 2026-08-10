@@ -8,7 +8,13 @@
 # 체크아웃에서 실행:
 #   bash install.sh [--watchdog] [--uninstall]
 #
-# 환경변수: AUTOHARNESS_BRANCH(기본 main), AUTOHARNESS_INTERVAL(cron 간격 분, 기본 15)
+# v2(단일 실행 파일) 설치 — 릴리스에서 플랫폼에 맞는 바이너리를 받습니다:
+#   curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --v2
+#   (자동 시작까지: ... | bash -s -- --v2 --autostart)
+#
+# 환경변수: AUTOHARNESS_BRANCH(기본 main), AUTOHARNESS_INTERVAL(cron 간격 분, 기본 15),
+#           AUTOHARNESS_VERSION(v2 릴리스 태그, 기본 latest),
+#           AUTOHARNESS_RELEASE_BASE(v2 산출물 기점 URL — 미러·오프라인 배포용)
 
 set -euo pipefail
 
@@ -22,11 +28,15 @@ CRON_MARK="harness_watchdog.py"
 
 MODE="install"
 DO_WATCHDOG=0
+DO_V2=0
+DO_AUTOSTART=0
 for a in "$@"; do
     case "$a" in
         --watchdog)  DO_WATCHDOG=1 ;;
         --uninstall) MODE="uninstall" ;;
-        *) echo "[autoharness] 알 수 없는 인자: $a (사용: --watchdog | --uninstall)" >&2; exit 2 ;;
+        --v2)        DO_V2=1 ;;
+        --autostart) DO_AUTOSTART=1 ;;
+        *) echo "[autoharness] 알 수 없는 인자: $a (사용: --v2 | --autostart | --watchdog | --uninstall)" >&2; exit 2 ;;
     esac
 done
 
@@ -62,16 +72,137 @@ if [ "$MODE" = "uninstall" ]; then
     exit 0
 fi
 
+# ---------------------------------------------------------------- v2 (단일 실행 파일)
+#
+# v1 은 파이썬 소스라 받아서 복사하면 끝이지만, v2 는 플랫폼별 컴파일 바이너리다.
+# 그래서 릴리스에 미리 만들어 둔 것을 받는다. **받은 것이 우리가 만든 것인지 확인한 뒤에만**
+# 실행 위치에 놓는다 — 확인 없이 바이너리를 설치하는 경로는 만들지 않는다.
+
+v2_asset_name() {
+    local os arch
+    os="$(uname -s)"
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64|amd64)   arch="x64" ;;
+        aarch64|arm64)  arch="arm64" ;;
+        *) echo "" ; return 1 ;;
+    esac
+    case "$os" in
+        Linux)  echo "autoharness-linux-${arch}" ;;
+        Darwin) echo "autoharness-darwin-${arch}" ;;
+        *) echo "" ; return 1 ;;
+    esac
+}
+
+install_v2() {
+    local asset url_base tmp bin_dir exe want got
+    asset="$(v2_asset_name)" || {
+        step "지원하지 않는 플랫폼입니다: $(uname -s)/$(uname -m)"
+        step "소스에서 빌드하십시오: git clone ... && cd daemon && bun run build"
+        exit 1
+    }
+    step "플랫폼: $(uname -s)/$(uname -m) → $asset"
+
+    # 기점을 바꿀 수 있게 열어 둔다 — 사내 미러·오프라인 배포·설치 경로 실측에 쓴다
+    if [ -n "${AUTOHARNESS_RELEASE_BASE:-}" ]; then
+        url_base="$AUTOHARNESS_RELEASE_BASE"
+    elif [ "${AUTOHARNESS_VERSION:-latest}" = "latest" ]; then
+        url_base="https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest/download"
+    else
+        url_base="https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$AUTOHARNESS_VERSION"
+    fi
+
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' RETURN
+
+    step "내려받는 중: $url_base/${asset}.gz"
+    if ! curl -fsSL "$url_base/${asset}.gz" -o "$tmp/${asset}.gz"; then
+        step "릴리스 산출물을 받지 못했습니다: $url_base/${asset}.gz"
+        step "아직 릴리스가 없다면 소스에서 빌드하십시오:"
+        step "  git clone https://github.com/$REPO_OWNER/$REPO_NAME.git && cd $REPO_NAME/daemon"
+        step "  bun run build && ./dist/autoharness install --skill ../skill"
+        exit 1
+    fi
+
+    # 체크섬 검증 — 없거나 어긋나면 중단한다(조용히 설치하지 않는다)
+    if curl -fsSL "$url_base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
+        want="$(grep " ${asset}.gz\$" "$tmp/SHA256SUMS" | awk '{print $1}' | head -1)"
+        if [ -z "$want" ]; then
+            step "체크섬 목록에 ${asset}.gz 가 없습니다 — 중단합니다."
+            exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+            got="$(sha256sum "$tmp/${asset}.gz" | awk '{print $1}')"
+        elif command -v shasum >/dev/null 2>&1; then
+            got="$(shasum -a 256 "$tmp/${asset}.gz" | awk '{print $1}')"
+        else
+            got=""
+            step "sha256 도구가 없어 검증을 건너뜁니다 (sha256sum 또는 shasum 설치 권장)."
+        fi
+        if [ -n "$got" ] && [ "$got" != "$want" ]; then
+            step "체크섬 불일치 — 중단합니다."
+            step "  기대: $want"
+            step "  실제: $got"
+            exit 1
+        fi
+        [ -n "$got" ] && step "체크섬 확인"
+    else
+        step "SHA256SUMS 를 받지 못했습니다 — 검증 없이 설치하지 않습니다. 중단합니다."
+        exit 1
+    fi
+
+    gunzip -c "$tmp/${asset}.gz" > "$tmp/autoharness"
+    chmod +x "$tmp/autoharness"
+
+    # 받은 바이너리가 실제로 우리 것인지 한 번 더 — 동작으로 확인한다
+    if ! "$tmp/autoharness" version >/dev/null 2>&1; then
+        step "받은 파일이 실행되지 않습니다 — 중단합니다."
+        exit 1
+    fi
+    step "버전: $("$tmp/autoharness" version)"
+
+    bin_dir="$RUNTIME/bin"
+    mkdir -p "$bin_dir"
+    exe="$bin_dir/autoharness"
+    # 실행 중이면 교체가 막힐 수 있다 — 먼저 내려 둔다
+    if [ -x "$exe" ]; then
+        pkill -f "$exe daemon" 2>/dev/null || true
+        sleep 1
+    fi
+    cp "$tmp/autoharness" "$exe"
+    chmod +x "$exe"
+    step "설치: $exe"
+
+    # 나머지(스킬 배치·MCP 등록·자동 시작)는 EXE 자신이 안다 — 여기서 중복 구현하지 않는다
+    local args=(install --exe "$exe")
+    [ -d "$SRC/skill" ] && args+=(--skill "$SRC/skill")
+    [ "$DO_AUTOSTART" = "1" ] && args+=(--autostart)
+    "$exe" "${args[@]}" || {
+        step "설치 단계에서 문제가 있었습니다 — 위 출력을 확인하십시오."
+        exit 1
+    }
+
+    step ""
+    step "확인:  $exe install --status"
+    step "       $exe selftest"
+    step "PATH 에 넣으려면: echo 'export PATH=\"$bin_dir:\$PATH\"' >> ~/.bashrc"
+    exit 0
+}
+
 # ---------------------------------------------------------------- 설치
-PY="$(find_python)" || { step "python3(3.8+)를 찾을 수 없습니다. 설치 후 다시 실행하십시오."; exit 1; }
-step "python: $PY"
+# v2 는 단일 실행 파일이라 파이썬이 필요 없다 — v1 경로에서만 요구한다
+PY=""
+if [ "$DO_V2" != "1" ]; then
+    PY="$(find_python)" || { step "python3(3.8+)를 찾을 수 없습니다. 설치 후 다시 실행하십시오."; exit 1; }
+    step "python: $PY"
+fi
 
 # 원본 확보: 체크아웃(skill/SKILL.md 존재)이면 그 폴더를, 설치본에서 실행 중이면 설치 단계를
 # 건너뛰고(워치독 전용), 그 외(curl 파이프)는 GitHub 타르볼을 받는다.
 SRC=""
 SKIP_INSTALL=0
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd || true)"
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/skill/SKILL.md" ] && [ -f "$SELF_DIR/bin/harness_engine.py" ]; then
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/skill/SKILL.md" ] &&    { [ "$DO_V2" = "1" ] || [ -f "$SELF_DIR/bin/harness_engine.py" ]; }; then
     SRC="$SELF_DIR"
     step "설치 원본: 로컬 체크아웃 ($SRC)"
 elif [ -n "$SELF_DIR" ] && [ "$SELF_DIR" = "$DST" ] && [ -f "$DST/bin/harness_watchdog.py" ]; then
@@ -86,7 +217,16 @@ else
     curl -fsSL "https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/$BRANCH.tar.gz" \
         | tar xz -C "$TMP"
     SRC="$TMP/$REPO_NAME-$BRANCH"
-    [ -f "$SRC/bin/harness_engine.py" ] || { step "다운로드 결과가 불완전합니다: $SRC"; exit 1; }
+    if [ "$DO_V2" = "1" ]; then
+        [ -f "$SRC/skill/SKILL.md" ] || { step "다운로드 결과가 불완전합니다: $SRC"; exit 1; }
+    else
+        [ -f "$SRC/bin/harness_engine.py" ] || { step "다운로드 결과가 불완전합니다: $SRC"; exit 1; }
+    fi
+fi
+
+# v2 는 여기서 끝난다 — 릴리스 바이너리를 받아 설치하고 종료한다
+if [ "$DO_V2" = "1" ]; then
+    install_v2
 fi
 
 MCP_STATE="기존 설치 유지(변경 없음)"

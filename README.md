@@ -103,9 +103,23 @@ git clone https://github.com/EcoKG/autoharness.git; cd autoharness; .\install.ps
 curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --watchdog
 ```
 
-## v2 설치 (단일 EXE)
+## v2 설치 (단일 실행 파일)
 
-빌드한 뒤 EXE 스스로 설치합니다.
+### 원라인 — 릴리스에서 받기 (권장)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --v2
+```
+
+자동 시작까지 걸려면 `--v2 --autostart` 를 주십시오. Bun 도 파이썬도 필요 없습니다 —
+플랫폼(linux/darwin × x64/arm64)에 맞는 바이너리를 받아 **SHA256 으로 검증한 뒤에만**
+설치합니다. 체크섬이 어긋나거나 산출물을 받지 못하면 **아무것도 설치하지 않고 중단**합니다.
+
+사내 미러나 오프라인 배포는 `AUTOHARNESS_RELEASE_BASE` 로 기점을 바꾸십시오.
+
+### 소스에서 빌드하기
+
+릴리스가 없는 플랫폼이거나 직접 만들고 싶을 때. Bun 이 필요합니다.
 
 ```bash
 cd daemon && bun run build
@@ -113,9 +127,15 @@ cd daemon && bun run build
 ./dist/autoharness.exe install --exe "$PWD/dist/autoharness.exe" --skill ../skill --autostart
 ```
 
-`--exe` 를 반드시 주십시오. `bun run` 으로 실행하면 `process.execPath` 가 **bun 자신**이라
-런타임을 복사하게 됩니다. 설치기가 원본을 실행해 버전을 확인하므로 잘못된 원본은 거부되지만,
-명시하는 편이 확실합니다.
+`bun install` 은 필요 없습니다 — 런타임 의존성이 없어 클론 직후 바로 빌드됩니다.
+
+`bun run ... install` 형태로 부를 때는 `--exe` 가 **필수**입니다. 그때 `process.execPath` 가
+**bun 자신**이라 런타임을 복사하게 됩니다(설치기가 원본을 실행해 버전을 확인하므로 거부되긴
+합니다). 위처럼 빌드된 바이너리로 직접 부르면 생략해도 됩니다.
+
+**릴리스를 직접 만들려면** `bun run release` — 다섯 플랫폼을 교차 컴파일해 gzip 압축과
+SHA256SUMS 까지 `dist/release/` 에 모읍니다. Windows 에서 만든 리눅스 바이너리가 WSL 에서
+그대로 도는 것을 실측으로 확인했습니다.
 
 무엇이 바뀔지 먼저 보려면:
 

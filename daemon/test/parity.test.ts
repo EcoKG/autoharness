@@ -73,6 +73,9 @@ const PARITY_MAP: Record<string, readonly string[]> = {
   "test_model_recommend.py": ["parity.test.ts"],
   "test_per_task_test_cmd.py": ["runner.test.ts", "mcp.test.ts"],
   "test_registry_integrity.py": ["mcp.test.ts"],
+  // install.sh 는 셸 스크립트라 v2 테스트가 다룰 대상이 아니다(파이썬 쪽이 계속 소유).
+  // 다만 릴리스 산출물 이름은 양쪽이 맞아야 하므로 그 대조는 파이썬 테스트가 직접 한다.
+  "test_release_install.py": [],
   "test_registry_lock.py": ["filelock.test.ts"],
   "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
   "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],

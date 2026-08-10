@@ -11,7 +11,8 @@
     "build": "bun run scripts/build.ts",
     "bench:startup": "bun run scripts/bench-startup.ts",
     "parity": "bun run scripts/parity.ts",
-    "verify:exe": "bun run scripts/verify-exe.ts"
+    "verify:exe": "bun run scripts/verify-exe.ts",
+    "release": "bun run scripts/release.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
