@@ -109,6 +109,29 @@ argv 모드 21종은 `bun run verify:exe` 가 EXE 로 직접 실행해 종료 �
 `LieDetectorOCR`)의 장부·진행 상태를 보존한 채 훅 배선만 교체한다. v1 훅과 v2 훅이 잠시
 공존해도 장부가 깨지지 않아야 한다(같은 스키마·같은 원자적 쓰기).
 
+### 5.1 마이그레이션 절차와 롤백
+
+**제1 원칙: 장부 불변.** 마이그레이션은 `.claude/settings.json` 하나만 바꾼다. 장부는
+읽기만 하며, 전후 바이트가 다르면 실패로 보고한다(`ledgerIntact: false`).
+
+절차:
+
+1. `autoharness install --migrate <저장소> --dry-run` — 무엇이 바뀔지 먼저 본다.
+   현재 훅 목록(v1 여부·matcher·`--repo` 유무)과 계획, 장부 작업 수가 나온다.
+2. `autoharness install --migrate <저장소>` — 설정을 백업(`settings.json.bak-<ts>`)한 뒤
+   v1 훅을 `<EXE> <op> --repo "${CLAUDE_PROJECT_DIR}"` 로 바꾸고, matcher 를 `Bash|PowerShell`
+   로 넓히고, 빠진 `--repo` 를 채운다. 백업 경로는 결과에 실려 나온다.
+3. 결과의 `ok` 가 참인지, `after` 에 `legacy: true` 나 `repoUnpinned: true` 가 남지 않았는지 본다.
+
+**롤백**은 설정 파일 하나를 되돌리는 것으로 끝난다 — 장부를 건드리지 않았기 때문이다:
+
+```
+autoharness install --rollback <저장소> --backup <settings.json.bak-…>
+```
+
+**한 번에 끝내지 않아도 된다.** v1 훅과 v2 훅이 섞여 있어도 안전하다: 둘은 같은 장부 스키마를
+읽고 같은 원자적 쓰기를 하며, 레지스트리는 같은 잠금 파일 규약(`registry.lock`)을 공유한다.
+
 ## 6. 데몬 상세
 
 ### 6.1 스케줄러

@@ -114,7 +114,10 @@ def file_lock(path, timeout=REGISTRY_LOCK_TIMEOUT_SEC, stale=REGISTRY_LOCK_STALE
             os.makedirs(os.path.dirname(path), exist_ok=True)
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
+            # Windows 는 EEXIST 만 주지 않는다 — 삭제 대기 중인 파일을 열면 EPERM/EACCES 가
+            # 온다. 잠금을 놓고 다투는 정상 상황이므로 재시도 대상이다(v2 구현과 같은 규칙).
+            # 진짜 권한 문제라면 재시도 끝에 LockTimeout 으로 시끄럽게 드러난다.
             try:
                 age = time.time() - os.path.getmtime(path)
             except OSError:

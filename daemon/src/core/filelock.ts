@@ -50,10 +50,23 @@ async function readHolder(path: string): Promise<LockPayload | null> {
   }
 }
 
+/**
+ * "지금은 못 잡았다" 로 볼 오류인가.
+ *
+ * `EEXIST` 만 볼 수는 없다. Windows 에서는 **삭제 대기 중인 파일**을 열면 `EPERM`/`EACCES`
+ * 가 오고, 공유 위반은 `EBUSY` 로 온다 — 잠금을 놓고 다투는 정상 상황인데 코드는 하드
+ * 오류로 받는다. 실측: 같은 프로세스에서 10건을 동시에 갱신하다 EPERM 으로 죽었다.
+ * 전부 재시도 대상이며, 진짜 권한 문제라면 재시도 끝에 LockTimeout 으로 시끄럽게 드러난다.
+ */
+export function isContendedError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  return code === "EEXIST" || code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+
 /** 한 번 시도. 잡았으면 true. */
 async function tryAcquire(path: string, now: () => number): Promise<boolean> {
   try {
-    // wx = O_CREAT|O_EXCL — 원자적이다. 이미 있으면 EEXIST 로 실패한다.
+    // wx = O_CREAT|O_EXCL — 원자적이다. 이미 있으면 EEXIST(윈도우에서는 EPERM 도) 로 실패한다.
     const handle = await open(path, "wx");
     try {
       await handle.write(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), null, "utf8");
@@ -62,7 +75,7 @@ async function tryAcquire(path: string, now: () => number): Promise<boolean> {
     }
     return true;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+    if (!isContendedError(err)) throw err;
   }
 
   // 이미 누가 쥐고 있다 — 살아 있는지 본다

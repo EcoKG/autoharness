@@ -155,6 +155,18 @@ export async function main(argv: readonly string[]): Promise<number> {
       console.log(JSON.stringify(await installStatus(), null, 2));
       return EXIT.OK;
     }
+    if (typeof flags["migrate"] === "string") {
+      const { migrateRepo, rollbackInstructions } = await import("./install/migrate.ts");
+      const report = await migrateRepo(flags["migrate"], { dryRun });
+      console.log(JSON.stringify({ ...report, rollback: rollbackInstructions(report) }, null, 2));
+      return report.ok ? EXIT.OK : EXIT.USAGE;
+    }
+    if (typeof flags["rollback"] === "string" && typeof flags["backup"] === "string") {
+      const { rollbackRepo } = await import("./install/migrate.ts");
+      const r = await rollbackRepo(flags["rollback"], flags["backup"]);
+      console.log(JSON.stringify(r, null, 2));
+      return r.ok ? EXIT.OK : EXIT.USAGE;
+    }
     const result =
       flags["uninstall"] === true
         ? await uninstall({ dryRun })

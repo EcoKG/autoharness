@@ -14,6 +14,7 @@ import {
   LOCK_STALE_MS,
   LockTimeoutError,
   inspectLock,
+  isContendedError,
   withFileLock,
   writeLockFor,
 } from "../src/core/filelock.ts";
@@ -106,6 +107,28 @@ describe("죽은 잠금 처리", () => {
     // 남의 잠금을 지우지 않았다
     expect(await Bun.file(lockPath).exists()).toBe(true);
   });
+
+  test("경합 오류를 하드 오류와 구분한다 — 윈도우는 EEXIST 만 주지 않는다", () => {
+    // 실측 재현: 같은 프로세스에서 동시에 갱신하다 EPERM 으로 죽었다. Windows 는
+    // 삭제 대기 중인 파일에 EPERM/EACCES 를, 공유 위반에 EBUSY 를 준다 — 전부 재시도 대상이다.
+    for (const code of ["EEXIST", "EPERM", "EACCES", "EBUSY"]) {
+      expect(isContendedError(Object.assign(new Error(code), { code })), code).toBe(true);
+    }
+    for (const code of ["ENOENT", "ENOSPC", "EROFS"]) {
+      expect(isContendedError(Object.assign(new Error(code), { code })), code).toBe(false);
+    }
+    expect(isContendedError(new Error("코드 없음"))).toBe(false);
+  });
+
+  test("경합이 잦아도 결국 전부 잠금을 얻는다", async () => {
+    // 위 분류가 틀리면 여기서 EPERM 이 그대로 튀어나와 실패한다
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        withFileLock(lockPath, () => i, { timeoutMs: 10_000 }),
+      ),
+    );
+    expect(results.sort((a, b) => a - b)).toEqual(Array.from({ length: 20 }, (_, i) => i));
+  }, 30_000);
 
   test("깨진 잠금 파일은 살아 있는 것으로 보지 않는다", async () => {
     await writeFile(lockPath, "JSON 아님", "utf8");
