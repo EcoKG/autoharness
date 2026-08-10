@@ -111,7 +111,8 @@ export async function runTask(
   repo: string,
   tracker: Tracker,
   task: Task,
-  opts: { customCmd?: string | null } = {},
+  /** `pumpMs` 는 테스트가 하트비트 주기를 줄여 실측하기 위한 것이다(기본은 계약값). */
+  opts: { customCmd?: string | null; pumpMs?: number } = {},
 ): Promise<RunOutcome> {
   const paths = repoPaths(repo);
   const maxAtt = tracker.max_attempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -141,7 +142,7 @@ export async function runTask(
   const relLog = relative(paths.repo, logPath).replace(/\\/g, "/");
 
   // 장시간 스테이지 중에도 하트비트를 갱신한다 — 없으면 워치독이 죽은 세션으로 오판한다
-  const pump = setInterval(() => void writeHeartbeat(repo, "run"), HEARTBEAT_PUMP_MS);
+  const pump = setInterval(() => void writeHeartbeat(repo, "run"), opts.pumpMs ?? HEARTBEAT_PUMP_MS);
 
   let failed: StageResult | null = null;
   try {
