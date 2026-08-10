@@ -433,3 +433,61 @@ describe("정적 자산 헤더", () => {
     expect(inlineResponses.length).toBe(1); // assetResponse 안의 그것 하나뿐
   });
 });
+
+/**
+ * 설정 변경 — 자동화 제어판의 핵심인데 없었다.
+ *
+ * init 때 정해진 뒤로 검증 명령도 시도 한도도 바꿀 수 없었다. 장부를 손으로 고치는 것은
+ * 규칙상 금지라 사실상 막다른 길이었다.
+ */
+describe("설정 변경 API", () => {
+  test("검증 명령과 한도를 바꾼다", async () => {
+    const r = await fetch(`${base}/api/projects/proj/config`, {
+      method: "POST",
+      headers: { ...auth(), "content-type": "application/json" },
+      body: JSON.stringify({ test: "npm test", max_attempts: 3 }),
+    });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { commands?: { test: string }; max_attempts?: number };
+    expect(body.commands?.test).toBe("npm test");
+    expect(body.max_attempts).toBe(3);
+
+    const { tracker } = await loadTracker(repo);
+    expect(tracker!.commands.test).toBe("npm test"); // 장부에 실제로 남는다
+  });
+
+  test("빈 검증 명령은 400 — 검증 없는 주행을 만들지 않는다", async () => {
+    const r = await fetch(`${base}/api/projects/proj/config`, {
+      method: "POST",
+      headers: { ...auth(), "content-type": "application/json" },
+      body: JSON.stringify({ test: "" }),
+    });
+    expect(r.status).toBe(400);
+    const { tracker } = await loadTracker(repo);
+    expect(tracker!.commands.test).toBe("exit 0"); // 원래 값이 살아 있다
+  });
+
+  test("GET 으로는 바꿀 수 없다", async () => {
+    const r = await fetch(`${base}/api/projects/proj/config`, { headers: auth() });
+    expect(r.status).toBe(404);
+  });
+
+  test("토큰 없이는 바꿀 수 없다", async () => {
+    const r = await fetch(`${base}/api/projects/proj/config`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ test: "x" }),
+    });
+    expect(r.status).toBe(401);
+  });
+
+  test("데몬 주기·백오프는 이 경로로 바꿀 수 없다 — 기동 의미론은 사람 판단 경계다", async () => {
+    const r = await fetch(`${base}/api/projects/proj/config`, {
+      method: "POST",
+      headers: { ...auth(), "content-type": "application/json" },
+      body: JSON.stringify({ interval_minutes: 1, limit_backoff_minutes: [1] }),
+    });
+    // 알 수 없는 항목은 조용히 무시되고 "바꿀 것이 없다" 로 끝나야 한다
+    expect(r.status).toBe(400);
+  });
+});

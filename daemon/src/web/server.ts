@@ -15,7 +15,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { atomicWriteJson } from "../core/atomic.ts";
-import { loadTracker, statusCounts, eligibleNext, deadlockedPending, blockers, saveTracker, findTask, setTaskStatus, renderSafe } from "../core/ledger.ts";
+import { loadTracker, statusCounts, eligibleNext, deadlockedPending, blockers, setConfig, saveTracker, findTask, setTaskStatus, renderSafe } from "../core/ledger.ts";
 import { userPaths } from "../core/paths.ts";
 import { findProject, loadRegistryChecked, mutateRegistry } from "../core/registry.ts";
 import { isTaskStatus, nowIso } from "../core/schema.ts";
@@ -295,6 +295,7 @@ async function handleGet(
       repo: proj.repo,
       counts: statusCounts(tracker),
       max_attempts: tracker.max_attempts,
+      commands: tracker.commands,
       blockers: blockers(tracker),
       tasks: tracker.tasks,
     });
@@ -352,6 +353,44 @@ async function handlePost(
   ctx: WebContext,
   env: NodeJS.ProcessEnv,
 ): Promise<Response> {
+  /**
+   * 설정 변경 — 검증 명령·타임아웃·시도 한도.
+   *
+   * 종전에는 init 때 정해진 뒤로 화면에서도 CLI 에서도 바꿀 수 없었다. 자동화 제어판인데
+   * 통과 기준과 봉인 한도를 못 바꾸는 것이 가장 큰 구멍이었다.
+   *
+   * **데몬 주기·백오프는 여기서 다루지 않는다** — 기동 의미론에 속해 사람 판단 경계다.
+   */
+  const config = /^\/api\/projects\/([^/]+)\/config$/.exec(path);
+  if (config) {
+    const projectId = decodeURIComponent(config[1]!);
+    const reg = await loadRegistryChecked(env);
+    const proj = reg.registry?.projects.find((p) => p.id === projectId);
+    if (!proj) return json({ error: `없는 프로젝트: ${projectId}` }, 404);
+    const { tracker } = await loadTracker(proj.repo);
+    if (!tracker) return json({ error: "장부를 읽지 못했습니다." }, 404);
+
+    const body = await readJsonBody(req);
+    const change: Parameters<typeof setConfig>[1] = {};
+    if (typeof body["test"] === "string") change.test = body["test"];
+    if (typeof body["build"] === "string") change.build = body["build"];
+    if (typeof body["lint"] === "string") change.lint = body["lint"];
+    if (typeof body["timeout_sec"] === "number") change.timeoutSec = body["timeout_sec"];
+    if (typeof body["max_attempts"] === "number") change.maxAttempts = body["max_attempts"];
+
+    const r = setConfig(tracker, change);
+    if (!r.ok) return json({ error: r.reason }, 400);
+    await saveTracker(proj.repo, tracker);
+    await renderSafe(proj.repo, tracker);
+    ctx.log.info(projectId, "config", `설정 변경(웹 요청): ${(r.changed ?? []).join(", ")}`);
+    return json({
+      ok: true,
+      changed: r.changed,
+      commands: tracker.commands,
+      max_attempts: tracker.max_attempts,
+    });
+  }
+
   const projectAction = /^\/api\/projects\/([^/]+)\/([^/]+)$/.exec(path);
   if (projectAction) {
     const id = decodeURIComponent(projectAction[1]!);

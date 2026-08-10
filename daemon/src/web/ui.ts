@@ -114,6 +114,17 @@ export const UI_HTML = `<!doctype html>
       <p id="actionMsg" class="muted"></p>
     </section>
 
+    <section>
+      <h2>설정</h2>
+      <div class="row" style="gap:6px; flex-wrap:wrap">
+        <label class="muted">검증 <input id="cfgTest" style="min-width:280px"></label>
+        <label class="muted">시도 한도 <input id="cfgAttempts" type="number" min="1" style="min-width:70px"></label>
+        <label class="muted">타임아웃(초) <input id="cfgTimeout" type="number" min="1" style="min-width:90px"></label>
+        <button id="cfgSave">저장</button>
+      </div>
+      <p id="cfgMsg" class="muted">검증 명령은 이 저장소의 통과 기준입니다 — 바꾸면 다음 주행부터 적용됩니다.</p>
+    </section>
+
     <section id="blockedBox" hidden>
       <h2>막힌 곳</h2>
       <div id="blocked"></div>
@@ -523,6 +534,39 @@ export const UI_HTML = `<!doctype html>
       .catch(function (e) { setText($("sessionBody"), e.message); });
   }
 
+  /**
+   * 설정 편집.
+   *
+   * 데몬 주기·백오프는 여기 없다 — 기동 의미론에 속해 사람 판단 경계다. 화면에 두면
+   * 무심코 바뀐다.
+   */
+  function fillConfig(commands, maxAtt) {
+    $("cfgTest").value = (commands && commands.test) || "";
+    $("cfgTimeout").value = (commands && commands.timeout_sec) || "";
+    $("cfgAttempts").value = maxAtt || "";
+  }
+
+  function saveConfig() {
+    if (!selected) return;
+    var body = {
+      test: $("cfgTest").value,
+      max_attempts: Number($("cfgAttempts").value),
+      timeout_sec: Number($("cfgTimeout").value)
+    };
+    setText($("cfgMsg"), "저장 중…");
+    api("/api/projects/" + encodeURIComponent(selected) + "/config", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      $("cfgMsg").className = "ok";
+      setText($("cfgMsg"), "바뀐 항목: " + (r.changed || []).join(", "));
+      return loadTasks();
+    }).catch(function (e) {
+      $("cfgMsg").className = "err";
+      setText($("cfgMsg"), e.message);
+    });
+  }
+
   function refresh() {
     return api("/api/status").then(function (s) {
       state = s;
@@ -542,6 +586,7 @@ export const UI_HTML = `<!doctype html>
         maxAttempts = r.max_attempts || 0;
         renderTasks(r.tasks || []);
         renderBlockers(r.blockers || []);
+        fillConfig(r.commands, r.max_attempts);
       })
       .catch(function (e) { renderTasks([]); renderBlockers([]); message(e.message, true); });
   }
@@ -717,6 +762,7 @@ export const UI_HTML = `<!doctype html>
     });
   }
 
+  $("cfgSave").addEventListener("click", saveConfig);
   $("sessionOpen").addEventListener("click", openSession);
   $("connect").addEventListener("click", start);
   $("token").addEventListener("keydown", function (e) { if (e.key === "Enter") start(); });
