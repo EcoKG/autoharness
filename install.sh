@@ -95,7 +95,7 @@ v2_asset_name() {
 }
 
 install_v2() {
-    local asset url_base tmp bin_dir exe want got
+    local asset url_base tmp bin_dir exe want got hash_tool
     asset="$(v2_asset_name)" || {
         step "지원하지 않는 플랫폼입니다: $(uname -s)/$(uname -m)"
         step "소스에서 빌드하십시오: git clone ... && cd daemon && bun run build"
@@ -126,18 +126,33 @@ install_v2() {
 
     # 체크섬 검증 — 없거나 어긋나면 중단한다(조용히 설치하지 않는다)
     if curl -fsSL "$url_base/SHA256SUMS" -o "$tmp/SHA256SUMS" 2>/dev/null; then
-        want="$(grep " ${asset}.gz\$" "$tmp/SHA256SUMS" | awk '{print $1}' | head -1)"
+        # `|| true` 가 없으면 grep 이 못 찾는 순간 pipefail+set -e 로 **여기서 스크립트가
+        # 죽는다**. 그러면 바로 아래 준비된 안내가 한 번도 출력되지 못하고, 사용자는
+        # "내려받는 중" 에서 뚝 끊긴 화면만 본다(실측 재현). 형식이 조금만 달라도 그렇다.
+        # `[ *]` 는 sha256sum 바이너리 모드 출력(`HASH *name`)까지 받아들인다.
+        want="$(grep -E "[ *]${asset}\.gz\$" "$tmp/SHA256SUMS" | awk '{print $1}' | head -1 || true)"
         if [ -z "$want" ]; then
             step "체크섬 목록에 ${asset}.gz 가 없습니다 — 중단합니다."
+            # 형식 문제인지 내용 문제인지 구분할 단서를 남긴다(소프트 404 로 HTML 이 오는 경우가 있다)
+            step "  받은 목록 첫 줄: $(head -1 "$tmp/SHA256SUMS" 2>/dev/null || echo '(비어 있음)')"
             exit 1
         fi
+        got=""
         if command -v sha256sum >/dev/null 2>&1; then
-            got="$(sha256sum "$tmp/${asset}.gz" | awk '{print $1}')"
+            hash_tool="sha256sum"
+            got="$(sha256sum "$tmp/${asset}.gz" | awk '{print $1}' || true)"
         elif command -v shasum >/dev/null 2>&1; then
-            got="$(shasum -a 256 "$tmp/${asset}.gz" | awk '{print $1}')"
+            hash_tool="shasum"
+            got="$(shasum -a 256 "$tmp/${asset}.gz" | awk '{print $1}' || true)"
         else
-            got=""
+            hash_tool=""
             step "sha256 도구가 없어 검증을 건너뜁니다 (sha256sum 또는 shasum 설치 권장)."
+        fi
+        # 도구가 있는데 값이 안 나온 것은 '도구 없음'과 다르다 — **검증 불가**이므로 건너뛰지
+        # 않고 중단한다. 여기서 조용히 넘어가면 위 `|| true` 가 검증 우회로가 된다.
+        if [ -n "$hash_tool" ] && [ -z "$got" ]; then
+            step "$hash_tool 로 체크섬을 계산하지 못했습니다 — 검증 없이 설치하지 않습니다. 중단합니다."
+            exit 1
         fi
         if [ -n "$got" ] && [ "$got" != "$want" ]; then
             step "체크섬 불일치 — 중단합니다."

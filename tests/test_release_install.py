@@ -176,5 +176,102 @@ class PathGuidanceTest(unittest.TestCase):
     def test_already_on_path_is_not_told_to_add_again(self):
         self.assertIn("PATH 에 이미 있습니다", self.src)
 
+
+class ChecksumAbortExecutionTest(unittest.TestCase):
+    """체크섬 검증 경로는 **실제로 실행해서** 확인한다.
+
+    실측 사고: SHA256SUMS 형식이 조금만 달라도(바이너리 모드 `HASH *name`, 소프트 404 로
+    돌아온 HTML 등) grep 이 매치하지 못했고, `set -e` + `pipefail` 아래에서 그 대입문이
+    스크립트를 그 자리에서 죽였다. 바로 아래 준비돼 있던 중단 안내는 한 번도 출력되지
+    못했다 — 화면은 "내려받는 중" 에서 뚝 끊기고 끝났다.
+
+    존재 검사(assertIn)는 그 문구가 **소스에 있다**는 것만 확인하므로 이 결함을 그대로
+    통과시켰다. 그래서 여기서는 file:// 픽스처로 install.sh 를 진짜 돌리고 **출력에 그 문구가
+    실제로 나오는지**를 본다. 네트워크는 쓰지 않고, 설치 단계 전에 중단되므로 시스템도
+    건드리지 않는다.
+    """
+
+    tmp = None
+    driver = None
+    bash = None
+    digest = None
+
+    @classmethod
+    def setUpClass(cls):
+        import gzip
+        import hashlib
+        import tempfile
+
+        cls.bash = shutil.which("bash")
+        cls.tmp = tempfile.mkdtemp(prefix="ah-sha-")
+        rel = os.path.join(cls.tmp, "rel")
+        os.makedirs(rel)
+        os.makedirs(os.path.join(cls.tmp, "bin"))
+        os.makedirs(os.path.join(cls.tmp, "home"))
+
+        payload = gzip.compress(b"not-a-real-binary")
+        with open(os.path.join(rel, "autoharness-linux-x64.gz"), "wb") as f:
+            f.write(payload)
+        cls.digest = hashlib.sha256(payload).hexdigest()
+
+        # uname 을 가로채 리눅스로 보이게 한다 — 플랫폼 판정이 고정돼야 자산 이름이 정해진다
+        stub = os.path.join(cls.tmp, "bin", "uname")
+        with open(stub, "w", encoding="utf-8", newline="\n") as f:
+            f.write('#!/bin/sh\ncase "$1" in -m) echo x86_64;; *) echo Linux;; esac\n')
+        os.chmod(stub, 0o755)
+
+        # 경로 변환은 bash 안에서 한다 — Windows 경로를 PATH 에 그대로 넣으면
+        # 드라이브 문자의 콜론이 PATH 구분자와 충돌한다
+        cls.driver = os.path.join(cls.tmp, "run.sh")
+        with open(cls.driver, "w", encoding="utf-8", newline="\n") as f:
+            f.write(
+                'set -u\n'
+                'if command -v cygpath >/dev/null 2>&1; then\n'
+                '  TU="$(cygpath -u "$1")"; TW="$(cygpath -m "$1")"\n'
+                'else\n'
+                '  TU="$1"; TW="$1"\n'
+                'fi\n'
+                'case "$TW" in /*) BASE="file://$TW/rel" ;; *) BASE="file:///$TW/rel" ;; esac\n'
+                'PATH="$TU/bin:$PATH" HOME="$TU/home" AUTOHARNESS_RELEASE_BASE="$BASE" '
+                'bash "$2/install.sh" --v2 2>&1\n'
+            )
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.tmp:
+            shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def run_with(self, sums_body):
+        self.assertIsNotNone(self.bash, "bash 를 찾지 못했습니다 — 설치 경로를 실행할 수 없습니다")
+        with open(os.path.join(self.tmp, "rel", "SHA256SUMS"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(sums_body)
+        r = subprocess.run([self.bash, self.driver, self.tmp, REPO],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180)
+        return r.stdout or ""
+
+    def test_missing_entry_prints_the_abort_notice(self):
+        """가장 중요한 회귀 — 침묵 종료가 아니라 안내가 나와야 한다."""
+        out = self.run_with("<!DOCTYPE html><html>Not Found</html>\n")
+        self.assertIn("체크섬 목록에", out,
+                      "형식이 어긋났는데 중단 안내가 나오지 않았습니다(침묵 종료 회귀)")
+        self.assertIn("받은 목록 첫 줄", out, "원인을 가릴 단서가 출력되지 않았습니다")
+
+    def test_binary_mode_format_is_accepted(self):
+        """`sha256sum -b` 출력(`HASH *name`)도 우리 목록으로 인정한다."""
+        out = self.run_with("%s *autoharness-linux-x64.gz\n" % self.digest)
+        self.assertIn("체크섬 확인", out)
+
+    def test_standard_format_still_works(self):
+        out = self.run_with("%s  autoharness-linux-x64.gz\n" % self.digest)
+        self.assertIn("체크섬 확인", out)
+
+    def test_mismatch_still_aborts(self):
+        """검증을 느슨하게 만든 것이 아님을 확인한다 — 틀린 해시는 여전히 중단이다."""
+        out = self.run_with("%s  autoharness-linux-x64.gz\n" % ("0" * 64))
+        self.assertIn("체크섬 불일치", out)
+
+
 if __name__ == "__main__":
     unittest.main()
