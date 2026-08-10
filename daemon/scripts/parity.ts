@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { deadlockedPending, eligibleNext } from "../src/core/ledger.ts";
+import { denyReason, invokesGitCommit } from "../src/hooks/command.ts";
 import type { Task, Tracker } from "../src/core/schema.ts";
 
 const REPO = resolve(import.meta.dir, "..", "..");
@@ -109,5 +110,87 @@ for (const c of CASES) {
   }
 }
 
-console.log(`\n대조 ${CASES.length}건 — 불일치 ${mismatches}건`);
-process.exit(mismatches === 0 ? 0 : 1);
+// ── 명령 판정 대조 ────────────────────────────────────────────────────────────
+// 훅 게이트의 판정은 두 구현이 반드시 같아야 한다. 다르면 한쪽 저장소만 막히거나
+// 한쪽만 뚫린다.
+const COMMAND_CASES = [
+  "git push origin main",
+  "git push origin 기능-브랜치",
+  "git push --force",
+  "git subtree push --prefix=dist origin gh-pages",
+  "gh pr merge 12 --auto",
+  "gh api -X POST /repos/x/y/issues",
+  "gh pr list",
+  "gh api -X GET /x",
+  "git reset --hard HEAD~1",
+  "git reset --soft HEAD~1",
+  "git clean -fd",
+  "git clean -n",
+  "git branch -D feature",
+  "git branch -d merged",
+  "git checkout -- .",
+  "git checkout main",
+  "git restore src/",
+  "git restore --staged f.txt",
+  "git stash drop",
+  "git stash pop",
+  "git reflog expire --expire=now --all",
+  "git reflog",
+  "git worktree remove wt",
+  "git worktree list",
+  "git status",
+  "git log --grep=push",
+  'grep -r "git push" docs/',
+  'echo "git push 하지 마세요"',
+  'git commit -m "push 준비 완료"',
+  "bash -c 'git push origin main'",
+  "powershell -Command \"git push origin main\"",
+  "timeout 30 git push origin main",
+  "nice -n 10 git push",
+  "xargs -n 1 git push",
+  "GIT_SSH_COMMAND=ssh git push origin main",
+  "git -C /repo push origin main",
+  "cd /tmp && git push",
+  'echo "a; b" && git push origin main',
+  "timeout 30 npm test",
+  "ls -la",
+];
+
+const PROBE = `
+import sys, json, io
+sys.path.insert(0, ${JSON.stringify(join(REPO, "bin"))})
+import harness_engine as eng
+cmds = json.loads(sys.stdin.read())
+print(json.dumps([[bool(eng.deny_reason(c)), bool(eng.invokes_git_commit(c))] for c in cmds]))
+`;
+
+const probe = spawnSync(PYTHON, ["-c", PROBE], {
+  input: JSON.stringify(COMMAND_CASES),
+  encoding: "utf8",
+  env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+});
+if (probe.status !== 0) {
+  console.error(`\n[parity] v1 명령 판정 조회 실패: ${probe.stderr}`);
+  process.exit(2);
+}
+const pyResults = JSON.parse(probe.stdout) as Array<[boolean, boolean]>;
+
+let cmdMismatch = 0;
+console.log("\n명령 판정 대조:");
+for (const [i, cmd] of COMMAND_CASES.entries()) {
+  const [pyDeny, pyCommit] = pyResults[i]!;
+  const tsDeny = denyReason(cmd) !== null;
+  const tsCommit = invokesGitCommit(cmd);
+  const ok = pyDeny === tsDeny && pyCommit === tsCommit;
+  if (!ok) {
+    cmdMismatch++;
+    console.log(
+      `  불일치 ${cmd}\n          deny py=${pyDeny} ts=${tsDeny} | commit py=${pyCommit} ts=${tsCommit}`,
+    );
+  }
+}
+console.log(`  ${COMMAND_CASES.length}건 중 불일치 ${cmdMismatch}건`);
+
+const total = mismatches + cmdMismatch;
+console.log(`\n대조 ${CASES.length + COMMAND_CASES.length}건 — 불일치 ${total}건`);
+process.exit(total === 0 ? 0 : 1);
