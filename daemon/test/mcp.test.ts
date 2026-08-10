@@ -312,9 +312,11 @@ describe("도구 동작 — 인프로세스", () => {
     expect(r.rationale.length).toBeGreaterThan(0);
   });
 
-  test("아직 없는 자동 시작 등록을 성공으로 보고하지 않는다", async () => {
-    await expect(HANDLERS["watchdog_install"]!({})).rejects.toThrow(ToolError);
-    await expect(HANDLERS["watchdog_uninstall"]!({})).rejects.toThrow(ToolError);
+  test("자동 시작 등록은 말이 안 되는 간격을 거부한다", async () => {
+    // 실제 등록 경로는 시스템 스케줄러를 건드리므로 여기서 부르지 않는다 —
+    // 러너를 주입해 검증하는 쪽은 install.test.ts 다. 여기서는 그 앞의 인자 검증만 본다.
+    await expect(HANDLERS["watchdog_install"]!({ interval_minutes: 0 })).rejects.toThrow(ToolError);
+    await expect(HANDLERS["watchdog_install"]!({ interval_minutes: 5000 })).rejects.toThrow(ToolError);
   });
 
   test("watchdog_status 는 실행 흔적이 없으면 경고한다", async () => {

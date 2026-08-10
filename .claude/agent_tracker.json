@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T05:09:04.228032+00:00",
+  "updated_at": "2026-08-10T05:20:40.290474+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -883,7 +883,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/ts-exe-build-20260810T050712Z.log",
-      "commit": null,
+      "commit": "1221a86",
       "started_at": "2026-08-10T05:07:12.612888+00:00",
       "finished_at": "2026-08-10T05:09:04.228032+00:00",
       "test_cmd": null
@@ -896,13 +896,13 @@
         "ts-exe-build"
       ],
       "priority": 170,
-      "status": "pending",
-      "attempts": 0,
+      "status": "done",
+      "attempts": 1,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/ts-install-autostart-20260810T051812Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T05:14:00.509974+00:00",
+      "finished_at": "2026-08-10T05:20:11.210675+00:00",
       "test_cmd": null
     },
     {
@@ -1020,6 +1020,21 @@
       "commit": "a6ffc8a",
       "started_at": "2026-08-10T04:39:59.227224+00:00",
       "finished_at": "2026-08-10T04:41:39.009467+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "autostart-live-verify",
+      "title": "로그온 자동 시작 실기동 확인 — 사람 확인 필요(자율 결정으로 수행하지 않음). ts-install-autostart 는 설치·자동 시작·제거 경로를 구현하고 러너를 주입한 회귀 24건으로 고정했으나, 이 PC 에 실제로 등록하는 것은 수행하지 않았다. 이유 둘: ① 로그온 트리거 등록·MCP 사용자 스코프 등록·설치본 교체는 사용자 시스템의 영구 설정 변경이라 저장소 작업 권한을 넘어선다 ② \"재로그온 후에도 뜨는지\" 는 로그아웃/재로그인이 필요해 에이전트가 확인할 수 없다. 사람이 수행할 절차: ① daemon 에서 bun run build ② autoharness.exe install --dry-run 으로 계획을 눈으로 확인 ③ autoharness.exe install --autostart --skill <저장소>/skill 실행 ④ autoharness.exe install --status 로 exe_installed·skill_installed·autostart.registered 가 모두 참인지 확인 ⑤ schtasks /Query /TN AutoHarnessDaemon 으로 트리거가 ONLOGON 인지, LastTaskResult 가 0x800710E0 이 아닌지 확인 ⑥ 로그아웃 후 재로그인 ⑦ ~/.claude/autoharness/logs/daemon.log 에 boot·tick 줄이 쌓이는지, 레지스트리 last_tick 이 갱신되는지 확인 ⑧ 웹 UI(http://127.0.0.1:<포트>, 포트는 ~/.claude/autoharness/daemon.json)에서 프로젝트·콘솔이 보이는지 확인. 결과를 이 작업의 note 로 남기고, 시간 트리거 반려(0x800710E0)가 로그온 트리거에서도 재현되면 daemon/DESIGN.md 0절의 전제가 깨진 것이므로 대안(로그인 스크립트·시작 프로그램 폴더)을 별도 작업으로 등록할 것",
+      "path": "daemon/src/install",
+      "deps": [],
+      "priority": 300,
+      "status": "blocked",
+      "attempts": 0,
+      "last_error": "사람 확인 필요: 사용자 시스템의 영구 설정 변경(로그온 트리거·MCP 등록·설치본 교체)과 재로그인 검증은 자율 결정 범위 밖이다. 구현과 회귀는 ts-install-autostart 에서 완료됨.",
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]

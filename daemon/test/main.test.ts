@@ -3,10 +3,12 @@
  *
  * 여기서 고정하는 것은 v1 이 실측으로 얻은 계약이다:
  *  - 종료 코드 숫자는 절대 기준이다(daemon/DESIGN.md 4절)
- *  - 미구현 모드를 성공으로 보고하지 않는다 — 조용한 실패는 이 프로젝트가 반복해서
+ *  - 모든 모드가 실제로 디스패치된다 — 조용한 미구현은 이 프로젝트가 반복해서
  *    당한 결함이라 처음부터 막는다
  */
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { EXIT, MODES, VERSION, isMode, main } from "../src/main.ts";
 
 describe("종료 코드 계약", () => {
@@ -63,12 +65,16 @@ describe("디스패치", () => {
     expect(await main(["없는모드"])).toBe(EXIT.USAGE);
   });
 
-  test("미구현 모드를 0 으로 보고하지 않는다", async () => {
-    // 조용한 실패 방지 — 구현되기 전에는 성공처럼 보이면 안 된다.
-    // 구현이 진행되면 이 목록은 줄어든다(계약은 그대로: 미구현은 0 이 아니다).
-    // 여기서 부르지 않는 모드: stdin 을 기다리는 것(훅 3종·mcp)과 상주하는 것(daemon).
-    for (const mode of ["install"]) {
-      expect(await main([mode]), mode).not.toBe(EXIT.OK);
+  test("모든 모드가 디스패치된다 — 미구현 폴백에 걸리는 모드가 없다", async () => {
+    // 종전에는 "미구현 모드는 0 이 아니다" 를 확인했고, 구현이 끝나면서 그 목록이 비었다.
+    // 계약은 그대로 살아 있다: 폴백(종료 코드 2)에 걸리는 모드가 하나도 없어야 한다.
+    // 실행이 아니라 디스패치 배선으로 확인한다 — stdin 을 기다리거나 상주하는 모드는
+    // 여기서 부를 수 없기 때문이다(실제 실행 검증은 `bun run verify:exe` 소관).
+    const source = await readFile(join(import.meta.dir, "..", "src", "main.ts"), "utf8");
+    for (const mode of MODES) {
+      const dispatched =
+        source.includes(`case "${mode}":`) || source.includes(`mode === "${mode}"`);
+      expect(dispatched, `${mode} 가 디스패치되지 않습니다`).toBe(true);
     }
   });
 

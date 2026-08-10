@@ -68,7 +68,10 @@ const CASES: Case[] = [
   { mode: "hook-stop", args: ["--repo", repo], stdin: HOOK_PAYLOAD, expect: 0 },
   { mode: "mcp", stdin: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n', expect: 0, contains: '"tools"' },
   { mode: "selftest", expect: 0, contains: "15/15" },
-  { mode: "install", expect: 2, note: "미구현은 0 으로 보고하지 않는다" },
+  // 설치는 **반드시 dry-run 으로만** 검증한다 — 검증이 시스템에 영구 설정을 심으면 안 된다
+  { mode: "install", args: ["--dry-run"], expect: 0, contains: "dry-run",
+    note: "계획만 확인, 시스템 변경 없음" },
+  { mode: "install", args: ["--status"], expect: 0, contains: "autostart" },
 ];
 
 async function runCase(c: Case): Promise<{ ok: boolean; detail: string }> {

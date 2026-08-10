@@ -299,18 +299,27 @@ export const toolHeartbeat: ToolHandler = async (a) => {
  * 성공을 흉내 내지 않고 상태를 그대로 밝힌다.
  */
 export const toolWatchdogInstall: ToolHandler = async (a) => {
-  throw new ToolError(
-    "아직 제공되지 않습니다: v2 에서 이 도구는 데몬 로그온 자동 시작 등록을 뜻하며, " +
-      `등록 대상인 daemon 모드가 아직 이식되지 않았습니다(interval_minutes=${optInt(a, "interval_minutes", 15)}). ` +
-      "이식 완료 전까지는 v1 워치독이 계속 그 역할을 합니다.",
-  );
+  const interval = optInt(a, "interval_minutes", 15);
+  if (interval < 1 || interval > 1439) {
+    throw new ToolError(`interval_minutes 는 1~1439 사이여야 합니다: ${interval}`);
+  }
+  const { installedExePath } = await import("../install/install.ts");
+  const { registerAutostart } = await import("../install/autostart.ts");
+  const exePath = installedExePath();
+  const r = await registerAutostart({ exePath });
+  if (!r.ok) throw new ToolError(`${r.mechanism}: ${r.detail}`);
+  // tick 간격은 이제 OS 가 아니라 데몬이 쥔다 — 레지스트리에 남겨 데몬이 읽게 한다
+  await mutateRegistry((reg) => {
+    reg.settings.watchdog_installed_at = nowIso();
+    reg.settings.watchdog_interval_minutes = interval;
+  });
+  return { ok: true, mechanism: r.mechanism, exe: exePath, interval_minutes: interval, detail: r.detail };
 };
 
 export const toolWatchdogUninstall: ToolHandler = async () => {
-  throw new ToolError(
-    "아직 제공되지 않습니다: v2 자동 시작 등록이 아직 없으므로 해제할 대상도 없습니다. " +
-      "v1 워치독을 내리려면 v1 의 watchdog_uninstall 을 쓰십시오.",
-  );
+  const { unregisterAutostart } = await import("../install/autostart.ts");
+  const r = await unregisterAutostart();
+  return { ok: r.ok, mechanism: r.mechanism, detail: r.detail };
 };
 
 /**

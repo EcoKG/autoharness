@@ -146,6 +146,27 @@ export async function main(argv: readonly string[]): Promise<number> {
       break;
   }
 
+  if (mode === "install") {
+    const cli = await import("./cli.ts");
+    const flags = cli.parseFlags(rest);
+    const { install, installStatus, uninstall } = await import("./install/install.ts");
+    const dryRun = flags["dry-run"] === true;
+    if (flags["status"] === true) {
+      console.log(JSON.stringify(await installStatus(), null, 2));
+      return EXIT.OK;
+    }
+    const result =
+      flags["uninstall"] === true
+        ? await uninstall({ dryRun })
+        : await install({
+            dryRun,
+            autostart: flags["autostart"] === true,
+            skillSource: typeof flags["skill"] === "string" ? flags["skill"] : undefined,
+          });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? EXIT.OK : EXIT.USAGE;
+  }
+
   // 아직 이식되지 않은 모드 — 후속 작업(daemon/DESIGN.md 3절 표)에서 채운다.
   // "미구현" 을 성공으로 보고하지 않는다: 설정 오류와 같은 등급인 2 로 끝낸다.
   console.error(`[autoharness] 아직 구현되지 않은 모드입니다: ${mode}`);

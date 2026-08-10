@@ -59,9 +59,11 @@ describe("모드 커버리지", () => {
     expect(src).toContain("MODES");
   });
 
-  test("미구현 모드를 0 으로 기대하지 않는다", async () => {
+  test("설치 검증은 dry-run 으로만 한다 — 검증이 시스템을 바꾸면 안 된다", async () => {
     const src = await read("scripts/verify-exe.ts");
-    expect(src).toMatch(/mode:\s*"install"[^}]*expect:\s*2/);
+    expect(src).toContain('"--dry-run"');
+    // 자동 시작을 실제로 거는 인자가 검증 경로에 있으면 안 된다
+    expect(src).not.toContain('"--autostart"');
   });
 });
 
