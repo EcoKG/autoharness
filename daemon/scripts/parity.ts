@@ -7,11 +7,11 @@
  * 실행: bun run scripts/parity.ts   (불일치가 있으면 exit 1)
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { deadlockedPending, eligibleNext } from "../src/core/ledger.ts";
+import { deadlockedPending, eligibleNext, statusCounts } from "../src/core/ledger.ts";
 import { denyReason, invokesGitCommit } from "../src/hooks/command.ts";
 import type { Task, Tracker } from "../src/core/schema.ts";
 
@@ -191,6 +191,155 @@ for (const [i, cmd] of COMMAND_CASES.entries()) {
 }
 console.log(`  ${COMMAND_CASES.length}건 중 불일치 ${cmdMismatch}건`);
 
-const total = mismatches + cmdMismatch;
-console.log(`\n대조 ${CASES.length + COMMAND_CASES.length}건 — 불일치 ${total}건`);
+// -- 속성 기반 무작위 장부 대조 --------------------------------------------
+// 손으로 고른 사례는 우리가 생각한 것만 덮는다. 무작위 장부를 같은 연산에 먹여
+// 두 구현이 같은 답을 내는지 본다. 시드를 고정해 불일치를 재현할 수 있게 한다.
+
+const SEED = Number(process.env["PARITY_SEED"] ?? 20260810);
+const ROUNDS = Number(process.env["PARITY_ROUNDS"] ?? 300);
+
+/** 재현 가능한 난수 — Math.random 을 쓰면 실패를 다시 볼 수 없다. */
+function makeRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function randomTracker(rng: () => number): Tracker {
+  const n = 1 + Math.floor(rng() * 8);
+  const ids = Array.from({ length: n }, (_, i) => `t${i}`);
+  const statuses = ["pending", "pending", "pending", "done", "failed", "blocked", "in_progress"] as const;
+  const tasks = ids.map((id, i) => {
+    const status = statuses[Math.floor(rng() * statuses.length)]!;
+    // 의존은 존재하는 id 중에서 고르되, 가끔 유령 id 를 섞어 교착을 만든다
+    const deps: string[] = [];
+    const depCount = Math.floor(rng() * 3);
+    for (let d = 0; d < depCount; d++) {
+      deps.push(rng() < 0.15 ? "유령" : ids[Math.floor(rng() * ids.length)]!);
+    }
+    return task({
+      id, status, deps,
+      priority: Math.floor(rng() * 5) * 10,
+      attempts: status === "failed" ? Math.floor(rng() * 7) : 0,
+      title: `작업 ${i}`,
+    });
+  });
+  return tracker(tasks);
+}
+
+const rng = makeRng(SEED);
+const randomTrackers = Array.from({ length: ROUNDS }, () => randomTracker(rng));
+
+// 파이썬을 한 번만 띄워 전부 물어본다 — 300번 spawn 하면 측정이 아니라 인내다
+const BATCH_PROBE = `
+import sys, json
+sys.path.insert(0, ${JSON.stringify(join(REPO, "bin"))})
+import harness_engine as eng
+out = []
+for t in json.loads(sys.stdin.read()):
+    nxt = eng.eligible_next(t)
+    out.append({
+        "next": nxt["id"] if nxt else None,
+        "deadlocked": sorted(x["id"] for x in eng.deadlocked_pending(t)),
+        "counts": eng.status_counts(t),
+    })
+print(json.dumps(out))
+`;
+
+const batch = spawnSync(PYTHON, ["-c", BATCH_PROBE], {
+  input: JSON.stringify(randomTrackers),
+  encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024,
+  env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+});
+if (batch.status !== 0) {
+  console.error(`[parity] v1 일괄 조회 실패: ${batch.stderr}`);
+  process.exit(2);
+}
+const pyBatch = JSON.parse(batch.stdout) as Array<{
+  next: string | null;
+  deadlocked: string[];
+  counts: Record<string, number>;
+}>;
+
+let propMismatch = 0;
+const firstFailures: string[] = [];
+for (const [i, t] of randomTrackers.entries()) {
+  const py = pyBatch[i]!;
+  const tsNext = eligibleNext(t)?.id ?? null;
+  const tsDead = deadlockedPending(t).map((x) => x.id).sort();
+  const tsCounts = statusCounts(t);
+  const same =
+    py.next === tsNext &&
+    JSON.stringify(py.deadlocked) === JSON.stringify(tsDead) &&
+    (["pending", "in_progress", "done", "failed", "blocked"] as const).every(
+      (k) => py.counts[k] === tsCounts[k],
+    );
+  if (!same) {
+    propMismatch++;
+    if (firstFailures.length < 3) {
+      firstFailures.push(
+        `    seed=${SEED} idx=${i} next py=${py.next} ts=${tsNext} | ` +
+          `dead py=[${py.deadlocked}] ts=[${tsDead}] | 장부=${JSON.stringify(t.tasks)}`,
+      );
+    }
+  }
+}
+console.log(`속성 기반 대조(seed=${SEED}): ${ROUNDS}건 중 불일치 ${propMismatch}건`);
+for (const f of firstFailures) console.log(f);
+
+// -- run 대조 ---------------------------------------------------------------
+// 종료 코드 계약과 장부 변화가 같아야 한다. 시각·로그 경로는 매 실행 다르므로
+// 계약에 해당하는 필드만 본다(status·attempts·exit).
+console.log("run 대조:");
+const RUN_CASES: Array<{ name: string; tasks: Task[]; test: string; expect: number }> = [
+  { name: "성공 -> done", tasks: [task({ id: "a" })], test: "exit 0", expect: 0 },
+  { name: "실패 -> failed", tasks: [task({ id: "a" })], test: "exit 1", expect: 1 },
+  { name: "한도 도달", tasks: [task({ id: "a", status: "failed", attempts: 4 })], test: "exit 1", expect: 4 },
+  { name: "진행 가능 없음", tasks: [task({ id: "a", status: "done" })], test: "exit 0", expect: 3 },
+  { name: "blocked 만", tasks: [task({ id: "a", status: "blocked" })], test: "exit 0", expect: 4 },
+];
+
+let runMismatch = 0;
+for (const c of RUN_CASES) {
+  const base = tracker(c.tasks);
+  base.commands.test = c.test;
+  const results: Array<{ exit: number; status: string | null; attempts: number | null }> = [];
+
+  for (const impl of ["py", "ts"] as const) {
+    const sandbox = mkdtempSync(join(tmpdir(), `ah-run-${impl}-`));
+    try {
+      mkdirSync(join(sandbox, ".claude"), { recursive: true });
+      writeFileSync(join(sandbox, ".claude", "agent_tracker.json"), JSON.stringify(base, null, 2), "utf8");
+      const r = impl === "py"
+        ? spawnSync(PYTHON, [ENGINE, "run", "--repo", sandbox],
+                    { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } })
+        : spawnSync(process.execPath, ["run", join(REPO, "daemon", "src", "main.ts"), "run", "--repo", sandbox],
+                    { encoding: "utf8" });
+      const after = JSON.parse(
+        readFileSync(join(sandbox, ".claude", "agent_tracker.json"), "utf8"),
+      ) as Tracker;
+      const t0 = after.tasks[0] ?? null;
+      results.push({ exit: r.status ?? -1, status: t0?.status ?? null, attempts: t0?.attempts ?? null });
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }
+
+  const py = results[0]!;
+  const ts = results[1]!;
+  const ok = py.exit === ts.exit && py.status === ts.status && py.attempts === ts.attempts && py.exit === c.expect;
+  if (!ok) runMismatch++;
+  console.log(
+    `  ${ok ? "일치  " : "불일치"} ${c.name.padEnd(16)} exit py=${py.exit} ts=${ts.exit} (기대 ${c.expect}) | ` +
+      `status py=${py.status} ts=${ts.status} | attempts py=${py.attempts} ts=${ts.attempts}`,
+  );
+}
+
+const total = mismatches + cmdMismatch + propMismatch + runMismatch;
+console.log(
+  `대조 ${CASES.length + COMMAND_CASES.length + ROUNDS + RUN_CASES.length}건 - 불일치 ${total}건`,
+);
 process.exit(total === 0 ? 0 : 1);
