@@ -290,6 +290,66 @@ for (const [i, t] of randomTrackers.entries()) {
 console.log(`속성 기반 대조(seed=${SEED}): ${ROUNDS}건 중 불일치 ${propMismatch}건`);
 for (const f of firstFailures) console.log(f);
 
+// -- 커밋 게이트 대조 -------------------------------------------------------
+// 게이트 판정이 두 구현에서 갈리면 한쪽 저장소만 막히거나 한쪽만 뚫린다.
+// 통과 기록의 1회용 성질까지 같은 답을 내야 한다.
+console.log("커밋 게이트 대조:");
+
+const GATE_CASES: Array<{ name: string; commit: string | null; lastRun: unknown; open: boolean }> = [
+  { name: "방금 통과", commit: null, lastRun: { task: "done1", ok: true }, open: true },
+  { name: "SHA 기록됨(소진)", commit: "abc1234", lastRun: { task: "done1", ok: true }, open: false },
+  { name: "done 아닌 작업 기록", commit: null, lastRun: { task: "stuck", ok: true }, open: false },
+  { name: "없는 작업 기록", commit: null, lastRun: { task: "유령", ok: true }, open: false },
+  { name: "task 없는 옛 기록", commit: null, lastRun: { ok: true }, open: false },
+  { name: "실패 기록", commit: null, lastRun: { task: "done1", ok: false }, open: false },
+  { name: "기록 없음", commit: null, lastRun: null, open: false },
+];
+
+let gateMismatch = 0;
+for (const c of GATE_CASES) {
+  const sandbox = mkdtempSync(join(tmpdir(), "ah-gate-"));
+  try {
+    mkdirSync(join(sandbox, ".claude"), { recursive: true });
+    const t = tracker([
+      { ...task({ id: "done1" }), status: "done", commit: c.commit },
+      { ...task({ id: "stuck" }), status: "failed", attempts: 1 },
+    ]);
+    writeFileSync(join(sandbox, ".claude", "agent_tracker.json"), JSON.stringify(t, null, 2), "utf8");
+    writeFileSync(
+      join(sandbox, ".claude", "harness-state.json"),
+      JSON.stringify({ last_run: c.lastRun, stop_blocks: 0, tracker_hash: null }),
+      "utf8",
+    );
+
+    const probe = `
+import sys, json
+sys.path.insert(0, ${JSON.stringify(join(REPO, "bin"))})
+import harness_engine as eng
+print(json.dumps({"open": eng.commit_gate_reason(sys.argv[1]) is None}))
+`;
+    const r = spawnSync(PYTHON, ["-c", probe, sandbox], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    const pyOpen = JSON.parse(r.stdout || '{"open":null}').open;
+
+    const tsProbe = spawnSync(
+      process.execPath,
+      ["run", join(REPO, "daemon", "scripts", "gate-probe.ts"), sandbox],
+      { encoding: "utf8" },
+    );
+    const tsOpen = JSON.parse(tsProbe.stdout || '{"open":null}').open;
+
+    const ok = pyOpen === tsOpen && pyOpen === c.open;
+    if (!ok) gateMismatch++;
+    console.log(
+      `  ${ok ? "일치  " : "불일치"} ${c.name.padEnd(18)} py=${pyOpen} ts=${tsOpen} (기대 ${c.open})`,
+    );
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
 // -- run 대조 ---------------------------------------------------------------
 // 종료 코드 계약과 장부 변화가 같아야 한다. 시각·로그 경로는 매 실행 다르므로
 // 계약에 해당하는 필드만 본다(status·attempts·exit).
@@ -338,8 +398,8 @@ for (const c of RUN_CASES) {
   );
 }
 
-const total = mismatches + cmdMismatch + propMismatch + runMismatch;
+const total = mismatches + cmdMismatch + propMismatch + runMismatch + gateMismatch;
 console.log(
-  `대조 ${CASES.length + COMMAND_CASES.length + ROUNDS + RUN_CASES.length}건 - 불일치 ${total}건`,
+  `대조 ${CASES.length + COMMAND_CASES.length + ROUNDS + RUN_CASES.length + GATE_CASES.length}건 - 불일치 ${total}건`,
 );
 process.exit(total === 0 ? 0 : 1);

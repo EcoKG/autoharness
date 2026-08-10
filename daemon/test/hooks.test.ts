@@ -82,7 +82,15 @@ describe("커밋 게이트 조건", () => {
   });
 
   test("통과 기록이 있으면 게이트 해제", async () => {
-    await init("failed");
+    // 실제 통과 직후 상태로 둔다: 돌린 작업은 done 이 되고 아직 커밋 SHA 가 없다.
+    // (기록은 t1 의 통과인데 t1 이 여전히 failed 인 상태는 실제로 생기지 않는다 —
+    //  run 이 성공하면 그 작업을 done 으로 바꾸기 때문이다)
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [
+      { ...newTask("t1", "방금 통과"), status: "done" },
+      { ...newTask("t2", "남은 작업"), status: "failed", attempts: 1 },
+    ];
+    await saveTracker(dir, t);
     await writeFile(
       repoPaths(dir).state,
       JSON.stringify({ last_run: { task: "t1", ok: true } }),
@@ -125,5 +133,69 @@ describe("발화 마커 — 사람이 흉내 낸 호출과 구분한다", () => 
     expect(await recordHookFire(dir, "hook-prebash", { session_id: "abc" })).toBe(true);
     const seen = await Bun.file(repoPaths(dir).hooksSeen).json();
     expect(seen["hook-prebash"].session_id).toBe("abc");
+  });
+});
+
+/**
+ * 통과 기록은 **1회용**이어야 한다 (적대 검증 high).
+ *
+ * 종전에는 `last_run.ok` 만 보고 게이트를 열어, 한 번 통과하면 그 뒤로 검증 없는 커밋이
+ * 무한히 허용됐다. CLAUDE.md 8절이 "훅이 기계적으로 강제한다" 고 선언한 계약이 그 경로에서
+ * 무너진다. 이제 통과 기록이 가리키는 작업이 실제로 done 이고 **아직 커밋 SHA 가 붙지
+ * 않았을 때만** 연다 — postbash 가 SHA 를 기록하는 순간 다시 닫힌다.
+ */
+describe("커밋 게이트 — 통과 기록 소진", () => {
+  async function setup() {
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [
+      { ...newTask("done1", "통과한 작업"), status: "done" },
+      { ...newTask("stuck", "진행 중 작업"), status: "failed", attempts: 1 },
+    ];
+    await saveTracker(dir, t);
+    return t;
+  }
+
+  async function setState(state: Record<string, unknown>) {
+    await writeFile(repoPaths(dir).state, JSON.stringify(state), "utf8");
+  }
+
+  test("방금 통과한 작업의 커밋은 열린다", async () => {
+    await setup();
+    await setState({ last_run: { task: "done1", ok: true } });
+    expect(await commitGateReason(dir)).toBeNull();
+  });
+
+  test("그 작업에 커밋 SHA 가 붙으면 다시 닫힌다 — 기록이 소진됐다", async () => {
+    const t = await setup();
+    t.tasks[0]!.commit = "abc1234";
+    await saveTracker(dir, t);
+    await setState({ last_run: { task: "done1", ok: true } });
+    const reason = await commitGateReason(dir);
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("stuck");
+  });
+
+  test("통과 기록이 가리키는 작업이 done 이 아니면 열리지 않는다", async () => {
+    await setup();
+    await setState({ last_run: { task: "stuck", ok: true } });
+    expect(await commitGateReason(dir)).not.toBeNull();
+  });
+
+  test("없는 작업을 가리키는 기록으로는 열리지 않는다", async () => {
+    await setup();
+    await setState({ last_run: { task: "유령작업", ok: true } });
+    expect(await commitGateReason(dir)).not.toBeNull();
+  });
+
+  test("task 없는 옛 형식 기록으로는 열리지 않는다", async () => {
+    await setup();
+    await setState({ last_run: { ok: true } });
+    expect(await commitGateReason(dir)).not.toBeNull();
+  });
+
+  test("실패 기록으로는 당연히 열리지 않는다", async () => {
+    await setup();
+    await setState({ last_run: { task: "done1", ok: false } });
+    expect(await commitGateReason(dir)).not.toBeNull();
   });
 });

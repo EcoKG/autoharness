@@ -71,7 +71,14 @@ export async function commitGateReason(repo: string): Promise<string | null> {
   const state2 = await Bun.file(repoPaths(repo).state)
     .json()
     .catch(() => null);
-  if (state2?.last_run?.ok) return null;
+  // 통과 기록은 **1회용**이다. `ok` 만 보면 한 번 통과한 뒤로 검증 없는 커밋이 무한히
+  // 열린다(적대 검증에서 확인). 그 기록이 가리키는 작업이 실제로 done 이고 아직 커밋
+  // SHA 가 붙지 않았을 때만 연다 — postbash 가 SHA 를 기록하는 순간 게이트가 다시 닫힌다.
+  const lastRun = state2?.last_run as { ok?: boolean; task?: string } | undefined;
+  if (lastRun?.ok && typeof lastRun.task === "string") {
+    const ran = tracker.tasks.find((t) => t.id === lastRun.task);
+    if (ran && ran.status === "done" && !ran.commit) return null;
+  }
 
   const first = active[0]!;
   return (

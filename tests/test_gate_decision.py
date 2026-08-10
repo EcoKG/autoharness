@@ -177,3 +177,67 @@ class EmitShapeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommitGateSingleUseTest(unittest.TestCase):
+    """통과 기록은 1회용이어야 한다 (적대 검증 high).
+
+    종전에는 last_run.ok 만 보고 게이트를 열어, 한 번 통과하면 그 뒤로 검증 없는 커밋이
+    무한히 허용됐다. CLAUDE.md 8절이 "훅이 기계적으로 강제한다" 고 선언한 계약이 그
+    경로에서 무너진다. 이제 통과 기록이 가리키는 작업이 done 이고 아직 커밋 SHA 가 붙지
+    않았을 때만 연다 — postbash 가 SHA 를 기록하는 순간 다시 닫힌다."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="ah-gate1use-")
+        os.makedirs(os.path.join(self.dir, ".claude"))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, done_commit=None, last_run=None):
+        tracker = {
+            "schema_version": 1, "project": "p", "objective": "o",
+            "source_stack": "s", "target_stack": "t", "model": "claude-opus-5",
+            "commands": {"build": None, "test": "exit 0", "lint": None, "timeout_sec": 60},
+            "max_attempts": 5, "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "tasks": [
+                {"id": "done1", "title": "방금 통과", "path": None, "deps": [], "priority": 100,
+                 "status": "done", "attempts": 0, "last_error": None, "last_log_file": None,
+                 "commit": done_commit, "started_at": None, "finished_at": None, "test_cmd": None},
+                {"id": "stuck", "title": "남은 작업", "path": None, "deps": [], "priority": 100,
+                 "status": "failed", "attempts": 1, "last_error": None, "last_log_file": None,
+                 "commit": None, "started_at": None, "finished_at": None, "test_cmd": None},
+            ],
+        }
+        eng.atomic_write_json(eng.rp(self.dir)["tracker"], tracker)
+        eng.atomic_write_json(eng.rp(self.dir)["state"],
+                              {"last_run": last_run, "stop_blocks": 0, "tracker_hash": None})
+
+    def test_fresh_pass_opens_gate(self):
+        self.write(last_run={"task": "done1", "ok": True})
+        self.assertIsNone(eng.commit_gate_reason(self.dir))
+
+    def test_recorded_commit_closes_gate_again(self):
+        # postbash 가 SHA 를 남기는 순간 기록이 소진된다
+        self.write(done_commit="abc1234", last_run={"task": "done1", "ok": True})
+        reason = eng.commit_gate_reason(self.dir)
+        self.assertIsNotNone(reason)
+        self.assertIn("stuck", reason)
+
+    def test_record_for_non_done_task_does_not_open(self):
+        self.write(last_run={"task": "stuck", "ok": True})
+        self.assertIsNotNone(eng.commit_gate_reason(self.dir))
+
+    def test_record_for_unknown_task_does_not_open(self):
+        self.write(last_run={"task": "유령", "ok": True})
+        self.assertIsNotNone(eng.commit_gate_reason(self.dir))
+
+    def test_legacy_record_without_task_does_not_open(self):
+        # 옛 형식(task 없음)으로는 열리지 않는다 — 귀속 불가능한 기록이다
+        self.write(last_run={"ok": True})
+        self.assertIsNotNone(eng.commit_gate_reason(self.dir))
+
+    def test_failed_record_does_not_open(self):
+        self.write(last_run={"task": "done1", "ok": False})
+        self.assertIsNotNone(eng.commit_gate_reason(self.dir))

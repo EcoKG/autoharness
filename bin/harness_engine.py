@@ -1608,8 +1608,15 @@ def commit_gate_reason(repo):
     active = [t for t in tracker["tasks"] if t["status"] in ("in_progress", "failed")]
     if not active:
         return None
-    if ((load_state(repo).get("last_run")) or {}).get("ok"):
-        return None
+    # 통과 기록은 **1회용**이다. ok 만 보면 한 번 통과한 뒤로 검증 없는 커밋이 무한히
+    # 열린다(적대 검증에서 확인). 그 기록이 가리키는 작업이 실제로 done 이고 아직 커밋
+    # SHA 가 붙지 않았을 때만 연다 — postbash 가 SHA 를 기록하는 순간 게이트는 다시 닫힌다.
+    last_run = (load_state(repo).get("last_run")) or {}
+    if last_run.get("ok"):
+        by_id = {t.get("id"): t for t in tracker["tasks"] if isinstance(t, dict)}
+        done_task = by_id.get(last_run.get("task"))
+        if done_task and done_task.get("status") == "done" and not done_task.get("commit"):
+            return None
     return ("커밋 게이트: 진행 중 작업(%s)의 harness 검증 통과 기록이 없습니다. "
             "bash scripts/agent_harness.sh --task %s 를 먼저 통과시키십시오."
             % (active[0]["id"], active[0]["id"]))
