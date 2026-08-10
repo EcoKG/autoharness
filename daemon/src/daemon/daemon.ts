@@ -157,7 +157,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<DaemonResu
   }
   log.info("-", "boot", `데몬 시작 pid=${process.pid} interval=${interval}분 registry=${userPaths(env).registry}`);
 
-  let web: { stop: () => Promise<void> } | null = null;
+  let web: { stop: () => Promise<void>; port: number } | null = null;
   if (options.web !== false) {
     try {
       const { createWebServer } = await import("../web/server.ts");
@@ -172,6 +172,14 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<DaemonResu
         },
         options.webPort ?? 0,
       );
+      // 주소와 토큰 파일 위치를 로그에 남긴다.
+      //
+      // 종전에는 화면에 POSIX 경로가 문자열로 박혀 있어 Windows 사용자에게 영영 틀린
+      // 안내였고, 경로를 알려 주는 코드(writeTokenHint)는 어디서도 불리지 않았다.
+      // 실제 경로를 아는 것은 여기다 — 문서에 데이터를 심지 않고 로그로 알린다.
+      const { writeTokenHint } = await import("../web/server.ts");
+      const tokenPath = await writeTokenHint(env);
+      log.info("-", "web", `웹 콘솔: http://127.0.0.1:${web.port} — 토큰 파일: ${tokenPath}`);
     } catch (err) {
       // 웹이 못 떠도 스케줄러는 돌아야 한다 — 자동 주행이 UI 때문에 멈추면 본말전도다
       log.error("-", "web", `웹 API 기동 실패(스케줄러는 계속): ${String(err)}`);

@@ -88,7 +88,9 @@ export const UI_HTML = `<!doctype html>
 </header>
 
 <p id="hint" class="muted" style="padding:0 16px">
-  토큰은 <code id="tokenpath">~/.claude/autoharness/web-token</code> 파일에 있습니다.
+  토큰은 <code>~/.claude/autoharness/web-token</code>
+  — Windows 는 <code>%USERPROFILE%\\.claude\\autoharness\\web-token</code> — 파일에 있습니다.
+  데몬이 뜰 때 정확한 경로를 로그에 남깁니다.
   입력한 토큰은 이 탭의 sessionStorage 에만 저장됩니다.
 </p>
 

@@ -184,3 +184,26 @@ describe("화면 구성", () => {
     expect(UI_HTML).toContain("connectSocket");
   });
 });
+
+/**
+ * 토큰 파일 안내 — 플랫폼을 가리지 않는다.
+ *
+ * 실측 결함: 화면에 POSIX 경로가 문자열로 박혀 있었고 그것을 채우는 코드가 없어,
+ * 이 저장소의 주 플랫폼인 Windows 사용자에게는 영영 틀린 안내였다. 정확한 경로를 아는
+ * 것은 데몬이므로, 문서에 데이터를 심는 대신 기동 로그로 알린다.
+ */
+describe("토큰 파일 위치 안내", () => {
+  test("두 플랫폼의 경로를 함께 보여 준다", () => {
+    expect(UI_HTML).toContain("~/.claude/autoharness/web-token");
+    expect(UI_HTML).toContain("%USERPROFILE%");
+  });
+
+  test("정확한 경로는 로그에서 찾으라고 알려 준다", () => {
+    expect(UI_HTML).toContain("로그에 남깁니다");
+  });
+
+  test("문서에 실제 경로를 심지 않는다 — 데이터 0 계약 유지", () => {
+    // 서버가 렌더한 값이 아니라 고정 문자열이어야 한다(사용자 홈 이름이 새지 않게)
+    expect(UI_HTML).not.toContain(userPaths(process.env).webToken);
+  });
+});
