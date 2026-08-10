@@ -576,7 +576,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/path-asymmetry-cluster-20260807T131557Z.log",
-      "commit": null,
+      "commit": "aaf8e76",
       "started_at": "2026-08-07T13:15:57.018293+00:00",
       "finished_at": "2026-08-07T13:17:07.247868+00:00",
       "test_cmd": null

@@ -1,2 +1,7 @@
 dist/
 node_modules/
+
+# bun build --compile 이 남기는 임시 산출물 — 94MB 짜리가 커밋에 딸려 들어간 적이 있다
+# (빌드 중 대상 EXE 가 잠겨 있으면 정리되지 않고 남는다)
+*.bun-build
+.*.bun-build
