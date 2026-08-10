@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/harness_engine.py brief"
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" brief"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/harness_engine.py hook-prebash"
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-prebash"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/harness_engine.py hook-postbash"
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-postbash"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/harness_engine.py hook-stop"
+            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py\" hook-stop"
           }
         ]
       }

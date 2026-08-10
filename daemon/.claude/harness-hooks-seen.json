@@ -1,0 +1,12 @@
+{
+  "hook-prebash": {
+    "ts": "2026-08-10T02:08:56.168488+00:00",
+    "event": "PreToolUse",
+    "session_id": "85ea0cbc-fe37-4aba-94bb-433ce5807a93"
+  },
+  "hook-postbash": {
+    "ts": "2026-08-10T02:08:41.300557+00:00",
+    "event": "PostToolUse",
+    "session_id": "85ea0cbc-fe37-4aba-94bb-433ce5807a93"
+  }
+}
