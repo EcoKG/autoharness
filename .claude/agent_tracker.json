@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T16:03:17.202938+00:00",
+  "updated_at": "2026-08-10T16:06:49.375048+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1287,7 +1287,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/fix-mcp-new-session-notice-20260810T160041Z.log",
-      "commit": null,
+      "commit": "0824ade",
       "started_at": "2026-08-10T16:00:41.186422+00:00",
       "finished_at": "2026-08-10T16:03:17.201939+00:00",
       "test_cmd": null
@@ -1298,13 +1298,13 @@
       "path": "install.sh",
       "deps": [],
       "priority": 13,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/fix-installer-update-busy-sh-20260810T160412Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T16:04:12.684118+00:00",
+      "finished_at": "2026-08-10T16:06:49.375048+00:00",
       "test_cmd": null
     },
     {

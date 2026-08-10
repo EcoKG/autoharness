@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T16:03:17.225536+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T16:06:49.401448+00:00
 
-## 현황: done 79 / 98  (in_progress 0, failed 0, blocked 1, pending 18)
+## 현황: done 80 / 98  (in_progress 0, failed 0, blocked 1, pending 17)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -39,8 +39,8 @@
 | ts-toolchain | G1 기반: Bun 도입과 프로젝트 스캐폴딩 — 이 PC 에 Bun 이 없다(실측: node v24.13.0/npm 11.6.2 만 있음). daemon/ 아래 Bun 프로젝트를 세운다: package.json, tsconfig(strict), 테스트 러너(bun test), 린트/포맷 최소 설정, 그리고 `bun build --compile` 로 EXE 가 실제로 나오는지 최소 예제로 확인한다. 산출물 크기·빌드 시간·콜드 스타트를 실측해 기록할 것 — daemon/DESIGN.md 3절의 훅 시작 예산(p95 150ms) 달성 가능 여부를 여기서 판단한다. 달성 불가로 보이면 그 사실을 근거와 함께 남기고 훅 위임 경로를 별도 작업으로 제안한다. 검증 명령은 이 단계에서 daemon 테스트를 포함하도록 scripts/run_checks.py 에 배선한다(파이썬 검증은 그대로 유지). | ✅ done | 0/5 | 017d456 | - |
 | watchdog-install-stamp | 설치 스크립트로 등록한 워치독이 유예 판정에서 누락되는 오탐 — install.ps1 -Watchdog 과 install.sh --watchdog 는 레지스트리에 아무것도 쓰지 않아 settings.watchdog_installed_at 이 없다. 그런데 watchdog_health 의 유예(grace) 판정은 그 값에만 의존하므로, 설치 스크립트 경로로 등록한 사용자는 첫 주기가 오기 전에 곧바로 stale 경고를 받는다(실측 재현). MCP watchdog_install 경로만 유예를 받는 비대칭이며 detect-dead-watchdog 요구사항 ④(설치 직후는 경고 대상 아님)를 절반만 충족한 상태다. 요구사항: ① harness_mcp.py 에 설치 시각·주기를 레지스트리에 기록하는 CLI 서브커맨드를 추가하고 두 설치 스크립트의 워치독 등록 성공 직후 호출할 것 ② 이미 설치된 환경(스탬프 없음)도 구제되도록, 스케줄러가 '한 번도 실행 안 됨'(0x41303)을 보고하고 실행 흔적이 없으면 유예로 볼 것 ③ 다만 그 유예가 영구화되면 원래 결함을 놓치므로 반려 코드(0x800710E0 등)는 유예 중에도 경고를 유지할 것 ④ 오탐·정탐 경계를 tests/ 회귀 테스트로 고정 | ✅ done | 0/5 | a86611b | - |
 | fix-checksum-grep-silent-death | 체크섬 목록 형식이 다를 때 안내 없이 죽던 것 수정 — set -e 가 준비된 중단 메시지를 도달 불가로 만들었다 | ✅ done | 0/5 | 408af6d | - |
-| fix-mcp-new-session-notice | MCP 등록 후 새 세션부터 보인다는 안내를 v2 경로에 추가 — v1 에는 있고 v2 만 빠져 있었다 | ✅ done | 0/5 | - | - |
-| fix-installer-update-busy-sh | 원라인 갱신 시 실행 중 교체 실패에 조치를 알려주고 pkill 이 MCP 서버까지 내리게 | ⏳ pending | 0/5 | - | - |
+| fix-mcp-new-session-notice | MCP 등록 후 새 세션부터 보인다는 안내를 v2 경로에 추가 — v1 에는 있고 v2 만 빠져 있었다 | ✅ done | 0/5 | 0824ade | - |
+| fix-installer-update-busy-sh | 원라인 갱신 시 실행 중 교체 실패에 조치를 알려주고 pkill 이 MCP 서버까지 내리게 | ✅ done | 0/5 | - | - |
 | fix-autostart-failure-not-fatal | 자동 시작 실패가 설치 전체를 실패로 끝내던 것 수정 — 필수 단계 성공 시 확인 명령과 안내는 반드시 출력 | ⏳ pending | 0/5 | - | - |
 | detect-dead-watchdog | 워치독 '등록만 되고 실행 안 됨'을 감지하지 못하는 결함 — 이 PC 에서 실측: 작업은 Ready 로 등록돼 있으나 스케줄러가 매 기동을 0x800710E0(요청 거부)로 반려해 설치 이후 단 한 번도 실행되지 않았다. 증거는 logs/watchdog.log 파일 자체의 부재와 레지스트리 전 프로젝트 last_launch=null 이었고, 그 사이 status/watchdog_status 는 '등록됨(Ready)'만 보고해 정상처럼 보였다. 즉 자동 부활 보장이 두 프로젝트(autoharness·LieDetectorOCR)에서 내내 무효였는데 아무도 몰랐다. 요구사항: ① watchdog_status 가 스케줄러 등록 여부와 '실제 실행 이력'을 분리해 보고하고, 등록됨 + (watchdog.log 부재 또는 마지막 기록이 기대 주기의 3배 이상 경과)면 명시적으로 경고할 것 ② 스케줄러의 LastTaskResult 가 0 이 아니면 코드와 함께 보고할 것(0x800710E0=거부, 0x41303=미실행 등 흔한 값은 해석 문구 포함) ③ 레지스트리 last_launch 가 전 프로젝트 null 인 상태를 '한 번도 기동된 적 없음' 신호로 함께 제시 ④ 감지·경고 로직과 오탐 경계(설치 직후 아직 주기가 안 온 경우는 경고 대상 아님)를 tests/ 회귀 테스트로 고정 | ✅ done | 0/5 | 4a63ecb | - |
 | fix-skill-doc-v2-commands | 스킬 문서가 v1 전용이라 v2 사용자에게 없는 파일 실행을 지시하던 것 수정 | ⏳ pending | 0/5 | - | - |

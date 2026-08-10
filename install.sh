@@ -179,12 +179,21 @@ install_v2() {
     bin_dir="$RUNTIME/bin"
     mkdir -p "$bin_dir"
     exe="$bin_dir/autoharness"
-    # 실행 중이면 교체가 막힐 수 있다 — 먼저 내려 둔다
+    # 실행 중이면 교체가 막힐 수 있다 — 먼저 내려 둔다.
+    # 데몬만 잡으면 부족하다: 같은 파일을 MCP 서버도 실행하고 있어(모드만 다름) 그쪽이
+    # 남아 있으면 그대로 Text file busy 다. pkill -f 패턴은 ERE 라 두 모드를 함께 잡는다.
     if [ -x "$exe" ]; then
-        pkill -f "$exe daemon" 2>/dev/null || true
+        pkill -f "$exe (daemon|mcp)" 2>/dev/null || true
         sleep 1
     fi
-    cp "$tmp/autoharness" "$exe"
+    # 실패를 그냥 흘리면 맨 `cp: Text file busy` 만 남는다 — 무엇을 멈춰야 하는지 말한다.
+    # (EXE 쪽 install 은 이미 같은 안내를 하는데, 원라인은 여기서 먼저 막혀 거기까지 못 간다)
+    if ! cp "$tmp/autoharness" "$exe"; then
+        step "설치본이 실행 중이라 덮어쓸 수 없습니다. 데몬·MCP 서버를 멈춘 뒤 다시 실행하십시오:"
+        step "  pkill -f '$exe'"
+        step "  멈춘 뒤 같은 명령을 다시 실행하면 됩니다."
+        exit 1
+    fi
     chmod +x "$exe"
     step "설치: $exe"
 

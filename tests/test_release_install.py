@@ -177,6 +177,32 @@ class PathGuidanceTest(unittest.TestCase):
         self.assertIn("PATH 에 이미 있습니다", self.src)
 
 
+class UpdateBlockedGuidanceTest(unittest.TestCase):
+    """갱신이 잠금으로 막혔을 때 — 원문만 남기지 않고 조치를 말한다.
+
+    README 는 "잠금 때문에 실패하면 설치기가 멈출 대상과 명령을 함께 알려 줍니다" 라고
+    약속한다. 그런데 원라인 경로는 cp 실패를 그냥 흘려 맨 `cp: Text file busy` 만 남겼다 —
+    EXE 쪽 install 은 안내를 하지만 원라인은 그보다 먼저 막혀 거기까지 가지 못한다.
+    """
+
+    def setUp(self):
+        self.src = read(INSTALL_SH)
+
+    def test_pkill_covers_mcp_server_too(self):
+        # 데몬만 잡으면 같은 파일을 실행 중인 MCP 서버가 남아 그대로 잠긴다
+        self.assertIn("(daemon|mcp)", self.src)
+
+    def test_copy_failure_is_not_swallowed(self):
+        self.assertIn("설치본이 실행 중이라 덮어쓸 수 없습니다", self.src)
+        idx = self.src.index("설치본이 실행 중이라 덮어쓸 수 없습니다")
+        self.assertIn("exit 1", self.src[idx:idx + 400], "안내 뒤에 중단이 없습니다")
+
+    def test_guidance_names_what_to_stop(self):
+        idx = self.src.index("설치본이 실행 중이라 덮어쓸 수 없습니다")
+        tail = self.src[idx:idx + 400]
+        self.assertIn("pkill", tail, "멈출 명령이 제시되지 않았습니다")
+
+
 class ChecksumAbortExecutionTest(unittest.TestCase):
     """체크섬 검증 경로는 **실제로 실행해서** 확인한다.
 
