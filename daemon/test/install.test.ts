@@ -107,23 +107,30 @@ describe("로그온 트리거만 쓴다", () => {
 describe("등록·해제", () => {
   test("Windows 등록이 성공을 보고한다", async () => {
     const run = recorder();
-    const r = await registerAutostart({ exePath: "C:/x.exe", runner: run, platform: "win32" });
+    const r = await registerAutostart({
+      exePath: "C:/x.exe", runner: run, platform: "win32", env: { APPDATA: work },
+    });
     expect(r.ok).toBe(true);
     expect(r.mechanism).toBe("schtasks-onlogon");
     expect(run.calls[0]![0]).toBe("schtasks");
   });
 
-  test("등록 실패를 성공으로 보고하지 않는다", async () => {
+  test("스케줄러 등록 실패를 성공으로 보고하지 않는다", async () => {
+    // 폴백이 생긴 뒤에도 '스케줄러로 걸렸다' 고 말해서는 안 된다 — 수단을 뭉개지 않는다.
+    // (둘 다 실패하는 경우의 ok=false 는 폴백 describe 가 따로 덮는다)
     const run = recorder({ code: 1, stderr: "액세스가 거부되었습니다" });
-    const r = await registerAutostart({ exePath: "C:/x.exe", runner: run, platform: "win32" });
-    expect(r.ok).toBe(false);
+    const r = await registerAutostart({
+      exePath: "C:/x.exe", runner: run, platform: "win32",
+      env: { APPDATA: work }, writeUnit: async () => {},
+    });
+    expect(r.mechanism).not.toBe("schtasks-onlogon");
     expect(r.detail).toContain("거부");
   });
 
   test("dry-run 은 아무 명령도 실행하지 않고 계획만 돌려준다", async () => {
     const run = recorder();
     const r = await registerAutostart({
-      exePath: "C:/x.exe", runner: run, platform: "win32", dryRun: true,
+      exePath: "C:/x.exe", runner: run, platform: "win32", dryRun: true, env: { APPDATA: work },
     });
     expect(run.calls.length).toBe(0);
     expect(r.commands[0]![0]).toBe("schtasks");
@@ -138,6 +145,19 @@ describe("등록·해제", () => {
     });
     expect(r.ok).toBe(true);
     expect(r.detail).toContain("이미 해제된 상태");
+  });
+
+  test("자동 시작 경로는 반드시 격리된 env 로만 만진다", async () => {
+    // 실측 사고: env 를 안 주면 폴백이 **실제 사용자 시작프로그램 폴더**에 쓴다.
+    // 한 테스트가 만들고 다른 테스트가 지워 우연히 상쇄됐지만, 비결정적 오염이다.
+    const source = await readFile(join(import.meta.dir, "install.test.ts"), "utf8");
+    const calls = source.match(/(registerAutostart|unregisterAutostart|autostartStatus)\(\{[^}]*\}/gs) ?? [];
+    const winCalls = calls.filter((c) => c.includes('"win32"'));
+    expect(winCalls.length).toBeGreaterThan(5);
+    for (const c of winCalls) {
+      const isolated = c.includes("env:") || c.includes("writeUnit:");
+      expect(isolated, `격리되지 않은 호출: ${c.slice(0, 120)}`).toBe(true);
+    }
   });
 
   test("systemd 가 없으면 지원하지 않는다고 밝힌다 — 되는 척하지 않는다", async () => {
@@ -169,9 +189,12 @@ describe("등록·해제", () => {
   });
 
   test("상태 조회가 등록 여부를 알린다", async () => {
-    expect((await autostartStatus({ runner: recorder(), platform: "win32" })).registered).toBe(true);
+    const empty = { APPDATA: join(work, "빈곳") };
     expect(
-      (await autostartStatus({ runner: recorder({ code: 1 }), platform: "win32" })).registered,
+      (await autostartStatus({ runner: recorder(), platform: "win32", env: empty })).registered,
+    ).toBe(true);
+    expect(
+      (await autostartStatus({ runner: recorder({ code: 1 }), platform: "win32", env: empty })).registered,
     ).toBe(false);
   });
 });
@@ -218,6 +241,24 @@ describe("승격 없는 자동 시작 폴백", () => {
     });
     expect(r.mechanism).toBe("schtasks-onlogon");
     expect(written.length).toBe(0);
+  });
+
+  test("경로를 문자열로 이어 붙이지 않는다 — 구분자가 섞이면 재귀 mkdir 이 EEXIST 로 죽는다", () => {
+    // 실측: "C:\Users\x\AppData\Roaming/Microsoft/Windows/Start Menu/..." 처럼 섞인 경로에서
+    // 이미 있는 디렉토리를 못 알아보고 mkdir 이 EEXIST 를 던져 폴백 등록이 통째로 실패했다.
+    const backslash = String.fromCharCode(92);
+    const appData = ["C:", "Users", "x", "AppData", "Roaming"].join(backslash);
+    const p = startupFolderPath({ APPDATA: appData });
+    expect(p).toContain(STARTUP_LAUNCHER);
+    if (process.platform === "win32") {
+      expect(p).not.toContain("/"); // 플랫폼 구분자로 정규화됐다
+    }
+  });
+
+  test("APPDATA 가 없어도 사용자 폴더에서 경로를 만든다", () => {
+    const p = startupFolderPath({ USERPROFILE: join(work, "user") });
+    expect(p).toContain("Startup");
+    expect(p).toContain(STARTUP_LAUNCHER);
   });
 
   test("런처가 콘솔 창을 남기지 않는다", () => {

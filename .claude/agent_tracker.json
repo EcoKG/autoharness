@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T06:24:38.048942+00:00",
+  "updated_at": "2026-08-10T06:31:29.710346+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1092,9 +1092,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/autostart-no-elevation-20260810T062147Z.log",
-      "commit": null,
+      "commit": "687e8fa",
       "started_at": "2026-08-10T06:21:47.397345+00:00",
       "finished_at": "2026-08-10T06:24:38.048942+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "autostart-path-normalization",
+      "title": "폴백 등록이 경로 문자열 조립 탓에 실패하고, 테스트가 실제 시작프로그램 폴더를 오염시켰다 — 실측 2건. ① startupFolderPath 가 APPDATA(역슬래시)에 슬래시를 이어 붙여 구분자가 섞인 경로를 만들었고, 그 경로에서 재귀 mkdir 이 이미 존재하는 디렉토리를 못 알아보고 EEXIST 로 죽어 폴백 등록이 통째로 실패했다(실제 설치에서 재현). join 으로 정규화하고, 목표가 \"디렉토리가 있게 하는 것\" 이므로 EEXIST 는 성공으로 본다. ② 자동 시작 테스트가 env 를 주지 않으면 폴백이 **실제 사용자 시작프로그램 폴더**에 파일을 쓴다 — 한 테스트가 만들고 다른 테스트가 지워 우연히 상쇄됐지만 비결정적 오염이며 CLAUDE.md 6절 위반이다. 모든 win32 자동 시작 호출을 격리하고, 격리되지 않은 호출이 생기면 실패하는 가드 테스트를 둔다.",
+      "path": "daemon/src/install/autostart.ts",
+      "deps": [],
+      "priority": 4,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/autostart-path-normalization-20260810T062838Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T06:28:38.950627+00:00",
+      "finished_at": "2026-08-10T06:31:29.710346+00:00",
       "test_cmd": null
     }
   ]

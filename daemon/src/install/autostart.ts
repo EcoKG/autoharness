@@ -9,6 +9,8 @@
  *
  * 모든 외부 명령은 주입 가능한 러너를 거친다 — 테스트가 실제 스케줄러를 건드리지 않는다.
  */
+import { dirname, join } from "node:path";
+
 export const TASK_NAME = "AutoHarnessDaemon";
 export const SYSTEMD_UNIT = "autoharness-daemon.service";
 export const STARTUP_LAUNCHER = "AutoHarnessDaemon.cmd";
@@ -24,8 +26,10 @@ export const STARTUP_LAUNCHER = "AutoHarnessDaemon.cmd";
  * 이 폴더는 사용자가 눈으로 확인하고 지울 수 있다는 점에서 레지스트리 Run 키보다 낫다.
  */
 export function startupFolderPath(env: NodeJS.ProcessEnv = process.env): string {
-  const appData = env["APPDATA"] ?? `${env["USERPROFILE"] ?? ""}/AppData/Roaming`;
-  return `${appData}/Microsoft/Windows/Start Menu/Programs/Startup/${STARTUP_LAUNCHER}`;
+  const appData = env["APPDATA"] ?? join(env["USERPROFILE"] ?? "", "AppData", "Roaming");
+  // **문자열로 이어 붙이지 않는다.** 구분자가 섞인 경로에서 재귀 mkdir 이 기존 디렉토리를
+  // 못 알아보고 EEXIST 로 죽었다(실측). join 이 플랫폼 구분자로 정규화한다.
+  return join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", STARTUP_LAUNCHER);
 }
 
 /**
@@ -209,8 +213,11 @@ export async function registerAutostart(options: AutostartOptions): Promise<Auto
 
 async function defaultWriteUnit(path: string, body: string): Promise<void> {
   const { mkdir, writeFile } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
-  await mkdir(dirname(path), { recursive: true });
+  // 재귀 mkdir 이 **이미 있는 디렉토리에 EEXIST 를 던지는** 런타임이 있다(실측).
+  // 목표는 "디렉토리가 있게 하는 것" 이므로 그 오류는 성공과 같다.
+  await mkdir(dirname(path), { recursive: true }).catch((err: NodeJS.ErrnoException) => {
+    if (err?.code !== "EEXIST") throw err;
+  });
   await writeFile(path, body, "utf8");
 }
 
