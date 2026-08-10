@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T04:20:40.752864+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T04:26:27.572976+00:00
 
-## 현황: done 50 / 61  (in_progress 0, failed 0, blocked 0, pending 11)
+## 현황: done 51 / 61  (in_progress 0, failed 0, blocked 0, pending 10)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -58,9 +58,9 @@
 | tests-mcp-protocol | MCP 프로토콜 단위 테스트 구축 — bin/harness_mcp.py 를 서브프로세스 stdio 파이프로 띄워 initialize/ping/tools/list(14종)/미지 메서드(-32601)/tools/call(harness_detect) 왕복을 실측하는 tests/test_mcp_protocol.py 작성. 사용자 레지스트리·설치본 오염 금지(읽기 전용 도구만 호출) | ✅ done | 0/5 | - | - |
 | ts-mcp-server | G4 MCP: JSON-RPC 2.0 stdio 서버와 도구 14종 — 개행 구분 JSON-RPC, initialize/ping/tools/list/tools/call 처리, notification(id 없음)은 무응답, 미지 request 는 -32601, 잘못된 줄에도 크래시 금지. 도구 이름과 입출력은 daemon/DESIGN.md 4절 목록 그대로 유지한다(외부 계약). 데몬이 떠 있으면 로컬 HTTP 로 위임하고, 없으면 인프로세스로 직접 수행하는 폴백을 갖춘다 — 두 경로의 결과가 같아야 한다. harness_run 만은 실제 종료 코드(0/1/2/3/4)를 그대로 전달한다. | ✅ done | 0/5 | 1647746 | - |
 | docs-consistency | 문서 정합화 — selftest '7종/15항목' 표기 통일(DESIGN §4·§13, install.sh 메시지 기준), 이번 라운드 수정·신규 기능(자기 의존 거부, SHA 오귀속 방지, 재시도, 작업별 test_cmd, completed 재활성화, 하트비트 보강)을 DESIGN.md·README.md·skill/SKILL.md 에 반영하고 종료 코드·경로 계약 교차 검증 | ✅ done | 0/5 | - | - |
-| ts-scheduler | G5 데몬: 자체 스케줄러 — OS 스케줄러를 쓰지 않고 자기 시계로 interval(기본 15분) tick 을 돈다. setInterval 누적 드리프트와 절전 복귀·시간 변경으로 인한 시계 점프를 견디도록 '다음 실행 시각 기준 재계산' 방식으로 구현한다. 단일 인스턴스 잠금(pid+mtime, 죽은 pid 는 탈취). tick 끝에 last_tick 기록하되 저장은 디스크 재읽기 후 **이번 주기에 실제로 바꾼 프로젝트의 소유 필드만** 병합한다(통째 되쓰기로 MCP 변경이 사라지던 결함 방지). 장시간 무중단 동작이 목표이므로 누수·핸들 누적이 없어야 한다. | ✅ done | 0/5 | - | - |
+| ts-scheduler | G5 데몬: 자체 스케줄러 — OS 스케줄러를 쓰지 않고 자기 시계로 interval(기본 15분) tick 을 돈다. setInterval 누적 드리프트와 절전 복귀·시간 변경으로 인한 시계 점프를 견디도록 '다음 실행 시각 기준 재계산' 방식으로 구현한다. 단일 인스턴스 잠금(pid+mtime, 죽은 pid 는 탈취). tick 끝에 last_tick 기록하되 저장은 디스크 재읽기 후 **이번 주기에 실제로 바꾼 프로젝트의 소유 필드만** 병합한다(통째 되쓰기로 MCP 변경이 사라지던 결함 방지). 장시간 무중단 동작이 목표이므로 누수·핸들 누적이 없어야 한다. | ✅ done | 0/5 | a8c6f0e | - |
 | refresh-loop-engine | 주행용 엔진 사본 갱신 — 모든 개선·테스트·문서 작업 완료 후 개선된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작을 확인. 이후 라운드부터 주행 루프도 개선판으로 구동된다 | ✅ done | 0/5 | - | - |
-| ts-supervisor | G5 데몬: 프로젝트 판단과 세션 기동 — v1 판단 순서를 그대로 지킨다(status→백오프→PAUSED→장부→진행 가능 작업→하트비트→기동). completed 는 종점이 아니다: 장부에 진행 가능 작업이 생기면 active 로 되살린다. 빈 장부(적재 전)는 completed 로 봉인하지 않는다. 교착 pending 이 있으면 completed 가 아니라 needs_human. 기동은 claude -p + CLAUDE_AUTOHARNESS=1, probe 90초. 분류 우선순위 고정: 생존 또는 rc=0 → ok(카운터 리셋) / 사용량 패턴 → limit(지수 백오프, 영구 포기 없음, 연속 초과 시 needs_attention 신호) / 그 외 → error(5회 연속 시 정지). 사용량 패턴은 오탐·미탐 양쪽을 실측으로 고정한다. | ⏳ pending | 0/5 | - | - |
+| ts-supervisor | G5 데몬: 프로젝트 판단과 세션 기동 — v1 판단 순서를 그대로 지킨다(status→백오프→PAUSED→장부→진행 가능 작업→하트비트→기동). completed 는 종점이 아니다: 장부에 진행 가능 작업이 생기면 active 로 되살린다. 빈 장부(적재 전)는 completed 로 봉인하지 않는다. 교착 pending 이 있으면 completed 가 아니라 needs_human. 기동은 claude -p + CLAUDE_AUTOHARNESS=1, probe 90초. 분류 우선순위 고정: 생존 또는 rc=0 → ok(카운터 리셋) / 사용량 패턴 → limit(지수 백오프, 영구 포기 없음, 연속 초과 시 needs_attention 신호) / 그 외 → error(5회 연속 시 정지). 사용량 패턴은 오탐·미탐 양쪽을 실측으로 고정한다. | ✅ done | 0/5 | - | - |
 | ts-console-log | G5 데몬: 콘솔 로깅과 회전 — 데몬의 모든 판단·행동을 콘솔(stdout)에 한 줄씩 찍고 동시에 파일에 남긴다. 레벨·프로젝트·행동 종류를 구조화해 웹에서 필터링 가능하게 한다(JSON 라인 + 사람이 읽는 텍스트 병행). 파일은 크기 상한 초과 시 회전한다. 콘솔 출력은 WebSocket 스트림의 원천이므로 라인 단위로 즉시 플러시돼야 한다. | ⏳ pending | 0/5 | - | - |
 | ts-web-api | G6 웹: REST API 와 인증 — 127.0.0.1 에만 바인드하고 토큰을 필수로 한다. 토큰은 기동 시 생성해 ~/.claude/autoharness/web-token 에 권한을 좁혀 저장하고 모든 요청에서 검증한다(없으면 401). 상태 변경은 POST + 토큰 헤더만 허용하고 쿠키 인증을 쓰지 않는다(CSRF 방어). 엔드포인트: GET /api/status, /api/projects, /api/projects/:id/tasks, /api/logs / POST /api/projects/:id/pause|resume|tick|launch, /api/tasks/:id/state. **임의 셸 실행을 노출하지 않는다** — 화이트리스트된 동작만. 이것은 daemon/DESIGN.md 8절의 사람 경계다. | ⏳ pending | 0/5 | - | - |
 | ts-web-console | G6 웹: WebSocket 콘솔 스트림과 명령 전송 — /ws/console 로 콘솔 라인을 실시간 전달하고, 웹에서 화이트리스트된 명령(일시정지/재개/즉시 tick/세션 기동/작업 상태 전환)을 보낼 수 있게 한다. WS 도 토큰 검증을 거친다. 연결 끊김·재연결·백프레셔(느린 클라이언트가 데몬을 막지 않을 것)를 처리한다. 구독은 읽기 전용이고 명령은 별도 REST 경로를 쓴다 — 스트림과 제어를 섞지 않는다. | ⏳ pending | 0/5 | - | - |
