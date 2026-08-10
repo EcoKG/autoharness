@@ -74,6 +74,41 @@ export function installedExePath(env: NodeJS.ProcessEnv = process.env): string {
   return join(userPaths(env).runtimeDir, "bin", name);
 }
 
+/**
+ * 이 파일이 **정말 우리 EXE 인가** — 실행해서 버전을 확인한다.
+ *
+ * 왜 행동으로 보는가: 파일명·크기 같은 간접 신호는 속는다. 실측 사고가 그 증거다 —
+ * `bun run ... install` 로 설치하면 `process.execPath` 가 **bun.exe** 여서, 런타임을
+ * `autoharness.exe` 라는 이름으로 복사해 놓고 성공을 보고했다. 그 결과 MCP 가
+ * "Script not found" 로 즉시 죽어 도구 14종이 통째로 사라졌는데 설치는 ok 였다.
+ *
+ * 이름이 맞고 크기도 비슷했지만 동작이 달랐다. 그래서 동작을 본다.
+ */
+export async function looksLikeOurExe(
+  path: string,
+  runner?: CommandRunner,
+): Promise<{ ok: boolean; detail: string }> {
+  if (!(await isFile(path))) return { ok: false, detail: `파일이 없습니다: ${path}` };
+  try {
+    const exec = runner ?? (await import("./autostart.ts")).realRunner;
+    const r = await exec([path, "version"]);
+    const out = `${r.stdout}${r.stderr}`.trim();
+    if (r.code !== 0) return { ok: false, detail: `version 실행 실패(exit ${r.code}): ${out.slice(0, 200)}` };
+    if (!/^\d+\.\d+\.\d+/.test(out)) {
+      return {
+        ok: false,
+        detail:
+          `우리 실행 파일이 아닙니다 — version 응답: ${JSON.stringify(out.slice(0, 120))}. ` +
+          "(`bun run` 으로 설치하면 process.execPath 가 bun.exe 라 런타임이 복사됩니다. " +
+          "`bun run build` 후 `--exe dist/autoharness.exe` 로 지정하십시오.)",
+      };
+    }
+    return { ok: true, detail: `버전 ${out} 확인` };
+  } catch (err) {
+    return { ok: false, detail: `확인 실패: ${String(err)}` };
+  }
+}
+
 async function copyTree(src: string, dst: string): Promise<number> {
   await mkdir(dst, { recursive: true });
   let count = 0;
@@ -97,13 +132,16 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
   const target = installedExePath(env);
   const steps: Step[] = [];
 
-  // 1. EXE 배치
+  // 1. EXE 배치 — **원본이 우리 것인지 먼저 확인한다**(런타임을 복사하는 사고 방지)
+  const sourceCheck = await looksLikeOurExe(source, options.runner);
   if (!(await isFile(source))) {
     steps.push(step("exe", "failed", `설치할 실행 파일이 없습니다: ${source}`));
+  } else if (!sourceCheck.ok) {
+    steps.push(step("exe", "failed", sourceCheck.detail));
   } else if (source === target) {
     steps.push(step("exe", "skipped", "이미 설치 위치에서 실행 중입니다."));
   } else if (dryRun) {
-    steps.push(step("exe", "ok", `(dry-run) ${source} → ${target}`));
+    steps.push(step("exe", "ok", `(dry-run) ${source} → ${target} (${sourceCheck.detail})`));
   } else {
     try {
       await mkdir(join(userPaths(env).runtimeDir, "bin"), { recursive: true });
@@ -220,9 +258,13 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Install
 export async function installStatus(options: UninstallOptions = {}) {
   const env = options.env ?? process.env;
   const exe = installedExePath(env);
+  // 파일이 있다고 설치된 것이 아니다 — 실행해서 우리 것인지 본다(런타임이 놓여 있던 실측 사고)
+  const check = await looksLikeOurExe(exe, options.runner);
   return {
     exe_path: exe,
-    exe_installed: await isFile(exe),
+    exe_installed: check.ok,
+    exe_present: await isFile(exe),
+    exe_check: check.detail,
     skill_dir: userPaths(env).skillDir,
     skill_installed: await isDir(userPaths(env).skillDir),
     autostart: await autostartStatus({

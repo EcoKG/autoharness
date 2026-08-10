@@ -26,7 +26,13 @@ import {
   type CommandResult,
   type CommandRunner,
 } from "../src/install/autostart.ts";
-import { install, installStatus, installedExePath, uninstall } from "../src/install/install.ts";
+import {
+  install,
+  installStatus,
+  installedExePath,
+  looksLikeOurExe,
+  uninstall,
+} from "../src/install/install.ts";
 
 let home = "";
 let work = "";
@@ -164,7 +170,79 @@ describe("등록·해제", () => {
   });
 });
 
+/**
+ * 실측 사고: 사용자 환경에 설치된 autoharness.exe 가 우리 바이너리가 아니라 **Bun 런타임**
+ * 이었다. `bun run ... install` 로 설치하면 `process.execPath` 가 bun.exe 이기 때문이다.
+ * 이름도 맞고 크기도 비슷했지만 실행하면 "Script not found" 로 죽었고, 그래서 MCP 도구
+ * 14종이 통째로 사라졌는데 설치는 ok 를 보고했다 — 조용한 실패의 정확한 표본이다.
+ */
+describe("원본 검증 — 런타임을 설치하고 성공이라 하지 않는다", () => {
+  /** version 에 우리 형식으로 답하는 원본(정상). */
+  const goodRunner = recorder({ stdout: "2.0.0-dev\n" });
+  /** bun.exe 를 복사했을 때 실제로 나오는 응답. */
+  const bunRunner = recorder({ code: 1, stderr: 'error: Script not found "version"' });
+
+  async function candidate(name = "autoharness.exe"): Promise<string> {
+    const p = join(work, name);
+    await writeFile(p, "바이너리 내용", "utf8");
+    return p;
+  }
+
+  test("버전에 제대로 답하면 우리 것으로 본다", async () => {
+    const r = await looksLikeOurExe(await candidate(), goodRunner);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toContain("2.0.0-dev");
+  });
+
+  test("런타임을 복사한 경우를 잡아낸다", async () => {
+    const r = await looksLikeOurExe(await candidate(), bunRunner);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("Script not found");
+  });
+
+  test("이름만 같고 엉뚱한 응답을 내면 거부한다 — 간접 신호로는 속는다", async () => {
+    const weird = recorder({ stdout: "Python 3.9.13" });
+    const r = await looksLikeOurExe(await candidate(), weird);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("우리 실행 파일이 아닙니다");
+  });
+
+  test("없는 파일은 확인 자체가 실패한다", async () => {
+    expect((await looksLikeOurExe(join(work, "없음.exe"), goodRunner)).ok).toBe(false);
+  });
+
+  test("설치가 잘못된 원본을 복사하지 않는다", async () => {
+    const src = await candidate();
+    const r = await install({
+      sourceExe: src, env, runner: bunRunner, platform: "win32",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.steps.find((s) => s.name === "exe")!.state).toBe("failed");
+    // 복사 자체가 일어나지 않아야 한다 — 깨진 설치본을 남기지 않는다
+    expect(await Bun.file(installedExePath(env)).exists()).toBe(false);
+  });
+
+  test("거부 사유가 무엇을 하라는지 알려 준다", async () => {
+    const r = await looksLikeOurExe(await candidate(), recorder({ stdout: "엉뚱" }));
+    expect(r.detail).toContain("bun run build");
+    expect(r.detail).toContain("--exe");
+  });
+
+  test("상태 조회가 '파일은 있는데 우리 것이 아님'을 구분한다", async () => {
+    const src = await candidate();
+    await install({ sourceExe: src, env, runner: goodRunner, platform: "win32" });
+    // 설치는 됐지만 이후 그 자리의 파일이 엉뚱해진 상황
+    const status = await installStatus({ env, runner: bunRunner, platform: "win32" });
+    expect(status.exe_present).toBe(true);
+    expect(status.exe_installed).toBe(false); // 존재 != 설치됨
+    expect(status.exe_check).toContain("Script not found");
+  });
+});
+
 describe("설치", () => {
+  /** 정상 원본처럼 굴게 하려면 version 응답이 필요하다. */
+  const okRunner = () => recorder({ stdout: "2.0.0-dev\n" });
+
   async function fakeExe(): Promise<string> {
     const p = join(work, "autoharness.exe");
     await writeFile(p, "가짜 실행 파일", "utf8");
@@ -173,7 +251,7 @@ describe("설치", () => {
 
   test("EXE 를 설치 위치로 복사한다", async () => {
     const src = await fakeExe();
-    const r = await install({ sourceExe: src, env, runner: recorder(), platform: "win32" });
+    const r = await install({ sourceExe: src, env, runner: okRunner(), platform: "win32" });
     expect(r.ok).toBe(true);
     expect(await Bun.file(installedExePath(env)).exists()).toBe(true);
     expect(r.steps.find((s) => s.name === "exe")!.state).toBe("ok");
@@ -186,7 +264,7 @@ describe("설치", () => {
     await writeFile(join(skill, "SKILL.md"), "문서", "utf8");
     await writeFile(join(skill, "templates", "t.txt"), "템플릿", "utf8");
 
-    const r = await install({ sourceExe: src, skillSource: skill, env, runner: recorder(), platform: "win32" });
+    const r = await install({ sourceExe: src, skillSource: skill, env, runner: okRunner(), platform: "win32" });
     expect(r.steps.find((s) => s.name === "skill")!.state).toBe("ok");
     expect(await readFile(join(userPaths(env).skillDir, "SKILL.md"), "utf8")).toBe("문서");
     expect(await Bun.file(join(userPaths(env).skillDir, "templates", "t.txt")).exists()).toBe(true);
@@ -194,7 +272,7 @@ describe("설치", () => {
 
   test("자동 시작은 기본으로 걸지 않는다 — 영구 설정은 명시 요청에만", async () => {
     const src = await fakeExe();
-    const run = recorder();
+    const run = okRunner();
     const r = await install({ sourceExe: src, env, runner: run, platform: "win32" });
     expect(r.steps.find((s) => s.name === "autostart")!.state).toBe("skipped");
     expect(run.calls.some((c) => c[0] === "schtasks")).toBe(false);
@@ -202,7 +280,7 @@ describe("설치", () => {
 
   test("--autostart 를 주면 등록한다", async () => {
     const src = await fakeExe();
-    const run = recorder();
+    const run = okRunner();
     const r = await install({
       sourceExe: src, env, runner: run, platform: "win32", autostart: true,
     });
@@ -212,7 +290,7 @@ describe("설치", () => {
 
   test("MCP 등록은 먼저 지우고 다시 넣는다 — 재설치가 실패하지 않게", async () => {
     const src = await fakeExe();
-    const run = recorder();
+    const run = okRunner();
     await install({ sourceExe: src, env, runner: run, platform: "win32" });
     const mcpCalls = run.calls.filter((c) => c[1] === "mcp");
     expect(mcpCalls[0]).toContain("remove");
@@ -222,7 +300,7 @@ describe("설치", () => {
 
   test("한 단계가 실패해도 나머지를 계속하고 전체를 실패로 보고한다", async () => {
     const r = await install({
-      sourceExe: join(work, "없는파일.exe"), env, runner: recorder(), platform: "win32",
+      sourceExe: join(work, "없는파일.exe"), env, runner: okRunner(), platform: "win32",
     });
     expect(r.ok).toBe(false);
     expect(r.steps.find((s) => s.name === "exe")!.state).toBe("failed");
@@ -231,12 +309,18 @@ describe("설치", () => {
 
   test("dry-run 은 아무것도 바꾸지 않는다", async () => {
     const src = await fakeExe();
-    const run = recorder();
+    const run = okRunner();
     const r = await install({
       sourceExe: src, env, runner: run, platform: "win32", autostart: true, dryRun: true,
     });
     expect(r.dryRun).toBe(true);
-    expect(run.calls.length).toBe(0);
+    // 부작용 명령은 하나도 없어야 한다. 원본을 확인하는 `version` 은 읽기 전용 탐침이고,
+    // dry-run 이 "이 설치가 될지" 를 알려주려면 오히려 실행해야 한다.
+    const mutating = run.calls.filter(
+      (c) => c[0] === "schtasks" || (c[1] === "mcp" && (c.includes("add") || c.includes("remove"))),
+    );
+    expect(mutating.length).toBe(0);
+    expect(run.calls.every((c) => c.at(-1) === "version")).toBe(true);
     expect(await Bun.file(installedExePath(env)).exists()).toBe(false);
     expect(r.steps.every((s) => s.state !== "failed")).toBe(true);
   });
@@ -272,8 +356,8 @@ describe("상태 조회", () => {
   test("설치 후에는 그것이 드러난다", async () => {
     const src = join(work, "autoharness.exe");
     await writeFile(src, "x", "utf8");
-    await install({ sourceExe: src, env, runner: recorder(), platform: "win32" });
-    const s = await installStatus({ env, runner: recorder(), platform: "win32" });
+    await install({ sourceExe: src, env, runner: recorder({ stdout: "2.0.0-dev" }), platform: "win32" });
+    const s = await installStatus({ env, runner: recorder({ stdout: "2.0.0-dev" }), platform: "win32" });
     expect(s.exe_installed).toBe(true);
     expect(s.autostart.registered).toBe(true);
   });

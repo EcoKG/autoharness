@@ -174,6 +174,9 @@ export async function main(argv: readonly string[]): Promise<number> {
             dryRun,
             autostart: flags["autostart"] === true,
             skillSource: typeof flags["skill"] === "string" ? flags["skill"] : undefined,
+            // `bun run` 으로 실행하면 process.execPath 가 bun.exe 다 — 개발 실행에서는
+            // 빌드된 EXE 를 명시해야 런타임을 복사하는 사고가 나지 않는다
+            sourceExe: typeof flags["exe"] === "string" ? flags["exe"] : undefined,
           });
     console.log(JSON.stringify(result, null, 2));
     return result.ok ? EXIT.OK : EXIT.USAGE;
