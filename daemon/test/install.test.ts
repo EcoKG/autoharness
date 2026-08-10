@@ -36,6 +36,7 @@ import {
   installedExePath,
   looksLikeOurExe,
   MCP_REGISTERED_DETAIL,
+  REQUIRED_STEPS,
   shellCommand,
   uninstall,
   updateBlockedHint,
@@ -649,6 +650,67 @@ describe("MCP 등록 안내 — 언제부터 보이는지 말한다", () => {
     const mcp = r.steps.find((s) => s.name === "mcp");
     expect(mcp?.state).toBe("ok");
     expect(mcp?.detail).toContain("새로 시작하는");
+    await rm(src, { recursive: true, force: true });
+  });
+});
+
+/**
+ * 자동 시작 실패가 설치 전체를 무효로 만들지 않는다.
+ *
+ * 실측 상황: systemd 가 없는 호스트(WSL 이 흔하다)에서 `--v2 --autostart` 를 쓰면 EXE·스킬·
+ * MCP 는 다 깔리는데 자동 시작만 실패한다. 그런데 종전에는 어느 단계든 실패하면 ok=false 라
+ * 원라인이 그 자리에서 중단했고, 확인 명령과 PATH 안내가 통째로 사라졌다. 사용자는 **다
+ * 깔린 설치**를 두고 실패했다고 읽는다.
+ *
+ * 되는 척과는 다르다 — 단계 state 는 failed 로 남고 warnings 에 실린다.
+ */
+describe("자동 시작 실패는 설치를 무효로 만들지 않는다", () => {
+  async function installWithFailingAutostart(): Promise<Awaited<ReturnType<typeof install>>> {
+    const src = await mkdtemp(join(tmpdir(), "ah-auto-"));
+    const exe = join(src, "autoharness.exe");
+    await writeFile(exe, "x", "utf8");
+    // 자동 시작만 실패시킨다. 명령별로 갈라야 한다 — 뭉뚱그려 실패시키면 MCP 등록까지
+    // 실패해 '필수 단계 실패' 가 되어 검사하려는 상황이 만들어지지 않는다.
+    // 리눅스 경로를 쓰는 이유: Windows 는 스케줄러가 막히면 시작프로그램 폴더로 대체돼
+    // 자동 시작이 실제로는 성공한다(그 폴백 자체는 정상 동작이다).
+    const runner = (async (argv: readonly string[]) => {
+      if (argv[0] === "systemctl") return { code: 1, stdout: "", stderr: "systemd 없음" };
+      if (argv.includes("version")) return { code: 0, stdout: VERSION, stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    }) as CommandRunner;
+    const r = await install({
+      sourceExe: exe, env, runner, platform: "linux", autostart: true,
+    });
+    await rm(src, { recursive: true, force: true });
+    return r;
+  }
+
+  test("필수 단계 집합에 자동 시작이 없다", () => {
+    expect(REQUIRED_STEPS.has("exe")).toBe(true);
+    expect(REQUIRED_STEPS.has("mcp")).toBe(true);
+    expect(REQUIRED_STEPS.has("autostart")).toBe(false);
+  });
+
+  test("자동 시작만 실패하면 설치는 성공으로 본다", async () => {
+    const r = await installWithFailingAutostart();
+    expect(r.steps.find((s) => s.name === "exe")?.state).toBe("ok");
+    expect(r.ok).toBe(true);
+  });
+
+  test("되는 척하지 않는다 — 실패한 단계는 failed 로 남고 warnings 에 실린다", async () => {
+    const r = await installWithFailingAutostart();
+    const auto = r.steps.find((s) => s.name === "autostart");
+    expect(auto?.state).toBe("failed");
+    expect(r.warnings.some((w) => w.startsWith("autostart"))).toBe(true);
+  });
+
+  test("필수 단계가 실패하면 여전히 실패다", async () => {
+    const src = await mkdtemp(join(tmpdir(), "ah-req-"));
+    const r = await install({
+      sourceExe: join(src, "없는파일.exe"), env, runner: recorder({ stdout: VERSION }),
+      platform: "win32",
+    });
+    expect(r.ok).toBe(false);
     await rm(src, { recursive: true, force: true });
   });
 });

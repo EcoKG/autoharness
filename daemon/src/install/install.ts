@@ -33,7 +33,21 @@ export interface InstallResult {
   dryRun: boolean;
   exePath: string;
   steps: Step[];
+  /** 실패했지만 설치를 못 쓰게 만들지는 않는 단계들 — 눈에 띄게 남긴다. */
+  warnings: string[];
 }
+
+/**
+ * 설치 성패를 가르는 단계들.
+ *
+ * 자동 시작은 여기 없다. systemd 가 없는 호스트(WSL 이 흔하다)에서 등록 실패는 정상이고,
+ * 그때도 EXE·스킬·MCP 는 다 깔려서 **바로 쓸 수 있는 설치**다. 그런데 종전에는 어느 단계든
+ * 실패하면 ok=false 였고, 원라인이 그 자리에서 중단해 확인 명령과 PATH 안내가 통째로
+ * 사라졌다 — 다 깔린 것을 두고 사용자는 설치가 실패했다고 읽는다.
+ *
+ * 되는 척은 여전히 안 한다: 그 단계의 state 는 failed 로 남고 warnings 에도 실린다.
+ */
+export const REQUIRED_STEPS = new Set(["exe", "skill", "mcp"]);
 
 export interface InstallOptions {
   /** 설치할 EXE 원본. 기본은 지금 실행 중인 실행 파일이다. */
@@ -262,11 +276,13 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     steps.push(step("autostart", r.ok ? "ok" : "failed", `${r.mechanism}: ${r.detail}`));
   }
 
+  const failed = steps.filter((s) => s.state === "failed");
   return {
-    ok: steps.every((s) => s.state !== "failed"),
+    ok: !failed.some((s) => REQUIRED_STEPS.has(s.name)),
     dryRun,
     exePath: target,
     steps,
+    warnings: failed.filter((s) => !REQUIRED_STEPS.has(s.name)).map((s) => `${s.name}: ${s.detail}`),
   };
 }
 
@@ -308,7 +324,7 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Install
   steps.push(
     step("data", "skipped", "장부·레지스트리·로그는 남깁니다 — 진행 상태를 지우지 않습니다."),
   );
-  return { ok: true, dryRun, exePath: installedExePath(env), steps };
+  return { ok: true, dryRun, exePath: installedExePath(env), steps, warnings: [] };
 }
 
 /** 설치 상태 조회 — 무엇이 실제로 걸려 있는가. */

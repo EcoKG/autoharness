@@ -202,7 +202,9 @@ install_v2() {
     [ -d "$SRC/skill" ] && args+=(--skill "$SRC/skill")
     [ "$DO_AUTOSTART" = "1" ] && args+=(--autostart)
     "$exe" "${args[@]}" || {
-        step "설치 단계에서 문제가 있었습니다 — 위 출력을 확인하십시오."
+        step "설치 단계에서 문제가 있었습니다 — 위 출력의 steps 를 확인하십시오."
+        # 실패해도 무엇이 됐는지 볼 수 있어야 한다 — 이 한 줄까지 잃으면 손에 아무것도 없다
+        step "확인:  $exe install --status"
         exit 1
     }
 
