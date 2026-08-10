@@ -71,8 +71,16 @@ v2 를 만든 이유는 하나입니다. **v1 의 자동 부활이 OS 스케줄�
 
 > **표기 규약**: 이 문서의 `autoharness` 는 설치된 실행 파일
 > `~/.claude/autoharness/bin/autoharness` — Windows 에서는 `%USERPROFILE%\.claude\autoharness\bin\autoharness.exe` —
-> 를 가리킵니다. **설치기는 PATH 를 건드리지 않습니다.** 짧은 이름으로 쓰시려면 그 디렉토리를
-> PATH 에 추가하시고, 아니면 전체 경로로 부르십시오.
+> 를 가리킵니다. **설치기는 PATH 를 건드리지 않습니다.** 전체 경로로 부르셔도 되고,
+> 짧은 이름으로 쓰시려면 아래처럼 추가하십시오.
+
+```bash
+echo 'export PATH="$HOME/.claude/autoharness/bin:$PATH"' >> ~/.bashrc && . ~/.bashrc
+```
+
+zsh 는 `~/.zshrc`, fish 는 `fish_add_path ~/.claude/autoharness/bin` 입니다.
+**뒤의 `. ~/.bashrc` 를 빠뜨리면 지금 열려 있는 셸에는 반영되지 않아** 바로 쳐도
+`command not found` 가 납니다 — rc 파일 추가는 다음에 여는 셸부터 적용되기 때문입니다.
 
 ## 준비물
 

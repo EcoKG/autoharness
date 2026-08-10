@@ -148,5 +148,33 @@ class MirrorOverrideTest(unittest.TestCase):
         self.assertIn("AUTOHARNESS_RELEASE_BASE", src)
 
 
+
+class PathGuidanceTest(unittest.TestCase):
+    """설치 뒤 안내 — **그대로 따르면 목적을 이뤄야 한다.**
+
+    실측 사고: rc 파일에 추가하라고만 안내했다. 사용자가 그대로 실행하고 곧바로
+    `autoharness` 를 쳤더니 command not found 였다. rc 추가는 다음에 여는 셸부터
+    적용되기 때문이다. 안내대로 했는데 안 되면 사용자는 설치가 실패했다고 읽는다.
+    """
+
+    def setUp(self):
+        self.src = read(INSTALL_SH)
+
+    def test_path_hint_reloads_current_shell(self):
+        # 추가와 반영이 한 줄에 함께 있어야 한다 — 둘로 나누면 두 번째를 빠뜨린다
+        self.assertRegex(self.src, r">> ~/\.bashrc && \. ~/\.bashrc")
+
+    def test_path_hint_covers_non_bash_shells(self):
+        # bash 만 상정하면 zsh·fish 사용자는 엉뚱한 파일을 고치게 된다
+        self.assertIn(".zshrc", self.src)
+        self.assertIn("fish_add_path", self.src)  # fish 는 export 구문 자체가 다르다
+
+    def test_full_path_fallback_is_offered(self):
+        # rc 편집을 강요하지 않는다 — 전체 경로로도 쓸 수 있음을 알린다
+        self.assertIn("전체 경로로 쓸 수 있습니다", self.src)
+
+    def test_already_on_path_is_not_told_to_add_again(self):
+        self.assertIn("PATH 에 이미 있습니다", self.src)
+
 if __name__ == "__main__":
     unittest.main()

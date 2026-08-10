@@ -185,7 +185,33 @@ install_v2() {
     step ""
     step "확인:  $exe install --status"
     step "       $exe selftest"
-    step "PATH 에 넣으려면: echo 'export PATH=\"$bin_dir:\$PATH\"' >> ~/.bashrc"
+
+    # PATH 안내는 **현재 셸에 반영하는 것까지** 말한다.
+    #
+    # 종전에는 rc 파일에 추가하라고만 했다. 그대로 따른 사용자가 곧바로 `autoharness` 를
+    # 쳤더니 command not found 였다(실측) — rc 추가는 다음에 여는 셸부터 적용되기 때문이다.
+    # 안내대로 했는데 목적을 못 이루면 사용자는 설치가 실패했다고 읽는다.
+    case ":$PATH:" in
+        *":$bin_dir:"*)
+            step "PATH 에 이미 있습니다 — 새 셸에서 'autoharness' 로 바로 부를 수 있습니다."
+            ;;
+        *)
+            case "${SHELL##*/}" in
+                fish)
+                    step "PATH 에 넣으려면: fish_add_path $bin_dir"
+                    ;;
+                zsh)
+                    step "PATH 에 넣으려면(현재 셸까지 반영):"
+                    step "  echo 'export PATH=\"$bin_dir:\$PATH\"' >> ~/.zshrc && . ~/.zshrc"
+                    ;;
+                *)
+                    step "PATH 에 넣으려면(현재 셸까지 반영):"
+                    step "  echo 'export PATH=\"$bin_dir:\$PATH\"' >> ~/.bashrc && . ~/.bashrc"
+                    ;;
+            esac
+            step "PATH 에 넣지 않아도 전체 경로로 쓸 수 있습니다: $exe"
+            ;;
+    esac
     exit 0
 }
 
