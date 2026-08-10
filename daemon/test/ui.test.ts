@@ -353,3 +353,30 @@ describe("콘솔 필터", () => {
     expect(UI_HTML).toContain("ids.length < 2");
   });
 });
+
+/**
+ * 지난 세션 로그 뷰어.
+ *
+ * 서버에는 목록·본문 API 가 이미 있었는데 화면이 한 번도 부르지 않았다. 지금 흐르는 줄은
+ * 볼 수 있어도 "어젯밤 그 세션이 무엇을 했는지" 는 화면에서 볼 수 없었다.
+ */
+describe("지난 세션 로그", () => {
+  test("이미 있는 API 를 부른다 — 새 엔드포인트를 만들지 않는다", () => {
+    expect(UI_HTML).toContain("/sessions");
+    expect(UI_HTML).toContain("loadSessions");
+    expect(UI_HTML).toContain("openSession");
+  });
+
+  test("잘린 본문이면 그 사실을 말한다", () => {
+    // 앞부분이 없는 줄 모르고 읽으면 엉뚱한 결론을 낸다
+    expect(UI_HTML).toContain("뒷부분만 표시 중");
+  });
+
+  test("본문은 textContent 로 넣는다", () => {
+    expect(UI_HTML).toContain('setText($("sessionBody")');
+  });
+
+  test("로그가 없어도 화면이 죽지 않는다", () => {
+    expect(UI_HTML).toContain("기록 없음");
+  });
+});

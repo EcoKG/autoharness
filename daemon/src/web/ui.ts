@@ -134,6 +134,16 @@ export const UI_HTML = `<!doctype html>
     </section>
 
     <section>
+      <h2>지난 세션 로그</h2>
+      <div class="row" style="margin-bottom:6px">
+        <select id="sessionPick" style="min-width:280px"></select>
+        <button id="sessionOpen">열기</button>
+        <span id="sessionMeta" class="muted"></span>
+      </div>
+      <div id="sessionBody" class="mono" style="white-space:pre-wrap; max-height:280px; overflow:auto"></div>
+    </section>
+
+    <section>
       <h2>콘솔</h2>
       <div class="row" style="margin-bottom:8px">
         <label class="muted"><input type="radio" name="mode" value="all" checked> 전체</label>
@@ -466,6 +476,53 @@ export const UI_HTML = `<!doctype html>
     }).catch(function () { renderWiring(null); });
   }
 
+  /**
+   * 지난 세션 로그.
+   *
+   * 서버에는 목록·본문 API 가 **이미 있었는데 화면이 한 번도 부르지 않았다.** 그래서 지금
+   * 흐르는 줄은 볼 수 있어도 "어젯밤 그 세션이 무엇을 했는지" 는 화면에서 볼 수 없었다.
+   * 새 엔드포인트를 만들지 않고 있는 것을 쓴다.
+   */
+  function loadSessions() {
+    var pick = $("sessionPick");
+    pick.replaceChildren();
+    if (!selected) return Promise.resolve();
+    return api("/api/projects/" + encodeURIComponent(selected) + "/sessions")
+      .then(function (r) {
+        var list = (r && r.sessions) || [];
+        if (!list.length) {
+          var none = document.createElement("option");
+          setText(none, "기록 없음");
+          none.disabled = true;
+          pick.append(none);
+          return;
+        }
+        list.forEach(function (sfile) {
+          var o = document.createElement("option");
+          o.value = sfile.name;
+          var when = sfile.mtime ? sfile.mtime.slice(0, 19).replace("T", " ") : sfile.name;
+          setText(o, when + "  (" + Math.round(sfile.size / 1024) + "KB)");
+          pick.append(o);
+        });
+      })
+      .catch(function () { /* 로그가 없어도 화면은 살아 있어야 한다 */ });
+  }
+
+  function openSession() {
+    var name = $("sessionPick").value;
+    if (!selected || !name) return;
+    setText($("sessionBody"), "불러오는 중…");
+    api("/api/projects/" + encodeURIComponent(selected) + "/sessions/" + encodeURIComponent(name))
+      .then(function (r) {
+        setText($("sessionBody"), r.body || "(비어 있음)");
+        // 잘렸으면 반드시 말한다 — 앞부분이 없는 줄 모르고 읽으면 엉뚱한 결론을 낸다
+        setText($("sessionMeta"), r.truncated ? "뒷부분만 표시 중(파일이 큽니다)" : "");
+        var box = $("sessionBody");
+        box.scrollTop = box.scrollHeight;
+      })
+      .catch(function (e) { setText($("sessionBody"), e.message); });
+  }
+
   function refresh() {
     return api("/api/status").then(function (s) {
       state = s;
@@ -475,7 +532,7 @@ export const UI_HTML = `<!doctype html>
       renderProjects();
       renderDetail();
       if (!selected) { renderTasks([]); return renderWiring(null); }
-      return loadTasks().then(loadWiring);
+      return loadTasks().then(loadWiring).then(loadSessions);
     });
   }
 
@@ -660,6 +717,7 @@ export const UI_HTML = `<!doctype html>
     });
   }
 
+  $("sessionOpen").addEventListener("click", openSession);
   $("connect").addEventListener("click", start);
   $("token").addEventListener("keydown", function (e) { if (e.key === "Enter") start(); });
   $("forget").addEventListener("click", function () {
