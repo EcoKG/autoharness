@@ -288,13 +288,27 @@ export interface LaunchHandle {
   readLogTail: () => Promise<string>;
 }
 
+export interface LaunchSpec {
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+  logPath: string;
+  /**
+   * 자식이 뱉는 줄을 그대로 흘려보낸다 — **웹 콘솔이 보고 싶은 것은 이것이다.**
+   * 데몬 자신의 판단 로그가 아니라 주행 중인 세션이 지금 무엇을 하는지.
+   */
+  onLine?: (line: string) => void;
+}
+
 export interface Launcher {
-  (spec: {
-    argv: string[];
-    cwd: string;
-    env: Record<string, string>;
-    logPath: string;
-  }): Promise<LaunchHandle>;
+  (spec: LaunchSpec): Promise<LaunchHandle>;
+}
+
+/** 세션 한 줄의 길이 상한 — 한 줄이 화면과 스트림을 통째로 먹지 않게 한다. */
+export const SESSION_LINE_CAP = 2000;
+
+export function capLine(line: string, cap = SESSION_LINE_CAP): string {
+  return line.length <= cap ? line : `${line.slice(0, cap)}… (${line.length - cap}자 생략)`;
 }
 
 const BUILTIN_BOOTSTRAP = [
@@ -337,6 +351,8 @@ export function findClaude(): string {
 export interface LaunchOptions {
   settings?: Partial<RegistrySettings> & { limit_notice_hits?: number };
   launcher: Launcher;
+  /** 세션 출력을 받을 곳. 데몬이 콘솔 로그로 연결한다. */
+  onLine?: (line: string) => void;
   env?: NodeJS.ProcessEnv;
   now?: number;
   logDir?: string;
@@ -371,7 +387,10 @@ export async function launchProject(
 
   let handle: LaunchHandle;
   try {
-    handle = await options.launcher({ argv, cwd: proj.repo, env: childEnv, logPath });
+    handle = await options.launcher({
+      argv, cwd: proj.repo, env: childEnv, logPath,
+      onLine: options.onLine ? (line) => options.onLine!(capLine(line)) : undefined,
+    });
   } catch (err) {
     const message = markError(proj, settings, `기동 실패: ${String(err)}`, now);
     proj.last_launch = { ts: nowIso(), result: "error", log: logPath };
@@ -396,20 +415,51 @@ export async function launchProject(
 
 /** 실제 프로세스를 띄우는 런처 — 데몬이 쓰는 구현. */
 export function realLauncher(): Launcher {
-  return async ({ argv, cwd, env, logPath }) => {
+  return async ({ argv, cwd, env, logPath, onLine }) => {
     const file = await open(logPath, "w");
+    // 줄을 흘려야 하면 파이프로 받아 **파일과 스트림 양쪽에** 쓴다.
+    // 아무도 안 보면 파이프를 만들 이유가 없으므로 그때는 곧장 파일로 보낸다.
+    const piped = typeof onLine === "function";
     const proc = Bun.spawn(argv, {
       cwd,
       env,
       stdin: "ignore",
-      stdout: file.fd,
-      stderr: file.fd,
+      stdout: piped ? "pipe" : file.fd,
+      stderr: piped ? "pipe" : file.fd,
       // 자식은 데몬보다 오래 산다 — 프로브 뒤 분리하는 것이 정상 경로다
     });
     let exited: number | null = null;
     proc.exited.then((code) => {
       exited = code;
     });
+
+    if (piped) {
+      // 프로브가 끝나 데몬이 세션을 분리해도 **끝까지 읽는다** — 분리는 기다리지
+      // 않는다는 뜻이지 출력을 버린다는 뜻이 아니다. 이걸 놓치면 기동 직후 몇 줄만
+      // 보이고 정작 주행하는 내용이 사라진다.
+      const pump = async (stream: ReadableStream<Uint8Array> | undefined): Promise<void> => {
+        if (!stream) return;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for await (const chunk of stream) {
+          buffer += decoder.decode(chunk, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, idx).replace(/\r$/, "");
+            buffer = buffer.slice(idx + 1);
+            await file.write(`${line}\n`, null, "utf8").catch(() => {});
+            if (line.trim()) onLine!(line);
+          }
+        }
+        if (buffer.trim()) {
+          await file.write(buffer, null, "utf8").catch(() => {});
+          onLine!(buffer);
+        }
+      };
+      void Promise.all([pump(proc.stdout as ReadableStream<Uint8Array>),
+                        pump(proc.stderr as ReadableStream<Uint8Array>)])
+        .finally(() => void file.close().catch(() => {}));
+    }
     return {
       pid: proc.pid,
       probe: async (probeSec) => {
@@ -418,7 +468,7 @@ export function realLauncher(): Launcher {
           if (exited !== null) break;
           await Bun.sleep(Math.min(5000, Math.max(200, deadline - Date.now())));
         }
-        await file.close().catch(() => {});
+        if (!piped) await file.close().catch(() => {});
         return exited;
       },
       readLogTail: async () => {

@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T05:36:40.639324+00:00",
+  "updated_at": "2026-08-10T05:47:06.990470+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -936,7 +936,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/ts-test-parity-20260810T053438Z.log",
-      "commit": null,
+      "commit": "869f595",
       "started_at": "2026-08-10T05:34:38.163144+00:00",
       "finished_at": "2026-08-10T05:36:40.639324+00:00",
       "test_cmd": null
@@ -1050,6 +1050,21 @@
       "commit": null,
       "started_at": null,
       "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "ts-session-stream",
+      "title": "웹 콘솔이 데몬 로그가 아니라 **주행 중인 Claude Code 세션 출력**을 보여 준다 (사용자 요청) — 현재 /ws/console 로 흐르는 것은 데몬 자신의 판단 로그(tick·skip·launch)뿐이고, 정작 보고 싶은 것 — 데몬이 띄운 헤드리스 claude 세션이 지금 무엇을 하는지 — 는 <런타임>/logs/<프로젝트>-<ts>.log 파일로만 들어가 아무 데도 스트림되지 않는다. 즉 웹에서는 \"기동했다\"만 보이고 그 뒤 세션이 실제로 무엇을 하는지 볼 수 없다. 수행: ① 런처가 자식의 stdout/stderr 를 파일에 쓰면서 동시에 줄 단위 콜백으로 흘리게 한다(프로브 이후 데몬이 세션을 분리해도 프로세스가 끝날 때까지 계속 읽어야 한다 — 분리는 기다리지 않는다는 뜻이지 버린다는 뜻이 아니다) ② 데몬이 그 줄을 콘솔 로그에 project=<프로젝트> action=session 으로 실어 WebSocket 구독자에게 그대로 전달한다 ③ 세션 출력은 양이 많으므로 긴 줄은 자르고 백프레셔 규칙(느린 클라이언트가 데몬을 막지 않는다)을 그대로 적용한다 ④ 웹 UI 가 데몬 판단과 세션 출력을 구분해 보여 주고 필터할 수 있게 한다(세션만 보기) ⑤ 지난 세션 로그를 읽는 REST 경로를 추가한다(GET /api/projects/:id/sessions 목록, GET /api/projects/:id/sessions/:name 본문 — 경로 순회 차단 필수) ⑥ 스트리밍·자름·필터·경로 순회 차단을 회귀로 고정한다",
+      "path": "daemon/src/daemon",
+      "deps": [],
+      "priority": 145,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/ts-session-stream-20260810T054431Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T05:44:31.421104+00:00",
+      "finished_at": "2026-08-10T05:47:06.990470+00:00",
       "test_cmd": null
     }
   ]

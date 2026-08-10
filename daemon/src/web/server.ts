@@ -12,6 +12,7 @@
  *      Host 가 우리 것이 아니면 거부한다.
  */
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { atomicWriteJson } from "../core/atomic.ts";
 import { loadTracker, statusCounts, eligibleNext, deadlockedPending, saveTracker, findTask, setTaskStatus, renderSafe } from "../core/ledger.ts";
@@ -64,6 +65,23 @@ function json(body: unknown, status = 200): Response {
 
 const unauthorized = (): Response =>
   json({ error: "인증이 필요합니다. Authorization: Bearer <token> 헤더를 보내십시오." }, 401);
+
+const SEP = String.fromCharCode(92); // 역슬래시 — 소스에 직접 쓰면 이스케이프가 꼬인다
+const SUFFIX = ".log";
+const STAMP_RE = /^\d{8}T\d{6}Z$/;
+
+/**
+ * 세션 로그 이름 검증 — 데몬이 만드는 형식(`<프로젝트>-<UTC타임스탬프>.log`)만 허용한다.
+ * 경로 조각(`..`·구분자)이 끼어들 여지를 문법 수준에서 없앤다.
+ */
+export function isSessionLogName(name: string, projectId: string): boolean {
+  // 사용자 입력으로 정규식을 조립하지 않는다 — 접두사·접미사를 잘라내고 남은 조각만 본다.
+  if (name.includes("/") || name.includes(SEP) || name.includes("..")) return false;
+  const prefix = `${projectId}-`;
+  if (!name.startsWith(prefix) || !name.endsWith(SUFFIX)) return false;
+  const stamp = name.slice(prefix.length, name.length - SUFFIX.length);
+  return STAMP_RE.test(stamp);
+}
 
 /** 요청이 우리 것을 향하고 있는가 — DNS 리바인딩 차단. */
 export function hostAllowed(hostHeader: string | null): boolean {
@@ -255,6 +273,39 @@ async function handleGet(
     const { state, tracker, error } = await loadTracker(proj.repo);
     if (!tracker) return json({ error: `장부를 읽을 수 없습니다(${state}): ${error ?? ""}` }, 409);
     return json({ id, repo: proj.repo, counts: statusCounts(tracker), tasks: tracker.tasks });
+  }
+
+  const sessions = /^\/api\/projects\/([^/]+)\/sessions$/.exec(path);
+  if (sessions) {
+    const id = decodeURIComponent(sessions[1]!);
+    const { readdir, stat } = await import("node:fs/promises");
+    const dir = userPaths(env).logs;
+    let names: string[] = [];
+    try {
+      names = (await readdir(dir)).filter((n) => n.startsWith(`${id}-`) && n.endsWith(".log"));
+    } catch {
+      names = [];
+    }
+    const items = [];
+    for (const name of names.sort().reverse().slice(0, 50)) {
+      const info = await stat(join(dir, name)).catch(() => null);
+      items.push({ name, size: info?.size ?? 0, mtime: info?.mtime?.toISOString() ?? null });
+    }
+    return json({ id, sessions: items });
+  }
+
+  const sessionBody = /^\/api\/projects\/([^/]+)\/sessions\/([^/]+)$/.exec(path);
+  if (sessionBody) {
+    const id = decodeURIComponent(sessionBody[1]!);
+    const name = decodeURIComponent(sessionBody[2]!);
+    // **경로 순회 차단** — 이름은 우리가 만든 형식만 허용한다. 사용자가 준 문자열로
+    // 파일 경로를 조립하는 자리이므로 화이트리스트가 아니면 안 된다.
+    if (!isSessionLogName(name, id)) return json({ error: "허용되지 않은 로그 이름입니다." }, 400);
+    const file = Bun.file(join(userPaths(env).logs, name));
+    if (!(await file.exists())) return json({ error: `없는 로그입니다: ${name}` }, 404);
+    const text = await file.text();
+    const tail = Math.min(200_000, Math.max(1000, Number(url.searchParams.get("bytes") ?? 100_000)));
+    return json({ id, name, truncated: text.length > tail, body: text.slice(-tail) });
   }
 
   if (path === "/api/logs") {

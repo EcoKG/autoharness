@@ -82,6 +82,9 @@ export async function tickProject(
         settings,
         env: options.env,
         launcher: options.launcher ?? realLauncher(),
+        // 세션이 뱉는 줄을 그대로 콘솔 스트림에 싣는다 — 웹에서 보고 싶은 것은
+        // "기동했다" 가 아니라 그 세션이 지금 무엇을 하는지다.
+        onLine: (line) => void log?.log("info", name, "session", line),
       });
       const level = outcome.result === "error" ? "error" : outcome.result === "limit" ? "warn" : "info";
       log?.log(level, name, outcome.result, outcome.message);

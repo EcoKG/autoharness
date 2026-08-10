@@ -70,6 +70,8 @@ export const UI_HTML = `<!doctype html>
   @media (prefers-color-scheme: light) { #console { background:#11141a; color:#dfe3ea; } }
   .line { display:block; }
   .lvl-warn { color:var(--warn); } .lvl-error { color:var(--err); } .lvl-debug { color:var(--dim); }
+  .line.session { color:#a5d6ff; }
+  .line[hidden] { display:none; }
   .err { color:var(--err); }
   .ok { color:var(--ok); }
 </style>
@@ -121,6 +123,13 @@ export const UI_HTML = `<!doctype html>
 
     <section>
       <h2>콘솔</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label class="muted"><input type="radio" name="mode" value="all" checked> 전체</label>
+        <label class="muted"><input type="radio" name="mode" value="session"> 세션 출력만</label>
+        <label class="muted"><input type="radio" name="mode" value="daemon"> 데몬 판단만</label>
+        <span class="sp"></span>
+        <span id="consoleHint" class="muted">주행 중인 Claude Code 세션의 출력이 여기에 흐릅니다.</span>
+      </div>
       <div id="console" aria-live="polite"></div>
     </section>
   </div>
@@ -311,14 +320,38 @@ export const UI_HTML = `<!doctype html>
       .catch(function (e) { message(e.message, true); });
   }
 
+  var consoleMode = "all";
+
+  function lineVisible(record) {
+    if (consoleMode === "all") return true;
+    var isSession = record.action === "session";
+    return consoleMode === "session" ? isSession : !isSession;
+  }
+
+  function applyFilter() {
+    var box = $("console");
+    for (var i = 0; i < box.children.length; i++) {
+      var el = box.children[i];
+      el.hidden = !lineVisible({ action: el.getAttribute("data-action") });
+    }
+    box.scrollTop = box.scrollHeight;
+  }
+
   function appendLine(record) {
     var box = $("console");
     var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     var line = document.createElement("span");
-    line.className = "line lvl-" + record.level;
-    setText(line, record.ts.slice(11, 19) + "  " + record.project + "  " + record.action + "  " + record.detail);
+    var isSession = record.action === "session";
+    // 세션 출력은 데몬 판단과 눈으로 구분돼야 한다 — 섞이면 어느 쪽도 못 읽는다
+    line.className = "line lvl-" + record.level + (isSession ? " session" : "");
+    line.setAttribute("data-action", record.action);
+    var text = isSession
+      ? record.ts.slice(11, 19) + "  " + record.project + " │ " + record.detail
+      : record.ts.slice(11, 19) + "  " + record.project + "  " + record.action + "  " + record.detail;
+    setText(line, text);
+    line.hidden = !lineVisible(record);
     box.append(line);
-    while (box.childElementCount > 1000) box.removeChild(box.firstChild);
+    while (box.childElementCount > 2000) box.removeChild(box.firstChild);
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
@@ -373,6 +406,11 @@ export const UI_HTML = `<!doctype html>
   });
   document.querySelectorAll("[data-act]").forEach(function (b) {
     b.addEventListener("click", function () { act(b.getAttribute("data-act")); });
+  });
+  document.querySelectorAll('input[name="mode"]').forEach(function (r) {
+    r.addEventListener("change", function () {
+      if (r.checked) { consoleMode = r.value; applyFilter(); }
+    });
   });
 
   if (token) { $("token").value = token; start(); }
