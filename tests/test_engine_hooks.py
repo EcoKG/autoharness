@@ -269,6 +269,54 @@ class PostBashSyncTest(HookSandboxTest):
         r = self.hook("hook-postbash", raw_stdin="not json at all")
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_attributes_to_the_task_just_verified(self):
+        """SHA 는 방금 검증을 통과한 작업에 붙는다 — 옛 작업이 가로채면 안 된다.
+
+        실측 사례: SHA 가 안 붙은 예전 done 작업이 20건 남아 있는 저장소에서, 오늘 만든
+        커밋이 사흘 전 작업에 귀속됐다. '가장 최근 미기록 done' 휴리스틱은 미기록 작업이
+        하나라도 쌓이면 그 뒤 모든 동기화를 그쪽으로 흘려보낸다.
+        """
+        # setUp 이 t1 을 검증 통과시켰다 — state.last_run 이 t1 을 가리킨다.
+        # t1 에 옛 SHA 를 붙여 휴리스틱 후보에서 빼고, 미기록 옛 done 작업 t2 를 심는다.
+        tracker = self.read_tracker()
+        eng.find_task(tracker, "t1")["commit"] = "old1234"
+        t2 = eng.new_task("t2", "예전 작업")
+        t2["status"] = "done"
+        t2["finished_at"] = "2000-01-01T00:00:00+00:00"
+        tracker["tasks"].append(t2)
+        eng.save_tracker(self.sandbox, tracker)
+
+        commit_cmd = 'git commit -m "t1 재작업"'
+        self.hook("hook-prebash", command=commit_cmd)
+        self.git("commit", "--allow-empty", "-q", "-m", "t1 재작업")
+        r = self.hook("hook-postbash", command=commit_cmd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        after = self.read_tracker()
+        self.assertEqual(eng.find_task(after, "t1")["commit"], self.head_sha())
+        self.assertIsNone(eng.find_task(after, "t2")["commit"],
+                          "미기록 옛 작업이 이번 커밋을 가로챘습니다")
+
+    def test_amend_replaces_dead_sha(self):
+        """amend 로 SHA 가 바뀌면 갱신한다 — 기록된 옛 SHA 는 이력에 없는 死 SHA 다."""
+        commit_cmd = 'git commit -m "작업"'
+        self.hook("hook-prebash", command=commit_cmd)
+        self.git("commit", "--allow-empty", "-q", "-m", "작업")
+        self.hook("hook-postbash", command=commit_cmd)
+        first = eng.find_task(self.read_tracker(), "t1")["commit"]
+        self.assertEqual(first, self.head_sha())
+
+        amend_cmd = 'git commit --amend -m "메시지 정정"'
+        self.hook("hook-prebash", command=amend_cmd)
+        # 성공 여부를 확인한다 — amend 가 조용히 실패하면 HEAD 가 그대로라 검사가 무의미해진다
+        r = self.git("commit", "--amend", "--allow-empty", "-q", "-m", "메시지 정정")
+        self.assertEqual(r.returncode, 0, "amend 실패: %s" % r.stderr)
+        self.hook("hook-postbash", command=amend_cmd)
+
+        recorded = eng.find_task(self.read_tracker(), "t1")["commit"]
+        self.assertEqual(recorded, self.head_sha())
+        self.assertNotEqual(recorded, first, "amend 후에도 옛 SHA 가 남아 있습니다")
+
 
 class PostBashFirstCommitTest(HookSandboxTest):
     """저장소 최초 커밋(직전 HEAD 없음) 경로 — 마커가 None 이어도 새 커밋은 기록된다."""

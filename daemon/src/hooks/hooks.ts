@@ -114,7 +114,15 @@ async function recordHeadBeforeCommit(repo: string): Promise<void> {
 }
 
 /**
- * 커밋 SHA 를 최신 done 작업에 기록한다.
+ * 커밋 SHA 를 **그 커밋이 담고 있는 작업**에 기록한다.
+ *
+ * 귀속 대상은 직전 검증을 통과한 작업(state.last_run)이다 — 커밋 게이트가 통과시키는 것이
+ * 바로 그 작업이므로, 방금 만들어진 커밋이 담은 것도 그것이다.
+ *
+ * 종전에는 "commit 이 없는 done 중 가장 최근" 이라는 휴리스틱뿐이었다. SHA 가 붙지 않은 옛
+ * 작업이 하나라도 남아 있으면 그 순간부터 모든 동기화가 그쪽으로 흘러간다 — 실측으로 오늘
+ * 만든 커밋이 사흘 전 작업에 붙었다. 휴리스틱은 last_run 이 없을 때만 폴백으로 남긴다.
+ *
  * prebash 가 남긴 1회용 마커와 대조해 **커밋이 실제로 새 커밋을 만든 경우에만** 기록한다
  * — nothing to commit 같은 실패가 직전 SHA 를 가로채지 않게 한다.
  */
@@ -124,8 +132,8 @@ export async function syncCommit(repo: string, requireNewHead: boolean): Promise
   const sha = await gitOutput(repo, ["rev-parse", "--short", "HEAD"]);
   if (!sha) return null;
 
+  const state = await readState(repo);
   if (requireNewHead) {
-    const state = await readState(repo);
     if ("head_before_commit" in state) {
       const prev = state["head_before_commit"];
       delete state["head_before_commit"]; // 마커는 1회용 — 재사용 오귀속을 막는다
@@ -133,10 +141,18 @@ export async function syncCommit(repo: string, requireNewHead: boolean): Promise
       if (sha === prev) return null;
     }
   }
-  const candidates = tracker.tasks
-    .filter((t) => t.status === "done" && !t.commit)
-    .sort((a, b) => String(b.finished_at ?? "").localeCompare(String(a.finished_at ?? "")));
-  const target = candidates[0];
+
+  const lastRun = state["last_run"] as { ok?: boolean; task?: string } | undefined;
+  let target =
+    lastRun?.ok && typeof lastRun.task === "string"
+      ? // 이미 SHA 가 있어도 덮어쓴다 — amend 로 SHA 가 바뀌면 옛 값은 이력에 없는 死 SHA 다
+        tracker.tasks.find((t) => t.id === lastRun.task && t.status === "done")
+      : undefined;
+  if (!target) {
+    target = tracker.tasks
+      .filter((t) => t.status === "done" && !t.commit)
+      .sort((a, b) => String(b.finished_at ?? "").localeCompare(String(a.finished_at ?? "")))[0];
+  }
   if (!target) return null;
   target.commit = sha;
   await atomicWriteJson(repoPaths(repo).tracker, tracker);

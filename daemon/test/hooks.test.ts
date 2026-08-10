@@ -199,3 +199,81 @@ describe("커밋 게이트 — 통과 기록 소진", () => {
     expect(await commitGateReason(dir)).not.toBeNull();
   });
 });
+
+/**
+ * 커밋 SHA 귀속 — 기록이 조용히 틀리면 "이 작업의 커밋이 무엇이냐" 에 아무도 답할 수 없다.
+ *
+ * 실측 사례: SHA 가 안 붙은 예전 done 작업이 20건 쌓인 저장소에서, 오늘 만든 커밋이
+ * 사흘 전 작업에 붙었다. "가장 최근 미기록 done" 휴리스틱은 미기록 작업이 하나라도
+ * 남으면 그 뒤 모든 동기화를 그쪽으로 흘려보낸다.
+ */
+describe("커밋 SHA 귀속", () => {
+  async function git(...args: string[]): Promise<string> {
+    const p = Bun.spawn(
+      ["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@e.com",
+       "-c", "commit.gpgsign=false", ...args],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const out = await new Response(p.stdout).text();
+    await p.exited;
+    return out.trim();
+  }
+
+  async function head(): Promise<string> {
+    return git("rev-parse", "--short", "HEAD");
+  }
+
+  async function setup(): Promise<void> {
+    await git("init", "-q");
+    await git("commit", "--allow-empty", "-q", "-m", "최초");
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [
+      // 방금 검증을 통과한 작업 — 이번 커밋이 담는 것. 옛 SHA 가 이미 붙어 있다.
+      { ...newTask("recent", "방금 통과"), status: "done", commit: "old1234",
+        finished_at: "2026-01-01T00:00:00+00:00" },
+      // SHA 가 안 붙은 채 남은 예전 작업 — 휴리스틱이 여기로 흘러가던 자리
+      { ...newTask("ancient", "예전 작업"), status: "done",
+        finished_at: "2000-01-01T00:00:00+00:00" },
+    ];
+    await saveTracker(dir, t);
+    await writeFile(repoPaths(dir).state, JSON.stringify({ last_run: { task: "recent", ok: true } }), "utf8");
+  }
+
+  test("직전 검증을 통과한 작업에 붙는다 — 옛 미기록 작업이 가로채지 않는다", async () => {
+    await setup();
+    const { syncCommit } = await import("../src/hooks/hooks.ts");
+    const sha = await syncCommit(dir, false);
+    expect(sha).toBe(await head());
+
+    const { loadTracker } = await import("../src/core/ledger.ts");
+    const { tracker } = await loadTracker(dir);
+    expect(tracker!.tasks.find((t) => t.id === "recent")!.commit).toBe(await head());
+    expect(tracker!.tasks.find((t) => t.id === "ancient")!.commit).toBeFalsy();
+  });
+
+  test("옛 SHA 를 덮어쓴다 — amend 후 남은 값은 이력에 없는 死 SHA 다", async () => {
+    await setup();
+    const { syncCommit } = await import("../src/hooks/hooks.ts");
+    await syncCommit(dir, false);
+    const { loadTracker } = await import("../src/core/ledger.ts");
+    const before = (await loadTracker(dir)).tracker!.tasks.find((t) => t.id === "recent")!.commit;
+
+    await git("commit", "--amend", "--allow-empty", "-q", "-m", "메시지 정정");
+    await syncCommit(dir, false);
+    const after = (await loadTracker(dir)).tracker!.tasks.find((t) => t.id === "recent")!.commit;
+
+    expect(after).toBe(await head());
+    expect(after).not.toBe(before);
+  });
+
+  test("통과 기록이 없으면 종전 휴리스틱으로 내려간다 — 옛 저장소 호환", async () => {
+    await setup();
+    await writeFile(repoPaths(dir).state, JSON.stringify({}), "utf8");
+    const { syncCommit } = await import("../src/hooks/hooks.ts");
+    await syncCommit(dir, false);
+
+    const { loadTracker } = await import("../src/core/ledger.ts");
+    const { tracker } = await loadTracker(dir);
+    expect(tracker!.tasks.find((t) => t.id === "ancient")!.commit).toBe(await head());
+  });
+});

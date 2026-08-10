@@ -1120,7 +1120,18 @@ def cmd_heartbeat(a):
 
 
 def sync_commit(repo, require_new_head=False):
-    """최신 done 작업에 HEAD SHA 를 기록.
+    """이번 커밋의 SHA 를 그 커밋이 담고 있는 작업에 기록.
+
+    귀속 대상은 **직전 검증을 통과한 작업**(state.last_run)이다. 커밋 게이트가 통과시키는
+    것이 바로 그 작업이므로, 지금 만들어진 커밋이 담고 있는 작업도 그것이다.
+
+    예전에는 "commit 이 없는 done 중 가장 최근" 이라는 휴리스틱만 썼다. 그러면 SHA 가
+    붙지 않은 옛 작업이 하나라도 남아 있는 순간부터 모든 동기화가 그쪽으로 흘러간다 —
+    실제로 이 저장소에서 오늘 만든 커밋이 사흘 전 작업에 붙었다. 기록이 조용히 틀리면
+    나중에 "이 작업의 커밋이 무엇이냐" 는 물음에 아무도 답할 수 없다.
+
+    휴리스틱은 last_run 이 없을 때(장부만 있고 실행 이력이 없는 저장소·부분 설치)만
+    폴백으로 남긴다.
 
     require_new_head=True(hook-postbash 경로): hook-prebash 가 커밋 직전에 남긴
     1회용 마커(head_before_commit)와 현재 HEAD 를 대조해, 커밋이 실패해 HEAD 가
@@ -1133,21 +1144,31 @@ def sync_commit(repo, require_new_head=False):
     sha = _git(repo, "rev-parse", "--short", "HEAD")
     if not sha:
         return None  # HEAD 없음 — 커밋 미생성. 마커는 다음 시도를 위해 남긴다
+    state = load_state(repo)
     if require_new_head:
-        state = load_state(repo)
         if "head_before_commit" in state:
             prev = state.pop("head_before_commit")
             save_state(repo, state)  # 마커는 1회용 — 소진해 재사용 오귀속을 막는다
             if sha == prev:
                 return None  # 커밋 명령이 새 커밋을 만들지 못함 — 기록하지 않는다
-    cands = [t for t in tracker["tasks"] if t["status"] == "done" and not t.get("commit")]
-    if not cands:
-        return None
-    cands.sort(key=lambda t: t.get("finished_at") or "", reverse=True)
-    cands[0]["commit"] = sha
+
+    target = None
+    last = state.get("last_run") or {}
+    if last.get("ok") and isinstance(last.get("task"), str):
+        t = find_task(tracker, last["task"])
+        # 이미 SHA 가 있어도 덮어쓴다 — amend 로 SHA 가 바뀌면 옛 값은 이력에 없는 死 SHA 다
+        if t is not None and t["status"] == "done":
+            target = t
+    if target is None:
+        cands = [t for t in tracker["tasks"] if t["status"] == "done" and not t.get("commit")]
+        if not cands:
+            return None
+        cands.sort(key=lambda t: t.get("finished_at") or "", reverse=True)
+        target = cands[0]
+    target["commit"] = sha
     save_tracker(repo, tracker)
     render(repo)
-    return {"task": cands[0]["id"], "commit": sha}
+    return {"task": target["id"], "commit": sha}
 
 
 def cmd_sync_commit(a):
