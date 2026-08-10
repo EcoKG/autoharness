@@ -35,6 +35,7 @@ import {
   installStatus,
   installedExePath,
   looksLikeOurExe,
+  shellCommand,
   uninstall,
   updateBlockedHint,
 } from "../src/install/install.ts";
@@ -585,5 +586,41 @@ describe("실행 중 갱신 — 막힌 이유와 조치를 함께 말한다", ()
     const err = Object.assign(new Error("ENOSPC: no space left"), { code: "ENOSPC" });
     expect(updateBlockedHint(err, "win32")).toBeNull();
     expect(updateBlockedHint(new Error("코드 없는 오류"), "win32")).toBeNull();
+  });
+});
+
+/**
+ * 안내 명령은 **붙여넣으면 실행돼야 한다.**
+ *
+ * 실측 결함: claude CLI 가 없을 때 나오는 수동 등록 안내가 첫 토큰 `claude` 를 잘라
+ * `mcp add --scope user ...` 를 출력했다. 이 분기는 claude 가 없을 때만 타므로 등록 방법을
+ * 알려 주는 유일한 출구인데, 그 한 줄이 `mcp: command not found` 로 끝났다.
+ */
+describe("안내 명령 — 그대로 붙여넣어 실행된다", () => {
+  test("첫 토큰을 자르지 않는다", () => {
+    expect(shellCommand(["claude", "mcp", "add"])).toBe("claude mcp add");
+  });
+
+  test("공백 있는 경로를 감싼다 — Windows 사용자명에 공백은 흔하다", () => {
+    const out = shellCommand(["claude", "mcp", "add", "--", "C:/Users/John Doe/ah.exe", "mcp"]);
+    expect(out).toContain('"C:/Users/John Doe/ah.exe"');
+    expect(out.startsWith("claude mcp add")).toBe(true);
+  });
+
+  test("따옴표가 든 인자를 깨뜨리지 않는다", () => {
+    expect(shellCommand(['a"b'])).toBe('"a\\"b"');
+  });
+
+  test("수동 등록 안내와 dry-run 이 같은 명령을 낸다", async () => {
+    const src = await mkdtemp(join(tmpdir(), "ah-cmd-"));
+    const exe = join(src, "autoharness.exe");
+    await writeFile(exe, "x", "utf8");
+    const dry = await install({
+      sourceExe: exe, env, dryRun: true, runner: recorder({ stdout: VERSION }), platform: "win32",
+    });
+    const mcpStep = dry.steps.find((s) => s.name === "mcp");
+    // dry-run 문구는 "(dry-run) " 접두 뒤에 명령이 온다 — 그 명령이 claude 로 시작해야 한다
+    expect(mcpStep?.detail).toContain("claude mcp add --scope user autoharness --");
+    await rm(src, { recursive: true, force: true });
   });
 });

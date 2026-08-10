@@ -125,6 +125,23 @@ async function copyTree(src: string, dst: string): Promise<number> {
 }
 
 /**
+ * 붙여넣으면 **그대로 실행되는** 명령 문자열로 만든다.
+ *
+ * 종전에는 수동 등록 안내가 첫 토큰(`claude`)을 잘라 냈다. 안내가 "claude CLI 를 찾지
+ * 못했습니다" 로 시작하니 읽으면 뜻은 통하지만, 복사해 붙여넣으면 `mcp: command not found`
+ * 다. 이 분기는 claude 가 없을 때만 타므로 **등록 방법을 알려 주는 유일한 출구**인데 그
+ * 한 줄이 실행 불가였다.
+ *
+ * 경로에 공백이 있으면 토큰이 쪼개진다 — Windows 사용자명에 공백은 흔하다. 실제 실행은
+ * 배열로 하므로 무해하지만, 사람이 붙여넣는 순간 깨진다.
+ *
+ * 안내와 dry-run 이 같은 함수를 쓰게 해서 둘이 다시 갈라지지 않게 한다.
+ */
+export function shellCommand(argv: readonly string[]): string {
+  return argv.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
+}
+
+/**
  * 실행 중인 파일은 덮어쓸 수 없다 — Windows 는 EBUSY/EPERM, 리눅스는 ETXTBSY 로 거절한다.
  *
  * 이건 드문 사고가 아니라 **갱신의 기본 경로**다. 설치해서 쓰다가 새 버전을 올리려는 순간,
@@ -199,10 +216,10 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
   const mcpArgs = ["claude", "mcp", "add", "--scope", "user", "autoharness", "--", target, "mcp"];
   if (!claude && !dryRun && !runner) {
     steps.push(
-      step("mcp", "skipped", `claude CLI 를 찾지 못했습니다 — 수동 등록: ${mcpArgs.slice(1).join(" ")}`),
+      step("mcp", "skipped", `claude CLI 를 찾지 못했습니다 — 수동 등록: ${shellCommand(mcpArgs)}`),
     );
   } else if (dryRun) {
-    steps.push(step("mcp", "ok", `(dry-run) ${mcpArgs.join(" ")}`));
+    steps.push(step("mcp", "ok", `(dry-run) ${shellCommand(mcpArgs)}`));
   } else {
     try {
       const exec = runner ?? (await import("./autostart.ts")).realRunner;
