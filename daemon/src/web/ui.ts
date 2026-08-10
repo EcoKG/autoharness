@@ -306,11 +306,30 @@ export const UI_HTML = `<!doctype html>
     loadTasks();
   }
 
+  // 결과를 그대로 말한다 — "완료" 라고만 하면 건너뛴 것도 기동된 것처럼 읽힌다.
+  // 데몬은 프로젝트별 판단(action·detail)을 돌려주므로 그것을 보여 준다.
+  function outcomeText(action, result) {
+    var list = result && result.outcomes;
+    if (!list || !list.length) return action + " 요청됨";
+    return list.map(function (o) {
+      return o.action === "launch" || o.action === "ok"
+        ? o.project + ": 기동 — " + o.detail
+        : o.project + ": " + o.action + " — " + o.detail;
+    }).join(" / ");
+  }
+
   function act(action) {
     if (!selected) return;
     message("요청 중…", false);
     api("/api/projects/" + encodeURIComponent(selected) + "/" + action, { method: "POST" })
-      .then(function () { message(action + " 완료", false); return refresh(); })
+      .then(function (r) {
+        var text = outcomeText(action, r && r.result);
+        // 건너뛴 것은 성공으로 칠하지 않는다 — 색까지 같으면 문구를 안 읽는다
+        var skipped = /: skip /.test(text);
+        message(text, false);
+        if (skipped) $("actionMsg").className = "muted";
+        return refresh();
+      })
       .catch(function (e) { message(e.message, true); });
   }
 

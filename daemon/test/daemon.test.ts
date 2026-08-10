@@ -81,7 +81,10 @@ describe("tick 1회", () => {
   test("등록이 없으면 조용히 넘어간다", async () => {
     await saveRegistry(defaultRegistry(), env);
     const r = await runTick({ env, log });
-    expect(r).toEqual({ handled: 0, failed: 0 });
+    expect(r.handled).toBe(0);
+    expect(r.failed).toBe(0);
+    // 아무것도 안 했다는 사실도 사유와 함께 나와야 한다 — 조용히 0 만 돌려주지 않는다
+    expect(r.outcomes[0]?.action).toBe("skip");
     expect(actions()).toContain("tick");
   });
 
@@ -253,9 +256,42 @@ describe("tickProject 단위", () => {
     const proj = upsertProject(reg, { id: "a", repo: repoA, model: "claude-opus-5", permissionArgs: [] });
 
     await writeFile(repoPaths(repoA).pausedFlag, "", "utf8");
-    expect(await tickProject(proj, reg.settings, { env, log })).toBe(false); // 스킵은 변경 없음
+    expect((await tickProject(proj, reg.settings, { env, log })).changed).toBe(false); // 스킵은 변경 없음
 
     await rm(repoPaths(repoA).pausedFlag, { force: true });
-    expect(await tickProject(proj, reg.settings, { env, log, launcher: okLauncher })).toBe(true);
+    expect(
+      (await tickProject(proj, reg.settings, { env, log, launcher: okLauncher })).changed,
+    ).toBe(true);
+  });
+
+  /**
+   * 결과를 반환값에 실어야 하는 이유: 웹의 "즉시 tick" 버튼이 이 값으로 사용자에게 답한다.
+   * 건너뛴 것을 성공이라 답하면 누른 사람은 기동된 줄 안다.
+   */
+  test("건너뛴 이유가 반환값에 담긴다", async () => {
+    await withTracker(repoA);
+    const reg = defaultRegistry();
+    const proj = upsertProject(reg, { id: "a", repo: repoA, model: "claude-opus-5", permissionArgs: [] });
+    await writeFile(repoPaths(repoA).pausedFlag, "", "utf8");
+
+    const r = await tickProject(proj, reg.settings, { env, log });
+    expect(r.outcome.action).toBe("skip");
+    expect(r.outcome.detail.length).toBeGreaterThan(0);
+    expect(r.outcome.project).toBe("a");
+    await rm(repoPaths(repoA).pausedFlag, { force: true });
+  });
+
+  test("runTick 이 프로젝트별 결과를 모아 돌려준다 — handled 만으로는 알 수 없다", async () => {
+    await withTracker(repoA);
+    await mutateRegistry((reg) => {
+      upsertProject(reg, { id: "a", repo: repoA, model: "claude-opus-5", permissionArgs: [] });
+    }, env);
+    await writeFile(repoPaths(repoA).pausedFlag, "", "utf8");
+
+    const r = await runTick({ env, log });
+    expect(r.handled).toBe(1); // 훑기는 했다
+    expect(r.outcomes.length).toBe(1);
+    expect(r.outcomes[0]!.action).toBe("skip"); // 그런데 아무것도 하지 않았다
+    await rm(repoPaths(repoA).pausedFlag, { force: true });
   });
 });

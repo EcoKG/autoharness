@@ -14,6 +14,7 @@ import { join } from "node:path";
 
 import { createTracker, loadTracker, newTask, saveTracker } from "../src/core/ledger.ts";
 import { repoPaths, userPaths } from "../src/core/paths.ts";
+import { UI_HTML } from "../src/web/ui.ts";
 import { defaultRegistry, mutateRegistry, saveRegistry, upsertProject } from "../src/core/registry.ts";
 import { ConsoleLog } from "../src/daemon/log.ts";
 import { BIND_HOST, createWebServer, hostAllowed, type WebServerHandle } from "../src/web/server.ts";
@@ -360,5 +361,42 @@ describe("위임 표면 — 임의 셸 실행 차단", () => {
       expect(DELEGATABLE_TOOLS.has(dangerous), dangerous).toBe(false);
     }
     expect(DELEGATABLE_TOOLS.size).toBeGreaterThan(5); // 쓸모없이 좁히지도 않았다
+  });
+});
+
+/**
+ * 즉시 tick 이 건너뛴 것을 성공이라 말하지 않는다.
+ *
+ * 실측 결함: 응답이 `{ok:true, result:{handled:1,failed:0}}` 였다. handled 는 "그 프로젝트를
+ * 훑었다" 는 뜻일 뿐이라 일시정지·백오프·진행 가능 작업 없음으로 **아무것도 하지 않았을
+ * 때도 1** 이다. 화면은 그것을 받아 "tick 완료" 라고 답했고, 누른 사람은 기동된 줄 안다.
+ */
+describe("즉시 tick 의 응답은 실제 판단을 담는다", () => {
+  test("건너뛰었으면 그 사유가 응답에 실린다", async () => {
+    // 기본 서버의 requestTick 은 결과를 담지 않는 옛 모양이므로 이 검사용으로 새로 띄운다.
+    // 프로젝트는 beforeEach 가 등록한 "proj" 를 그대로 쓴다 — 없으면 라우트가 404 로 끝난다.
+    const outcomes = [{ project: "proj", action: "skip", detail: "일시정지 상태입니다" }];
+    const srv = await createWebServer(
+      { log, env, requestTick: async () => ({ handled: 1, failed: 0, outcomes }) },
+      0,
+    );
+    try {
+      const r = await fetch(`http://${BIND_HOST}:${srv.port}/api/projects/proj/tick`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${srv.token}`, host: `${BIND_HOST}:${srv.port}` },
+      });
+      expect(r.status).toBe(200);
+      const body = (await r.json()) as { result?: { outcomes?: { action: string }[] } };
+      expect(body.result?.outcomes?.[0]?.action).toBe("skip");
+      expect(JSON.stringify(body)).toContain("일시정지");
+    } finally {
+      await srv.stop();
+    }
+  });
+
+  test("화면이 결과를 사유까지 풀어 쓴다 — '완료' 한 마디로 뭉개지 않는다", () => {
+    // UI 의 문구 생성이 outcomes 를 읽는지 소스로 고정한다(이 페이지는 빌드 없는 문자열이다)
+    expect(UI_HTML).toContain("outcomeText");
+    expect(UI_HTML).toContain("result.outcomes");
   });
 });

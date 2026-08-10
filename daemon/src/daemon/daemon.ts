@@ -37,11 +37,26 @@ export interface DaemonOptions {
  * 프로젝트 1건 처리. 레지스트리 항목을 제자리에서 고치고, 변경 여부를 돌려준다.
  * 예외는 호출자가 잡는다 — 여기서 삼키면 어떤 프로젝트가 문제인지 알 수 없다.
  */
+/**
+ * tick 1건의 결과 — **무엇을 했는지 그대로 말한다.**
+ *
+ * 종전에는 runTick 이 `{handled, failed}` 만 돌려줬다. handled 는 "그 프로젝트를 훑었다" 는
+ * 뜻일 뿐이라, 일시정지·백오프·진행 가능 작업 없음으로 **아무것도 하지 않았을 때도 1** 이다.
+ * 웹의 "즉시 tick" 버튼은 그 값을 받아 성공이라 보고했다 — 누른 사람은 기동된 줄 안다.
+ */
+export interface TickOutcome {
+  project: string;
+  /** decideProject 가 고른 행동 — skip·error·transition·launch. */
+  action: string;
+  /** 사람이 읽을 사유. 왜 건너뛰었는지가 여기 담긴다. */
+  detail: string;
+}
+
 export async function tickProject(
   proj: RegistryProject,
   settings: Partial<RegistrySettings>,
   options: DaemonOptions,
-): Promise<boolean> {
+): Promise<{ changed: boolean; outcome: TickOutcome }> {
   const log = options.log;
   const name = proj.id || "?";
   const { decision, reactivated } = await decideProject(proj, {
@@ -53,30 +68,31 @@ export async function tickProject(
   switch (decision.action) {
     case "skip":
       log?.debug(name, "skip", decision.reason);
-      return reactivated;
+      return { changed: reactivated, outcome: { project: name, action: "skip", detail: decision.reason } };
     case "error": {
       if (options.dryRun) {
         log?.warn(name, "error", `(dry-run) ${decision.reason}`);
-        return reactivated;
+        return { changed: reactivated, outcome: { project: name, action: "error", detail: `(dry-run) ${decision.reason}` } };
       }
       const { markError } = await import("./supervisor.ts");
-      log?.error(name, "error", markError(proj, settings, decision.reason));
-      return true;
+      const msg = markError(proj, settings, decision.reason);
+      log?.error(name, "error", msg);
+      return { changed: true, outcome: { project: name, action: "error", detail: msg } };
     }
     case "transition": {
       if (options.dryRun) {
         log?.info(name, decision.status, `(dry-run) ${decision.detail}`);
-        return reactivated;
+        return { changed: reactivated, outcome: { project: name, action: decision.status, detail: `(dry-run) ${decision.detail}` } };
       }
       proj.status = decision.status;
       proj.updated_at = new Date().toISOString();
       log?.info(name, decision.status, decision.detail);
-      return true;
+      return { changed: true, outcome: { project: name, action: decision.status, detail: decision.detail } };
     }
     case "launch": {
       if (options.dryRun) {
         log?.info(name, "launch", `(dry-run) 기동 대상 — ${decision.detail}`);
-        return reactivated;
+        return { changed: reactivated, outcome: { project: name, action: "launch", detail: `(dry-run) 기동 대상 — ${decision.detail}` } };
       }
       const outcome = await launchProject(proj, decision.next, {
         settings,
@@ -88,22 +104,25 @@ export async function tickProject(
       });
       const level = outcome.result === "error" ? "error" : outcome.result === "limit" ? "warn" : "info";
       log?.log(level, name, outcome.result, outcome.message);
-      return true;
+      return { changed: true, outcome: { project: name, action: outcome.result, detail: outcome.message } };
     }
   }
 }
 
 /** tick 1회 — 전 프로젝트를 순회한다. 한 건이 터져도 나머지는 계속한다. */
-export async function runTick(options: DaemonOptions): Promise<{ handled: number; failed: number }> {
+export async function runTick(
+  options: DaemonOptions,
+): Promise<{ handled: number; failed: number; outcomes: TickOutcome[] }> {
   const env = options.env ?? process.env;
   const log = options.log;
   let handled = 0;
   let failed = 0;
+  const outcomes: TickOutcome[] = [];
 
   const reg = await loadRegistryForWrite(env);
   if (reg.projects.length === 0) {
     log?.debug("-", "tick", "등록된 프로젝트 없음");
-    return { handled: 0, failed: 0 };
+    return { handled: 0, failed: 0, outcomes: [{ project: "-", action: "skip", detail: "등록된 프로젝트 없음" }] };
   }
 
   const targets = options.onlyProject
@@ -111,19 +130,23 @@ export async function runTick(options: DaemonOptions): Promise<{ handled: number
     : reg.projects;
   if (targets.length === 0) {
     log?.debug(options.onlyProject ?? '-', 'tick', '대상 프로젝트 없음');
-    return { handled: 0, failed: 0 };
+    return { handled: 0, failed: 0, outcomes: [{ project: options.onlyProject ?? '-', action: 'skip', detail: '대상 프로젝트 없음' }] };
   }
 
   let changed = false;
   for (const proj of targets) {
     try {
-      if (await tickProject(proj, reg.settings, options)) changed = true;
+      const r = await tickProject(proj, reg.settings, options);
+      if (r.changed) changed = true;
+      outcomes.push(r.outcome);
       handled += 1;
     } catch (err) {
       // 한 프로젝트의 예외가 데몬 전체를 멈추면 나머지가 전부 굶는다.
       // 다만 조용히 넘기지 않는다 — 세지 않으면 매 주기 터지는 프로젝트를 아무도 모른다.
       failed += 1;
-      log?.error(proj.id || "?", "exception", `프로젝트 처리 중 예외: ${String(err)}`);
+      const detail = `프로젝트 처리 중 예외: ${String(err)}`;
+      outcomes.push({ project: proj.id || "?", action: "exception", detail });
+      log?.error(proj.id || "?", "exception", detail);
     }
   }
 
@@ -136,7 +159,7 @@ export async function runTick(options: DaemonOptions): Promise<{ handled: number
       }
     }, env);
   }
-  return { handled, failed };
+  return { handled, failed, outcomes };
 }
 
 export interface DaemonResult extends SchedulerStats {
