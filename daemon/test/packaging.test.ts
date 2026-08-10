@@ -124,3 +124,50 @@ describe("실제 EXE (있을 때만)", () => {
     expect(parsed.result.tools.length).toBe(14);
   }, 120_000);
 });
+
+/**
+ * **부작용 명령은 의도하지 않은 실행이 기본값이면 안 된다** (적대 검증 medium).
+ *
+ * 종전에는 인식하지 못한 플래그가 전부 '기본 설치 실행' 으로 흘렀다. `install --help` 로
+ * 사용법을 보려던 조작이 EXE 복사·스킬 복사·MCP 재등록을 수행했고(점검 중 실제 발생),
+ * 오타 플래그도 같은 경로를 탔다.
+ */
+describe("install 인자 처리 — 조회 의도가 시스템을 건드리지 않는다", () => {
+  test("--help 는 사용법만 내고 성공한다", async () => {
+    const { main } = await import("../src/main.ts");
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+    try {
+      expect(await main(["install", "--help"])).toBe(0);
+    } finally {
+      console.log = original;
+    }
+    const out = lines.join("\n");
+    expect(out).toContain("사용법: autoharness install");
+    expect(out).toContain("--dry-run");
+    expect(out).toContain("--autostart");
+  });
+
+  test("알 수 없는 옵션은 거부하고 설치하지 않는다", async () => {
+    const { main } = await import("../src/main.ts");
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+    try {
+      // 오타 플래그가 설치를 수행하면 안 된다 — 종료 코드 2(사용법 오류)여야 한다
+      expect(await main(["install", "--autostrat"])).toBe(2);
+    } finally {
+      console.error = original;
+    }
+    expect(errs.join("\n")).toContain("알 수 없는 install 옵션");
+  });
+
+  test("알려진 옵션 목록이 실제 처리 분기를 덮는다", async () => {
+    const src = await read("src/main.ts");
+    // 처리하는 플래그가 목록에 빠지면 정상 사용이 거부된다 — 양쪽이 맞아야 한다
+    for (const flag of ["dry-run", "status", "uninstall", "autostart", "skill", "exe", "migrate", "rollback", "backup"]) {
+      expect(src, flag).toContain(`"${flag}"`);
+    }
+  });
+});

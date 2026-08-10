@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T07:27:26.665712+00:00",
+  "updated_at": "2026-08-10T07:31:44.999563+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1137,7 +1137,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/commit-gate-task-mismatch-20260810T072459Z.log",
-      "commit": null,
+      "commit": "ec5892c",
       "started_at": "2026-08-10T07:24:59.383545+00:00",
       "finished_at": "2026-08-10T07:27:26.665712+00:00",
       "test_cmd": null
@@ -1163,13 +1163,13 @@
       "path": "daemon/src/main.ts",
       "deps": [],
       "priority": 5,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/install-flag-fallthrough-20260810T072909Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T07:29:09.867326+00:00",
+      "finished_at": "2026-08-10T07:31:44.999563+00:00",
       "test_cmd": null
     }
   ]

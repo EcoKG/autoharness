@@ -55,6 +55,23 @@ function usage(): string {
   ].join("\n");
 }
 
+function installUsage(): string {
+  return [
+    "사용법: autoharness install [옵션]",
+    "",
+    "  --dry-run            무엇을 할지만 보여 주고 아무것도 바꾸지 않는다",
+    "  --status             현재 설치 상태를 조회한다",
+    "  --exe <경로>         설치할 실행 파일(개발 실행에서는 반드시 지정)",
+    "  --skill <경로>       스킬 문서 원본 디렉토리",
+    "  --autostart          로그온 자동 시작까지 등록한다(기본은 등록하지 않음)",
+    "  --uninstall          자동 시작·MCP 등록을 되돌린다(장부는 건드리지 않음)",
+    "  --migrate <저장소>   그 저장소의 훅 배선을 v1 에서 v2 로 교체한다",
+    "  --rollback <저장소> --backup <파일>   교체를 되돌린다",
+    "",
+    "설치는 부작용이 있는 명령이다 — 알 수 없는 옵션은 실행하지 않고 거부한다.",
+  ].join("\n");
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const mode = argv[0];
 
@@ -149,6 +166,25 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (mode === "install") {
     const cli = await import("./cli.ts");
     const flags = cli.parseFlags(rest);
+
+    // **부작용 명령은 의도하지 않은 실행이 기본값이면 안 된다.** 종전에는 인식하지 못한
+    // 플래그가 전부 '기본 설치 실행' 으로 흘러, `install --help` 같은 조회 의도의 명령이
+    // EXE 복사·스킬 복사·MCP 재등록을 수행했다(실측). 오타 플래그도 같은 경로를 탔다.
+    const INSTALL_FLAGS = new Set([
+      "help", "h", "dry-run", "status", "uninstall", "autostart", "skill", "exe",
+      "migrate", "rollback", "backup",
+    ]);
+    if (flags["help"] === true || flags["h"] === true) {
+      console.log(installUsage());
+      return EXIT.OK;
+    }
+    const unknown = Object.keys(flags).filter((k) => !INSTALL_FLAGS.has(k));
+    if (unknown.length > 0) {
+      console.error(`[autoharness] 알 수 없는 install 옵션입니다: ${unknown.join(", ")}`);
+      console.error(installUsage());
+      return EXIT.USAGE;
+    }
+
     const { install, installStatus, uninstall } = await import("./install/install.ts");
     const dryRun = flags["dry-run"] === true;
     if (flags["status"] === true) {
