@@ -324,5 +324,44 @@ class CliSurfaceSyncTest(unittest.TestCase):
         self.assertIn("--test-cmd", self.text)
 
 
+class TwoImplementationsFallbackTest(unittest.TestCase):
+    """폴백 명령이 **어느 구현이 깔렸는지**를 먼저 가르쳐야 한다.
+
+    실측 결함: v2(단일 실행 파일)만 깔린 기계에서 `/autoharness` 를 쓰면, 스킬 문서가
+    v1 전용 명령(`python scripts/harness_engine.py …`)만 제시해 **없는 파일을 실행하라고**
+    시켰다. v2 원라인 설치가 이 문서를 그대로 깔기 때문에 v2 사용자 전원이 대상이다.
+
+    문서에 v2 절을 넣는 것으로 끝내지 않고, 판별 방법과 대응 명령까지 있는지 고정한다.
+    """
+
+    def setUp(self):
+        with open(SKILL_PATH, "r", encoding="utf-8") as f:
+            self.text = f.read()
+
+    def test_fallback_tells_how_to_tell_v1_from_v2(self):
+        self.assertIn("v1 인가 v2 인가", self.text,
+                      "어느 구현이 깔렸는지 판별하는 안내가 없습니다")
+        # 판별은 실제로 존재를 확인할 수 있는 경로여야 한다
+        self.assertIn(".claude/autoharness/bin/autoharness", self.text)
+        self.assertIn("harness_engine.py", self.text)
+
+    def test_v2_equivalents_are_given(self):
+        """v2 사용자가 실제로 칠 수 있는 명령이 있어야 한다."""
+        for sub in ("next", "run", "selftest", "status"):
+            self.assertRegex(self.text, r'"\$AH" %s' % sub,
+                             "v2 대응 명령에 %s 가 없습니다" % sub)
+
+    def test_loop_steps_carry_the_v2_branch(self):
+        """루프 본문(작업 선택·검증)이 v1 명령만 말하면 v2 사용자는 거기서 막힌다."""
+        idx = self.text.index("다음 작업 선택")
+        self.assertIn("v2", self.text[idx:idx + 300])
+        idx = self.text.index("**검증**")
+        self.assertIn("v2", self.text[idx:idx + 300])
+
+    def test_v2_has_no_watchdog_claim(self):
+        """v2 는 워치독이 없다 — 있는 것처럼 안내하면 없는 스케줄러를 찾게 된다."""
+        self.assertIn("v2 에는 워치독이 없다", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()

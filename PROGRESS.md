@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T16:11:56.017643+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T16:18:19.392068+00:00
 
-## 현황: done 81 / 98  (in_progress 0, failed 0, blocked 1, pending 16)
+## 현황: done 82 / 98  (in_progress 0, failed 0, blocked 1, pending 15)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -41,9 +41,9 @@
 | fix-checksum-grep-silent-death | 체크섬 목록 형식이 다를 때 안내 없이 죽던 것 수정 — set -e 가 준비된 중단 메시지를 도달 불가로 만들었다 | ✅ done | 0/5 | 408af6d | - |
 | fix-mcp-new-session-notice | MCP 등록 후 새 세션부터 보인다는 안내를 v2 경로에 추가 — v1 에는 있고 v2 만 빠져 있었다 | ✅ done | 0/5 | 0824ade | - |
 | fix-installer-update-busy-sh | 원라인 갱신 시 실행 중 교체 실패에 조치를 알려주고 pkill 이 MCP 서버까지 내리게 | ✅ done | 0/5 | 53168e6 | - |
-| fix-autostart-failure-not-fatal | 자동 시작 실패가 설치 전체를 실패로 끝내던 것 수정 — 필수 단계 성공 시 확인 명령과 안내는 반드시 출력 | ✅ done | 0/5 | - | - |
+| fix-autostart-failure-not-fatal | 자동 시작 실패가 설치 전체를 실패로 끝내던 것 수정 — 필수 단계 성공 시 확인 명령과 안내는 반드시 출력 | ✅ done | 0/5 | cb85317 | - |
 | detect-dead-watchdog | 워치독 '등록만 되고 실행 안 됨'을 감지하지 못하는 결함 — 이 PC 에서 실측: 작업은 Ready 로 등록돼 있으나 스케줄러가 매 기동을 0x800710E0(요청 거부)로 반려해 설치 이후 단 한 번도 실행되지 않았다. 증거는 logs/watchdog.log 파일 자체의 부재와 레지스트리 전 프로젝트 last_launch=null 이었고, 그 사이 status/watchdog_status 는 '등록됨(Ready)'만 보고해 정상처럼 보였다. 즉 자동 부활 보장이 두 프로젝트(autoharness·LieDetectorOCR)에서 내내 무효였는데 아무도 몰랐다. 요구사항: ① watchdog_status 가 스케줄러 등록 여부와 '실제 실행 이력'을 분리해 보고하고, 등록됨 + (watchdog.log 부재 또는 마지막 기록이 기대 주기의 3배 이상 경과)면 명시적으로 경고할 것 ② 스케줄러의 LastTaskResult 가 0 이 아니면 코드와 함께 보고할 것(0x800710E0=거부, 0x41303=미실행 등 흔한 값은 해석 문구 포함) ③ 레지스트리 last_launch 가 전 프로젝트 null 인 상태를 '한 번도 기동된 적 없음' 신호로 함께 제시 ④ 감지·경고 로직과 오탐 경계(설치 직후 아직 주기가 안 온 경우는 경고 대상 아님)를 tests/ 회귀 테스트로 고정 | ✅ done | 0/5 | 4a63ecb | - |
-| fix-skill-doc-v2-commands | 스킬 문서가 v1 전용이라 v2 사용자에게 없는 파일 실행을 지시하던 것 수정 | ⏳ pending | 0/5 | - | - |
+| fix-skill-doc-v2-commands | 스킬 문서가 v1 전용이라 v2 사용자에게 없는 파일 실행을 지시하던 것 수정 | ✅ done | 0/5 | - | - |
 | fix-cron-path-claude | cron 워치독 PATH 에 실제 claude 경로 반영 — 설치기가 찾아 놓고 버리던 값 | ⏳ pending | 0/5 | - | - |
 | docs-skill-routing-sync | 라우팅 계약 문서 반영 — DESIGN.md §11(스킬 절)에 모드 판정 원칙·폴백 규칙을 계약으로 명시하고, README 사용 흐름에 "하네스가 이미 있는 저장소에 새 목표를 줄 때는 init 재실행이 아니라 task_add + resume" 경로를 추가 | ✅ done | 0/5 | - | - |
 | fix-add-task-self-dep | add-task 자기/순환 의존 결함 수정 — cmd_add_task 의 `d != a.id` 조건이 자기 의존을 오히려 허용해 영구 교착 작업이 생김. 자기 의존·순환 의존을 add-task 시점에 거부하고, next/brief/status 가 '충족 불가능한 pending(교착)'을 구분해 알리도록 개선 + tests/ 회귀 테스트 | ✅ done | 0/5 | - | - |

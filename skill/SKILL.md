@@ -139,7 +139,8 @@ python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo . --p
   있는 교착 pending 은 next/brief/status 가 `deadlocked` 로 알린다 — 발견 시 의존을 정리한다.
 
 ### ⑥ 자가 검증
-대상 저장소에서 `python scripts/harness_engine.py selftest` 를 실행한다. 7종 15항목(장부
+대상 저장소에서 `python scripts/harness_engine.py selftest`(v2 는 `"$AH" selftest` — 아래
+[폴백 표](#mcp-미등록-환경-폴백)의 판별 참고)를 실행한다. 7종 15항목(장부
 초기화/실패 경로 exit1+attempts/성공 경로 exit0+done/한도 exit4+blocked/의존성 게이팅/
 PROGRESS.md 렌더/더미 정리)이 전부 PASS 인지 확인하고 **출력 전문을 보고에 첨부**한다.
 FAIL 이 있으면 중단·보고.
@@ -173,11 +174,12 @@ FAIL 이 있으면 중단·보고.
    (헤드리스 재개·"이어서 진행" 처럼 기존 작업을 잇는 진입이면 이 단계는 건너뛴다.)
 1. `mcp__autoharness__heartbeat` (폴백: `python scripts/harness_engine.py heartbeat`) 실행.
 2. 루프 — 작업 단위로 반복:
-   1. **다음 작업 선택**: `python scripts/harness_engine.py next` (의존성 게이팅·우선순위는
+   1. **다음 작업 선택**: `python scripts/harness_engine.py next` (v2 는 `"$AH" next --repo .`
+      — 폴백 표의 판별을 먼저 하라) (의존성 게이팅·우선순위는
       엔진이 판정한다 — 직접 고르지 말라). exit 3 이면 루프 종료 → 요약 보고.
    2. **코드 수정**: 작업 title/path/`last_error` 를 근거로 구현·수정한다. `last_error` 가 있으면
       그 오류를 우선 해결한다. 긴 로그는 `last_log_file` 경로의 파일을 부분적으로만 읽는다.
-   3. **검증**: `bash scripts/agent_harness.sh --task <id>` 실행.
+   3. **검증**: `bash scripts/agent_harness.sh --task <id>` 실행 (v2 는 `"$AH" run --repo . --task <id>`).
    4. **종료 코드 분기** (위 계약 표):
       - **0** → `git add` 후 `git commit`(커밋 게이트는 훅이 자동 확인, SHA 는 훅이 장부에 자동
         기록) → 다음 작업으로.
@@ -230,10 +232,35 @@ FAIL 이 있으면 중단·보고.
 ## MCP 미등록 환경 폴백
 
 `mcp__autoharness__*` 도구가 보이지 않으면(등록 전/실패) 대상 저장소 루트에서 아래를 직접 실행한다.
-init 전이라 `scripts/harness_engine.py` 사본이 없으면
+
+### 먼저 — 이 기계에 깔린 것이 v1 인가 v2 인가
+
+두 구현이 공존하고 **폴백 명령이 서로 다르다.** 아래 표는 v1(파이썬) 기준이므로, v2 만 깔린
+기계에서 그대로 실행하면 없는 파일을 가리킨다. 다음으로 판별한다:
+
+```bash
+ls ~/.claude/autoharness/bin/autoharness*        # 있으면 v2 (Windows 는 autoharness.exe)
+ls ~/.claude/skills/autoharness/bin/harness_engine.py   # 있으면 v1
+```
+
+**v2 라면** 아래 표의 `python scripts/harness_engine.py` 를 전부 `<설치 EXE>` 로 바꿔 읽는다 —
+서브커맨드와 인자, 종료 코드 계약은 v1 과 같다. 예:
+
+```bash
+AH=~/.claude/autoharness/bin/autoharness        # Windows: "$USERPROFILE/.claude/autoharness/bin/autoharness.exe"
+"$AH" next --repo .          # python scripts/harness_engine.py next --repo . 와 같다
+"$AH" run --repo . --task I  # 검증. bash scripts/agent_harness.sh --task I 대신 쓴다
+"$AH" selftest               # 자가 검증 15항목
+"$AH" status --repo .
+```
+
+v2 에는 워치독이 없다 — 데몬이 스스로 주기를 잡으므로 `watchdog_*` 폴백 대신
+`"$AH" install --status` 로 자동 시작 등록 상태를 본다.
+
+**v1 이라면** 아래 표 그대로다. init 전이라 `scripts/harness_engine.py` 사본이 없으면
 `python "%USERPROFILE%\.claude\skills\autoharness\bin\harness_engine.py"` 로 대체한다.
 
-| MCP 도구 | 폴백 (저장소 루트에서) |
+| MCP 도구 | 폴백 — v1 (저장소 루트에서) |
 |---|---|
 | `mcp__autoharness__harness_detect` | `python scripts/harness_engine.py detect --repo .` |
 | `mcp__autoharness__harness_init` | `python scripts/harness_engine.py init --repo . --project N --objective O --source S --target T --test CMD [--build C] [--lint C] [--model M]` ※ 이후 사본·훅 병합·레지스트리는 `python3 <스킬폴더>/bin/harness_mcp.py finish-init --repo .` 한 줄로 마무리(분류기 차단 시 사용자 실행 요청) |
