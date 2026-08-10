@@ -115,6 +115,11 @@ export const UI_HTML = `<!doctype html>
     </section>
 
     <section>
+      <h2>훅 배선</h2>
+      <div id="wiring" class="muted">프로젝트를 고르면 확인합니다.</div>
+    </section>
+
+    <section>
       <h2>장부</h2>
       <table>
         <thead><tr><th>작업</th><th>상태</th><th>시도</th><th>커밋</th><th></th></tr></thead>
@@ -347,6 +352,82 @@ export const UI_HTML = `<!doctype html>
     setText(el, text);
   }
 
+  /**
+   * 훅 배선 카드 — v1 을 무너뜨린 실패 유형을 화면에서 잡는다.
+   *
+   * v1 은 워치독이 몇 주간 한 번도 돌지 않았는데 상태 조회가 계속 정상이라 보고했다.
+   * 훅도 같은 성질이다 — 등록만 되고 발화하지 않아도 주행은 겉보기에 멀쩡하다.
+   * harness_status 가 이미 배선 상태를 통째로 주므로 백엔드를 늘리지 않고 그것만 그린다.
+   *
+   * **미등록은 결함이 아니다.** 수동 운용도 정상 사용이라 회색으로 둔다. 붉게 칠하는 것은
+   * "등록됐는데 발화하지 않는" 상태뿐이다 — 그때가 조용히 무너지는 순간이다.
+   */
+  function renderWiring(h) {
+    var box = $("wiring");
+    box.replaceChildren();
+    if (!h) { box.className = "muted"; setText(box, "확인할 수 없습니다."); return; }
+
+    var head = document.createElement("p");
+    head.style.margin = "0 0 6px";
+    var stateCls = h.state === "active" ? "active" : h.state === "inactive" ? "error" : "";
+    head.append(badge(h.state, stateCls));
+    box.append(head);
+
+    var names = ["hook-prebash", "hook-postbash", "hook-stop", "hook-sessionstart"];
+    var table = document.createElement("table");
+    var tb = document.createElement("tbody");
+    names.forEach(function (n) {
+      var reg = (h.registered || []).indexOf(n) >= 0;
+      var fired = (h.fired || []).indexOf(n) >= 0;
+      var tr = document.createElement("tr");
+      var c1 = document.createElement("td");
+      c1.className = "mono";
+      setText(c1, n);
+      var c2 = document.createElement("td");
+      c2.append(badge(reg ? "등록" : "미등록", reg ? "active" : ""));
+      var c3 = document.createElement("td");
+      // 등록됐는데 발화 기록이 없다 — 이것이 조용한 실패다
+      c3.append(badge(fired ? "발화" : reg ? "발화 없음" : "-", fired ? "active" : reg ? "error" : ""));
+      tr.append(c1, c2, c3);
+      tb.append(tr);
+    });
+    table.append(tb);
+    box.append(table);
+
+    (h.repo_unpinned_hooks || []).length && warn(box,
+      "저장소가 고정되지 않은 훅: " + h.repo_unpinned_hooks.join(", ") +
+      " — 하위 디렉토리에서 게이트가 풀립니다.");
+    (h.cwd_dependent_hooks || []).length && warn(box,
+      "작업 디렉토리에 의존하는 훅: " + h.cwd_dependent_hooks.join(", "));
+    (h.uncovered_tools || []).length && warn(box,
+      "matcher 가 덮지 못하는 도구: " + h.uncovered_tools.join(", "));
+    if (h.state === "inactive") {
+      warn(box, "등록은 됐지만 발화 기록이 없습니다 — 저장소 루트에서 claude 를 실행하십시오.");
+    }
+    if (h.warning) warn(box, h.warning);
+  }
+
+  function warn(box, text) {
+    var p = document.createElement("p");
+    p.className = "err";
+    p.style.margin = "6px 0 0";
+    setText(p, text);
+    box.append(p);
+  }
+
+  function loadWiring() {
+    if (!selected) { renderWiring(null); return Promise.resolve(); }
+    var proj = state.projects.filter(function (p) { return p.id === selected; })[0];
+    if (!proj) { renderWiring(null); return Promise.resolve(); }
+    return api("/api/mcp/call", {
+      method: "POST",
+      body: JSON.stringify({ name: "harness_status", arguments: { repo_path: proj.repo } })
+    }).then(function (r) {
+      var d = r && r.result;
+      renderWiring(d && d.hooks);
+    }).catch(function () { renderWiring(null); });
+  }
+
   function refresh() {
     return api("/api/status").then(function (s) {
       state = s;
@@ -355,7 +436,8 @@ export const UI_HTML = `<!doctype html>
       if (!selected && s.projects.length) selected = s.projects[0].id;
       renderProjects();
       renderDetail();
-      return selected ? loadTasks() : renderTasks([]);
+      if (!selected) { renderTasks([]); return renderWiring(null); }
+      return loadTasks().then(loadWiring);
     });
   }
 

@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T16:53:11.768814+00:00",
+  "updated_at": "2026-08-10T16:57:09.261166+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1437,7 +1437,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/web-task-row-expand-20260810T165034Z.log",
-      "commit": null,
+      "commit": "5e8625d",
       "started_at": "2026-08-10T16:50:34.939839+00:00",
       "finished_at": "2026-08-10T16:53:11.768814+00:00",
       "test_cmd": null
@@ -1448,13 +1448,13 @@
       "path": "daemon/src/web/ui.ts",
       "deps": [],
       "priority": 31,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/web-hook-wiring-card-20260810T165432Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T16:54:32.321285+00:00",
+      "finished_at": "2026-08-10T16:57:09.261166+00:00",
       "test_cmd": null
     },
     {

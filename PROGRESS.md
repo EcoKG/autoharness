@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-10T16:53:11.799127+00:00
+- 모델: claude-fable-5 / 갱신: 2026-08-10T16:57:09.290226+00:00
 
-## 현황: done 89 / 98  (in_progress 0, failed 0, blocked 1, pending 8)
+## 현황: done 90 / 98  (in_progress 0, failed 0, blocked 1, pending 7)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -68,8 +68,8 @@
 | hook-matcher-coverage | 훅 matcher 커버리지 구멍 차단 — PreToolUse/PostToolUse 가 Bash 도구에만 걸려 다른 명령 실행 도구로는 게이트가 통째로 우회된다. 실측 증거: 이 세션에서 Bash 경로의 원격 반영은 차단됐으나 PowerShell 경로는 무검사로 통과했고, 같은 구멍으로 커밋 게이트도 함께 무력화된다. 원인: harness_mcp.py 의 HOOK_DEFS 가 matcher 를 문자열 "Bash" 로 고정한다. 해결: ① 공식 문서상 matcher 는 정규식·구분자 목록을 지원하므로 "Bash|PowerShell" 로 확대 ② 이미 설치된 저장소는 matcher 가 Bash 인 채로 남으므로 merge_settings 가 기존 하네스 훅 항목의 matcher 를 감지해 갱신하도록 하고, 갱신 시 기존 파일을 백업할 것 ③ 중복 추가 방지 로직이 지금은 이벤트 전체를 json.dumps 해서 harness_engine.py 포함 여부만 보는데, 이 방식은 matcher 가 달라도 같은 것으로 취급해 갱신을 건너뛴다 — 항목 단위로 판정하도록 정밀화 ④ 훅 배선 감지(hook_wiring_status)도 matcher 범위를 함께 보고해 부분 커버리지 상태를 드러낼 것 ⑤ 확대·마이그레이션·중복 방지 경계를 tests/ 회귀로 고정. | ✅ done | 0/5 | c0b67f3 | - |
 | refresh-loop-engine-routing | 주행용 엔진 사본 재갱신 — build_parser() 추출이 반영된 bin/harness_engine.py 를 scripts/harness_engine.py 로 복사하고 status/next/brief 동작 확인(개발 원본과 주행 사본의 드리프트 해소) | ✅ done | 0/5 | - | - |
 | ts-ledger | G2 엔진: 장부(진실 원천) 구현 — init/add-task/set-task/next/render/status/brief/heartbeat/sync-commit. 선택 규칙은 v1 그대로: in_progress → attempts<max 인 failed → deps 전부 done 인 pending, 각 그룹 내 priority 낮은 순 그다음 id 순. add-task 는 자기·순환·미존재 의존을 거부(exit 2). 교착 pending(의존이 미존재·blocked·순환)은 next/brief/status 가 deadlocked 로 구분 보고하되 종료 코드 계약은 유지(next 는 0/3). set-task 는 pending/blocked 만 허용 — done 은 run 성공으로만 생긴다. PROGRESS.md 렌더는 장부 파생물이며 렌더 실패가 결과 판정을 뒤집지 않게 격리한다. | ✅ done | 0/5 | 0353f27 | - |
-| web-task-row-expand | 작업 행 펼치기 — 실패 원인·의존 상태·로그 경로. 이미 브라우저에 온 데이터를 버리고 있었다 | ✅ done | 0/5 | - | - |
-| web-hook-wiring-card | 훅 배선 카드 — 훅이 죽었는데 주행이 정상처럼 보이던 v1 의 실패 유형을 화면에서 잡는다 | ⏳ pending | 0/5 | - | - |
+| web-task-row-expand | 작업 행 펼치기 — 실패 원인·의존 상태·로그 경로. 이미 브라우저에 온 데이터를 버리고 있었다 | ✅ done | 0/5 | 5e8625d | - |
+| web-hook-wiring-card | 훅 배선 카드 — 훅이 죽었는데 주행이 정상처럼 보이던 v1 의 실패 유형을 화면에서 잡는다 | ✅ done | 0/5 | - | - |
 | web-blocked-summary | 막힌 곳 요약 — blocked·한도 임박·교착을 사유와 함께. 판정은 서버가 하고 화면은 그리기만 | ⏳ pending | 0/5 | - | - |
 | web-console-filter | 콘솔 필터·검색·고정 — 저장소가 여럿이면 지금은 읽을 수 없다 | ⏳ pending | 0/5 | - | - |
 | web-session-log-viewer | 세션·검증 로그 뷰어 — 이미 구현된 API 를 UI 가 한 번도 부르지 않고 있었다 | ⏳ pending | 0/5 | - | - |

@@ -244,3 +244,42 @@ describe("작업 상세", () => {
     expect(typeof body.max_attempts).toBe("number");
   });
 });
+
+/**
+ * 훅 배선 카드 — v1 을 무너뜨린 실패 유형을 화면에서 잡는다.
+ *
+ * v1 은 워치독이 몇 주간 한 번도 돌지 않았는데 상태 조회가 계속 정상이라 보고했다. 훅도
+ * 같은 성질이라 등록만 되고 발화하지 않아도 주행은 겉보기에 멀쩡하다. harness_status 가
+ * 이미 배선 상태를 통째로 주므로 백엔드를 늘리지 않고 그것만 그린다.
+ */
+describe("훅 배선 카드", () => {
+  test("배선 상태를 그리는 코드가 있다", () => {
+    expect(UI_HTML).toContain("renderWiring");
+    expect(UI_HTML).toContain("훅 배선");
+  });
+
+  test("기존 위임 경로로 harness_status 를 부른다 — 새 API 를 만들지 않는다", () => {
+    expect(UI_HTML).toContain("/api/mcp/call");
+    expect(UI_HTML).toContain("harness_status");
+  });
+
+  test("등록됐는데 발화 없는 상태를 붉게 칠한다 — 조용한 실패의 자리다", () => {
+    expect(UI_HTML).toContain("발화 없음");
+    expect(UI_HTML).toContain("등록은 됐지만 발화 기록이 없습니다");
+  });
+
+  test("미등록은 결함으로 칠하지 않는다 — 수동 운용도 정상이다", () => {
+    // 미등록 배지에 error 클래스를 붙이지 않는다는 판단이 코드에 남아 있어야 한다
+    expect(UI_HTML).toContain("미등록은 결함이 아니다");
+  });
+
+  test("게이트가 풀리는 배선을 경고한다", () => {
+    expect(UI_HTML).toContain("repo_unpinned_hooks");
+    expect(UI_HTML).toContain("하위 디렉토리에서 게이트가 풀립니다");
+  });
+
+  test("harness_status 는 위임 허용 목록에 있다 — 카드가 실제로 데이터를 받을 수 있다", async () => {
+    const { DELEGATABLE_TOOLS } = await import("../src/mcp/tools.ts");
+    expect(DELEGATABLE_TOOLS.has("harness_status")).toBe(true);
+  });
+});
