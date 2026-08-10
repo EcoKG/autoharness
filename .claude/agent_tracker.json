@@ -1167,7 +1167,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/install-flag-fallthrough-20260810T072909Z.log",
-      "commit": null,
+      "commit": "9ea34ee",
       "started_at": "2026-08-10T07:29:09.867326+00:00",
       "finished_at": "2026-08-10T07:31:44.999563+00:00",
       "test_cmd": null

@@ -1,210 +1,175 @@
-# AutoHarness — 자율 주행 마이그레이션 하네스
+# AutoHarness — 자율 주행 하네스
 
-AutoHarness 는 "자율 주행 마이그레이션 하네스 구축" 절차(스택 실측 → 하네스 구축 → 모델 선택 →
-자가검증 → 자율 주행)를 **어느 저장소에서든 재사용 가능한 패키지**로 만든 것입니다.
-개인 스킬 + 사용자 스코프 MCP 서버 + 워치독, 셋이 결합된 하나의 패키지입니다.
+저장소를 맡기면 **여러 단계에 걸쳐 스스로 고치고 검증하는** 하네스입니다. 작업 목록(장부)을
+진실의 원천으로 두고, 매 작업마다 실제 테스트를 돌려 통과한 것만 완료로 기록하며, 세션이
+죽으면 다시 띄웁니다.
 
-- **무개입 주행**: 주행 중 사용자에게 질문하지 않습니다. Stop 훅 게이트가 세션을 붙잡아 루프를
-  유지하고, 세션이 죽으면 워치독이 헤드리스로 재기동합니다.
-- **사용량 초과 방어**: 사용량 한도로 세션이 죽어도 영구 포기하지 않고 지수 백오프 후 자동 부활합니다.
-- **모델 선택**: 추천은 휴리스틱 도구가 내고, **결정은 사용자**가 init 시점에 직접 내립니다.
+핵심은 **검증 없이는 아무것도 완료되지 않는다**는 것입니다. 완료 표시는 사람이나 에이전트가
+아니라 러너의 종료 코드가 만들고, 커밋은 그 통과 기록이 있을 때만 열립니다. 이 규칙은
+문서가 아니라 **훅이 기계적으로 강제**합니다.
 
-## 아키텍처
+- **무개입 주행** — 주행 중 질문하지 않습니다. Stop 훅이 세션을 붙잡아 루프를 유지하고,
+  세션이 죽으면 상주 데몬이 헤드리스로 다시 띄웁니다.
+- **사용량 초과 방어** — 한도로 죽어도 영구 포기하지 않고 지수 백오프 후 부활합니다.
+- **모델 선택** — 추천은 도구가 내고 **결정은 사용자**가 합니다.
+- **웹 콘솔** — 주행 중인 Claude Code 세션의 출력을 실시간으로 봅니다.
+
+## 두 구현이 공존합니다
+
+| | v1 (Python) | v2 (TypeScript) |
+|---|---|---|
+| 배포 | `~/.claude/skills/autoharness/bin/*.py` | 단일 EXE 하나 |
+| 스케줄링 | OS 스케줄러(작업 스케줄러 / cron) | **상주 데몬이 자기 시계로** |
+| 웹 UI | 없음 | 있음(콘솔·제어) |
+| 상태 | 안정, 레퍼런스 구현 | 이식 완료, 실사용 검증 중 |
+
+v2 를 만든 이유는 하나입니다. **v1 의 자동 부활이 OS 스케줄러에 의존하는데 그 의존이
+깨질 수 있습니다.** 개발 PC 에서 시간 트리거 작업 전체가 `0x800710E0` 으로 큐에만 쌓이고
+실행되지 않아, 워치독이 설치 이후 한 번도 돌지 않은 채 상태 조회는 "등록됨(Ready)"만
+보고한 일이 있었습니다. 그래서 v2 는 스케줄링을 프로세스 안으로 가져왔습니다.
+
+두 구현은 **같은 장부 스키마·같은 원자적 쓰기·같은 레지스트리 잠금 규약**을 씁니다. 그래서
+저장소마다 따로 이행해도 되고, 이행 도중 섞여 있어도 안전합니다.
 
 ```
-사용자 ── /autoharness ──▶ 개인 스킬 (~/.claude/skills/autoharness/SKILL.md)
+사용자 ── /autoharness ──▶ 스킬 (~/.claude/skills/autoharness/SKILL.md)
                               │  절차 지휘: init / resume / status / pause
                               ▼
-                           MCP 서버 "autoharness" (bin/harness_mcp.py, user 스코프)
-                              │  장부·러너·레지스트리·워치독 관리 도구 14종
-                              │  (엔진 harness_engine.py 를 import 하여 수행)
+                           MCP 서버 "autoharness" (사용자 스코프, 도구 14종)
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+   v1: harness_mcp.py                v2: <EXE> mcp
+        (엔진 import)                  (데몬 위임 + 인프로세스 폴백)
+              │                               │
+              └───────────────┬───────────────┘
                               ▼
-     대상 저장소 ◀── 엔진 사본 설치: scripts/harness_engine.py + scripts/agent_harness.sh
-        │              .claude/agent_tracker.json(장부) · 훅 4종(settings.json 병합)
+     대상 저장소  .claude/agent_tracker.json (장부) · 훅 4종 (settings.json)
         │
         └── 하트비트 ──▶ 레지스트리 (~/.claude/autoharness/registry.json)
                               ▲
-                              │ 15분마다 판독 (작업 스케줄러 AutoHarnessWatchdog / cron)
-                           워치독 (bin/harness_watchdog.py)
-                              └─ 죽은 세션을 claude -p 헤드리스로 재기동 (CLAUDE_AUTOHARNESS=1)
+              ┌───────────────┴───────────────┐
+   v1: 워치독(스케줄러가 15분마다 호출)   v2: 상주 데몬(자기 시계로 tick, 웹 UI 내장)
+              └───────────────┬───────────────┘
+                              ▼
+              죽은 세션을 claude -p 헤드리스로 재기동 (CLAUDE_AUTOHARNESS=1)
 ```
 
 ---
 
 # 설치
 
-## 먼저 알아 두실 것
-
-**설치는 계정당 한 번이면 됩니다.** 설치 위치가 사용자 홈 아래 한 곳이고, 데스크톱 앱·CLI·
-IDE 확장이 **같은 위치를 공유**하기 때문입니다.
+**계정당 한 번**이면 됩니다. 설치 위치가 사용자 홈 아래 한 곳이라 데스크톱 앱·CLI·IDE
+확장이 같은 것을 공유합니다.
 
 | 무엇 | 어디에 |
 |---|---|
-| 스킬·코드 | `~/.claude/skills/autoharness/` (Windows: `%USERPROFILE%\.claude\skills\autoharness\`) |
+| 스킬 문서 | `~/.claude/skills/autoharness/` |
+| v2 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
 | MCP 등록 | 사용자 스코프 (`claude mcp add --scope user`) |
-| 런타임 상태 | `~/.claude/autoharness/` (registry.json, logs/) — 제거해도 **보존**됩니다 |
+| 런타임 상태 | `~/.claude/autoharness/` — 제거해도 **보존**됩니다 |
 
-아래 세 절 중 **본인 환경 하나만** 수행하시면 됩니다. 이후 사용법은 전부 동일합니다.
+> **표기 규약**: 이 문서의 `autoharness` 는 설치된 실행 파일
+> `~/.claude/autoharness/bin/autoharness` — Windows 에서는 `%USERPROFILE%\.claude\autoharness\bin\autoharness.exe` —
+> 를 가리킵니다. **설치기는 PATH 를 건드리지 않습니다.** 짧은 이름으로 쓰시려면 그 디렉토리를
+> PATH 에 추가하시고, 아니면 전체 경로로 부르십시오.
 
-### 준비물 (공통)
+## 준비물
 
-| 항목 | 요구 | 확인 명령 |
+| 항목 | 요구 | 확인 |
 |---|---|---|
-| Python | 3.8 이상 (stdlib 만 사용 — 추가 패키지 없음) | `python --version` / `python3 --version` |
-| claude CLI | MCP 자동 등록·워치독 재기동에 필요 | `claude --version` |
+| claude CLI | MCP 등록·세션 재기동에 필요 | `claude --version` |
+| Python | v1 을 쓰거나 v2 를 빌드하지 않을 때 3.8+ (stdlib 만) | `python --version` |
+| Bun | v2 를 직접 빌드할 때만 | `bun --version` |
 
-claude CLI 가 없어도 스킬·엔진은 설치되지만 MCP 등록이 건너뛰어집니다. 이 경우에도 스킬이
-폴백 경로(`python scripts/harness_engine.py ...` 직접 실행)로 동작하므로 주행 자체는 됩니다.
+## v1 설치 (Python — 가장 간단)
 
----
-
-## 1. Claude Code 데스크톱 앱 (Windows / macOS)
-
-데스크톱 앱에는 셸이 따로 없으므로, **Code 탭에서 Claude 에게 설치를 맡기는 것**이 가장 간단합니다.
-
-**① 저장소를 받습니다.** (Windows 설치기는 다운로드 기능이 없어 체크아웃이 필요합니다)
-
-```bash
-git clone https://github.com/EcoKG/autoharness.git
-```
-
-**② 앱에서 그 폴더를 열고, Code 탭에서 이렇게 요청하십시오.**
-
-```
-이 폴더의 install.ps1 을 실행해서 AutoHarness 를 설치해줘 (워치독까지)
-```
-
-Claude 가 아래 명령을 대신 실행합니다. 직접 터미널에서 실행하셔도 결과는 같습니다.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog
-```
-
-**③ 반드시 지켜야 할 두 가지 — 이걸 어기면 안전장치가 조용히 죽습니다.**
-
-- **Code 탭에서 쓰십시오.** 일반 채팅 탭에는 훅 개념이 없어 커밋 게이트·금지 명령 차단·Stop
-  게이트가 전부 동작하지 않습니다.
-- **저장소 루트를 프로젝트로 여십시오.** 상위 폴더를 열면 저장소의 `.claude/settings.json` 이
-  로드되지 않아 훅 4종이 전부 비활성화됩니다. 주행은 정상처럼 보이지만 게이트는 전부 무력인
-  상태가 됩니다. 이 상태는 `/autoharness status` 의 `hooks.state` 가 `inactive` 로 알려 줍니다.
-
-> macOS 데스크톱 앱은 아래 **3. WSL / 리눅스** 의 `install.sh` 를 쓰시면 됩니다.
-> (macOS 에서의 동작은 실측 검증되지 않았습니다 — cron 기반 워치독은 환경에 따라 조정이 필요할 수 있습니다.)
-
----
-
-## 2. CLI (Windows 터미널)
-
-터미널에서 직접 실행하는 경로입니다.
-
-```powershell
-git clone https://github.com/EcoKG/autoharness.git
-cd autoharness
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-워치독(세션 자동 부활)은 **별도 등록**입니다.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Watchdog -IntervalMinutes 10
-```
-
-- 워치독은 **Windows 작업 스케줄러**에 `AutoHarnessWatchdog` 작업으로 등록됩니다(기본 15분 간격).
-- 기존 설치가 있으면 `~/.claude/skills/autoharness.bak-<시각>` 으로 백업한 뒤 갱신합니다.
-- 업데이트는 `git pull` 후 같은 명령을 다시 실행하시면 됩니다.
-
----
-
-## 3. WSL / 리눅스
-
-유일하게 **원라인 설치**가 되는 경로입니다(설치기가 GitHub 타르볼을 직접 내려받습니다).
+WSL / 리눅스 / macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash
 ```
 
-워치독(cron, 15분 간격)까지 한 번에:
+Windows PowerShell — 체크아웃이 필요합니다(`install.ps1` 이 자기 폴더 기준으로 동작합니다):
+
+```powershell
+git clone https://github.com/EcoKG/autoharness.git; cd autoharness; .\install.ps1
+```
+
+워치독까지 등록하려면 `-Watchdog`(PowerShell) 또는 `--watchdog`(bash)를 붙이십시오.
+**curl 파이프에는 인자를 그냥 붙일 수 없습니다** — `bash` 가 먼저 먹습니다:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --watchdog
 ```
 
-체크아웃에서 실행하실 수도 있습니다: `bash install.sh [--watchdog] [--uninstall]`
+## v2 설치 (단일 EXE)
 
-- 워치독은 **cron** 에 등록됩니다. **WSL 은 cron 데몬이 꺼져 있는 경우가 많습니다** —
-  `sudo service cron start` 또는 `/etc/wsl.conf` 에 `[boot] systemd=true` 를 설정해야 자동
-  부활이 동작합니다(설치기가 감지해 안내합니다).
-- 환경변수로 조정 가능: `AUTOHARNESS_INTERVAL`(cron 간격, 기본 15), `AUTOHARNESS_BRANCH`(기본 main)
+빌드한 뒤 EXE 스스로 설치합니다.
+
+```bash
+cd daemon && bun run build
+# 산출물: Windows 는 dist/autoharness.exe, 리눅스·macOS 는 dist/autoharness
+./dist/autoharness.exe install --exe "$PWD/dist/autoharness.exe" --skill ../skill --autostart
+```
+
+`--exe` 를 반드시 주십시오. `bun run` 으로 실행하면 `process.execPath` 가 **bun 자신**이라
+런타임을 복사하게 됩니다. 설치기가 원본을 실행해 버전을 확인하므로 잘못된 원본은 거부되지만,
+명시하는 편이 확실합니다.
+
+무엇이 바뀔지 먼저 보려면:
+
+```bash
+./dist/autoharness.exe install --dry-run --autostart
+```
+
+리눅스·macOS 에서는 위 두 블록의 `./dist/autoharness.exe` 를 `./dist/autoharness` 로 읽으십시오.
+
+### 자동 시작에 대해
+
+`--autostart` 는 **로그온 트리거만** 씁니다(시간 트리거는 위에 적은 이유로 쓰지 않습니다).
+작업 스케줄러 등록이 권한으로 거부되는 환경에서는 **시작프로그램 폴더**로 폴백하며, 어느
+수단으로 걸렸는지 결과에 그대로 드러납니다. 폴백 산출물은
+`시작프로그램\AutoHarnessDaemon.cmd` 이고 **그 파일을 지우면 해제**됩니다.
+
+## 설치 확인
+
+```bash
+claude mcp list                    # autoharness ... ✔ Connected
+autoharness install --status       # exe/스킬/자동 시작 실제 상태
+autoharness selftest               # selftest 통과 (15/15)
+```
+
+v1 만 설치했다면 세 번째는 이렇게 확인합니다:
+
+```bash
+python ~/.claude/skills/autoharness/bin/harness_engine.py selftest
+```
+
+`install --status` 는 **파일 존재가 아니라 동작**으로 판정합니다. 파일이 있는데 우리 것이
+아닌 상태(`exe_present: true, exe_installed: false`)를 구분해 보여 줍니다.
 
 ---
 
-## 설치 확인 (공통)
-
-세 경로 어느 쪽이든, 아래 셋이 모두 확인되면 설치가 끝난 것입니다.
-
-**① MCP 등록** — 출력에 `autoharness: ... ✔ Connected` 줄이 있어야 합니다.
-
-```bash
-claude mcp list
-```
-
-**② 엔진 자가검증** — `selftest 통과 (15/15)` 가 나와야 합니다.
-
-Windows:
-
-```powershell
-python "$env:USERPROFILE\.claude\skills\autoharness\bin\harness_engine.py" selftest
-```
-
-WSL / 리눅스:
-
-```bash
-python3 ~/.claude/skills/autoharness/bin/harness_engine.py selftest
-```
-
-**③ 스킬 인식** — 새 Claude Code 세션에서 `/autoharness` 가 자동완성에 뜨면 됩니다.
-
-워치독 등록까지 하셨다면 상태를 함께 확인하십시오. 새 Claude Code 세션에서 이렇게 물으시면 됩니다.
-
-```
-/autoharness status
-```
-
-`hooks` 와 워치독 `health` 진단이 함께 나옵니다. **등록만 되고 실제로는 한 번도 실행되지 않는
-상태**(스케줄러가 기동을 반려하는 경우)도 여기서 결과 코드와 함께 드러납니다.
-
----
-
-# 공통 사용법
-
-설치가 끝나면 환경에 관계없이 사용법은 같습니다.
+# 사용법
 
 ## 첫 주행 — 하네스 구축
 
-대상 저장소에서 새 Claude Code 세션을 열고 요청하십시오.
+새 Claude Code 세션에서 대상 저장소를 열고:
 
 ```
-/autoharness init
+/autoharness 이 저장소를 검증하고 문제가 있으면 고쳐 주십시오
 ```
 
-1. **스택 실측** — `harness_detect` 가 빌드 도구·테스트 디렉토리·린트 설정을 훑고, 실제 테스트를
-   **1회 실행해** 명령을 검증합니다. 테스트가 전무하거나 전부 실패하면 여기서 중단하고 보고합니다
-   (검증 기준이 없으면 자가 치유 루프가 성립하지 않기 때문입니다).
-2. **모델 선택** — 추천은 도구가, **결정은 사용자**가 합니다. `model_recommend` 휴리스틱이
-   `claude-fable-5` / `claude-opus-5` 중 하나를 근거와 함께 제시하고, 질문 창에서 최종 선택하십시오.
-   결정된 모델은 장부·레지스트리에 기록되며 워치독도 그 모델로 재기동합니다.
-3. **하네스 구축** — 장부·훅 4종·엔진 사본·CLAUDE.md 가 설치되고, 작업 계획이 장부에 적재됩니다.
-4. **자가검증·워치독 등록** — `selftest` 7종 15항목이 전부 PASS 해야 다음으로 넘어갑니다.
+메커니즘이 아니라 **결과로 말해도 됩니다.** "테스트를 확충해 줘", "master 로 승격 가능한지
+검증해 줘", "이 모듈을 X 로 이식해 줘" 같은 요청이 전부 이 스킬의 대상입니다.
 
-## 자율 주행
+스킬은 스택을 실측하고, 테스트 명령을 **실제로 한 번 돌려 본 뒤**, 모델 추천을 제시해
+사용자의 선택을 받고, 훅과 장부를 심고, selftest 로 자가 검증한 뒤 주행을 시작합니다.
+테스트가 전무하거나 전부 실패하면 **거기서 멈추고 보고합니다** — 검증 기준이 없으면 자가
+치유 루프가 성립하지 않기 때문입니다.
 
-이후 세션은 **"코드 수정 → `bash scripts/agent_harness.sh --task <id>` → 종료 코드 분기 → 커밋"**
-루프를 반복합니다. 진행 가능한 작업이 남아 있는 한 Stop 훅이 세션을 놓아주지 않고, 세션이
-죽으면(사용량 초과 포함) 워치독이 15분 주기 판독에서 감지해 자동 부활시킵니다.
-
-이어서 하실 때는 이렇게만 말씀하시면 됩니다.
+## 이어서 주행
 
 ```
 /autoharness resume
@@ -212,155 +177,190 @@ python3 ~/.claude/skills/autoharness/bin/harness_engine.py selftest
 
 ## 이미 하네스가 있는 저장소에 새 목표를 줄 때
 
-**init 을 다시 돌리지 마십시오** — 장부가 초기화되어 진행 상태가 사라집니다. 새 작업을
-`task_add` 로 적재한 뒤 resume 하는 것이 정규 경로이고, `/autoharness <하고 싶은 일>` 로
-말씀하시면 스킬이 장부 유무를 보고 알아서 이 경로를 택합니다.
-
-요청은 메커니즘이 아니라 **결과로 말하셔도 됩니다** — "검증하고 문제 있으면 수정해줘",
-"master 로 승격 가능한지 확인해줘", "테스트 확충해줘" 같은 요청도 전부 자율 주행 대상입니다.
-주행이 이미 완료(`completed`)된 프로젝트라면 작업 추가만으로 워치독이 다시 살아납니다.
+`init` 을 다시 돌리지 마십시오 — 진행 상태가 날아갑니다. 그냥 결과로 말하면 스킬이 작업을
+장부에 추가한 뒤 이어서 돕니다.
 
 ## 일상 명령
 
-| 하고 싶은 것 | 명령 |
-|---|---|
-| 진행 상황 확인 | `/autoharness status` (또는 대상 저장소의 `PROGRESS.md`) |
-| 주행 재개 | `/autoharness resume` |
-| 잠시 멈춤 | `/autoharness pause` — 플래그 생성, 워치독·Stop 게이트 즉시 비활성 |
-| 멈춘 것 다시 돌리기 | `/autoharness resume-project` — 플래그 제거, 백오프 리셋 |
-| 특정 작업 재시도 | `/autoharness` 로 "작업 `<id>` 를 pending 으로 되돌려줘" |
+```
+/autoharness status          진행률·다음 작업·배선 진단·데몬 상태
+/autoharness pause           일시정지 (데몬·Stop 게이트 즉시 비활성)
+/autoharness 다시 돌려        재개
+```
+
+## 웹 콘솔 (v2)
+
+데몬이 로컬 웹 UI 를 함께 띄웁니다. 주소는 `~/.claude/autoharness/daemon.json` 의 `port`,
+토큰은 같은 파일 또는 `~/.claude/autoharness/web-token` 에 있습니다.
+
+화면에서 볼 수 있는 것:
+
+- 전체 상태와 프로젝트별 상태·백오프·다음 예정 작업
+- 선택한 프로젝트의 장부(작업·상태·시도 횟수·커밋 SHA)
+- **주행 중인 Claude Code 세션의 출력** — 데몬의 판단 로그와 구분해 실시간으로 흐릅니다
+  (전체 / 세션 출력만 / 데몬 판단만 으로 필터)
+- 제어 버튼: 일시정지·재개·즉시 tick·세션 기동, 작업 상태 전환
+
+## v1 → v2 이행
+
+훅 배선만 바꾸고 **장부는 건드리지 않습니다.** 전후 바이트를 비교해 다르면 실패로 보고합니다.
+
+```bash
+autoharness install --migrate <저장소> --dry-run   # 계획 먼저
+autoharness install --migrate <저장소>             # 실행 (설정은 백업 후 교체)
+```
+
+되돌리기는 백업 파일 하나를 복원하는 것으로 끝납니다:
+
+```bash
+autoharness install --rollback <저장소> --backup <settings.json.bak-…>
+```
+
+**한 번에 끝내지 않아도 됩니다.** 두 구현이 같은 스키마와 같은 잠금 규약을 쓰므로 섞여
+있어도 장부가 깨지지 않습니다.
 
 ## 배포의 한계선
 
-이 하네스가 하는 것은 **배포 가능 상태까지의 검증과 로컬 커밋**입니다. `git push`·태그 푸시·
-릴리스 발행은 훅이 차단하므로 **사람이 직접 하셔야 합니다.** "배포해줘" 라고 하셔도 로컬
-커밋까지만 진행되고, 남은 것은 보고서의 "사람 판단 필요 항목"에 남습니다.
+이 하네스가 하는 것은 **배포 가능 상태까지의 검증과 로컬 커밋**입니다. `git push`·태그
+푸시·릴리스 발행은 훅이 차단합니다. 무인 세션에서는 하드 차단(exit 2)이고, 사람이 보고 있는
+대화형 세션에서는 승인 창으로 승격됩니다 — 위험 모델이 "사람이 없을 때의 무단 원격 반영"
+이기 때문입니다.
 
 ---
 
 # 참고
 
-## 종료 코드 표 (`harness run` / `agent_harness.sh`)
+## 종료 코드 (절대 기준)
 
-| 코드 | 의미 | 에이전트 행동 |
+| 코드 | 의미 | 다음 행동 |
 |---|---|---|
-| 0 | 검증 통과 (task → done) | 커밋 후 다음 작업 |
-| 1 | 검증 실패 (attempts+1, last_error 기록) | 자가 치유 계속 |
-| 2 | 사용법/설정 오류 | 중단·보고 |
-| 3 | 진행 가능한 작업 없음 | 중단·보고 |
-| 4 | max_attempts 도달 (task → blocked) | 해당 작업 봉인 — 남은 작업이 있으면 계속, 없으면 보고 (사람 판단 필요) |
+| 0 | 검증 통과 (작업 done) | 커밋 후 다음 작업 |
+| 1 | 검증 실패 (attempts+1) | 오류를 읽고 자가 수정 후 재실행 |
+| 2 | 사용법·설정 오류 | 중단·보고 |
+| 3 | 진행 가능한 작업 없음 | 요약 보고 후 종료 |
+| 4 | 시도 한도 도달 (작업 blocked) | 남은 작업이 있으면 계속 |
 
-※ `run` 은 이미 blocked 인 작업을 지정했거나 blocked 만 남은 상태에서도 4 를 반환합니다
-(같은 상태에서 `next` 는 3). 두 경우 모두 사람 판단이 필요한 상태라는 뜻입니다.
+## 훅이 강제하는 것
 
-## 훅이 강제하는 규칙
-
-CLAUDE.md 는 강제층이 아니므로, "특정 시점 무조건 실행" 규칙은 전부 훅으로 구현되어 있습니다.
+CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고쳐도 우회되지 않습니다.
 
 | 훅 | 강제하는 규칙 |
 |---|---|
-| SessionStart | 세션 시작·compact 직후 장부 요약을 컨텍스트에 주입해 진행을 복구합니다 |
-| PreToolUse(`Bash\|PowerShell`) | `git push`·`--force`·`reset --hard`·`clean -f` 차단, **커밋 게이트**(하네스 검증 통과 없이는 `git commit` 차단) |
-| PostToolUse(`Bash\|PowerShell`) | `git commit` 직후 done 작업에 커밋 SHA 자동 기록 + 하트비트. 커밋이 실제로 새 커밋을 만든 경우에만 기록합니다(nothing to commit 오귀속 방지) |
-| Stop | 자율 주행 게이트 — 남은 작업이 있으면 세션 종료를 막고 다음 작업을 지시. 대화형 세션(`CLAUDE_AUTOHARNESS` 미설정)·일시정지·무진전 3회 초과 시에는 개입하지 않습니다 |
+| SessionStart | 장부 요약을 컨텍스트에 주입(진행 복구) |
+| PreToolUse | 금지 명령 차단 + **커밋 게이트** |
+| PostToolUse | 커밋 SHA 를 장부에 기록(오귀속 방지) |
+| Stop | 남은 작업이 있으면 헤드리스 세션 종료를 막음 |
 
-**훅은 저장소 `.claude/settings.json` 이 로드될 때만 동작합니다.** 프로젝트 루트가 저장소 밖이면
-훅 4종이 전부 조용히 비활성화되므로, 엔진이 이를 감지해 `run` 시작 시 경고하고
-`status`/`brief` 에 `hooks.state = inactive` 로 표시합니다.
+**커밋 게이트의 통과 기록은 1회용입니다.** 통과한 작업에 커밋 SHA 가 붙는 순간 게이트가
+다시 닫힙니다 — 한 번 통과했다고 이후 커밋이 무한히 열리지 않습니다.
+
+**금지 명령 판정은 토큰 기반입니다.** 인용부호 안의 언급(`git log --grep=push`,
+커밋 메시지에 든 "push")은 통과하고, 래퍼 우회(`bash -c`, `powershell -Command`)는 재귀
+분석으로 잡습니다. 차단 대상은 두 축입니다 — 원격 변경(push, gh 쓰기 동사)과 되돌릴 수 없는
+로컬 파괴(`reset --hard`, `clean -f`, `branch -D`, `checkout --`, `stash drop` 등).
+
+**훅은 저장소를 못 박습니다.** 명령에 `--repo "${CLAUDE_PROJECT_DIR}"` 가 들어갑니다. 없으면
+하위 디렉토리에서 게이트가 통째로 사라집니다(실측으로 확인된 결함).
 
 ## 대상 저장소에 생기는 파일
 
-| 경로 | 역할 |
+| 경로 | 내용 | git |
+|---|---|---|
+| `.claude/agent_tracker.json` | **장부 — 진실의 원천** | 추적 |
+| `.claude/settings.json` | 훅 4종·권한 (기존 설정과 병합, 백업 생성) | 추적 |
+| `PROGRESS.md` | 장부에서 렌더한 산출물 (직접 수정 금지) | 추적 |
+| `.claude/harness-logs/` | 실행 로그 | 무시 |
+| `.claude/harness-{state,heartbeat,hooks-seen}.json` | 런타임 상태 | 무시 |
+| `CLAUDE.md` | 프로젝트 지침 (기존 내용 보존하며 병합) | 추적 |
+
+v1 은 여기에 `scripts/harness_engine.py` 사본과 `scripts/agent_harness.sh` 를 더 둡니다.
+v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않습니다.
+
+## 사용량 초과 방어
+
+세션이 사용량 한도로 죽으면 **영구 포기하지 않습니다.** 30 → 60 → 120 → 240 → 360분
+지수 백오프로 재시도하며 `status` 는 `active` 로 남습니다. 다만 이 분류가 연속되면 실제
+한도가 아니라 오분류일 수 있으므로 사람이 볼 신호를 남깁니다.
+
+설정 오류성 실패(`error`)는 다르게 다룹니다 — 15 → 30 → 60분 백오프에 **5회 연속이면 정지**
+하고 사람을 부릅니다.
+
+## 보안 (v2 웹)
+
+데몬은 프로젝트를 멈추고 세션을 기동할 수 있습니다. 명령을 받을 수 있다는 것은 곧 로컬
+공격 표면이므로 다음은 타협하지 않습니다.
+
+- **`127.0.0.1` 에만 바인드** — 외부 인터페이스 옵션을 만들지 않습니다.
+- **토큰 필수** — 없거나 틀리면 401. 쿠키 인증을 쓰지 않습니다(CSRF).
+- **상태 변경은 POST 만**, `Host` 검사로 DNS 리바인딩 차단, CORS 미개방.
+- **화이트리스트된 동작만** — 프로젝트 동작은 pause/resume/tick/launch, 작업 상태는
+  pending/blocked 만. `done` 은 웹에서 만들 수 없습니다(러너 성공으로만 생깁니다).
+- **임의 셸 실행 경로 없음** — MCP 위임 경로도 노출 도구를 좁히고, 값이 셸로 직행하는
+  인자는 거부합니다.
+- UI 는 외부 CDN 을 부르지 않습니다(오프라인 동작). 토큰은 sessionStorage 에만 둡니다.
+
+## 실측 수치
+
+| 항목 | 값 |
 |---|---|
-| `.claude/agent_tracker.json` | 상태 장부 — **진실의 원천** (손 편집 비권장) |
-| `.claude/agent_tracker.example.json` | 장부 스키마 예시 |
-| `.claude/harness-logs/` | 작업별 빌드·테스트 전체 로그 |
-| `.claude/harness-state.json` | 러너·Stop 훅 내부 상태(직전 실행, 진전 가드) |
-| `.claude/harness-heartbeat.json` | 하트비트 — 워치독의 이중 기동 방지 근거 (검증 실행 중 5분 주기 자동 갱신) |
-| `.claude/harness-hooks-seen.json` | 훅 발화 마커 — 배선이 살아 있는지 판정하는 근거 |
-| `.claude/HARNESS_PAUSED` | 존재하면 일시정지 (플래그 파일) |
-| `.claude/settings.json` | 훅 4종·권한이 **병합**됩니다 (원본은 `.bak-<시각>` 백업) |
-| `scripts/harness_engine.py` | 엔진 사본 — 훅·러너가 호출 (단독 동작, stdlib만) |
-| `scripts/agent_harness.sh` | 진입 래퍼 — `bash scripts/agent_harness.sh --task <id>` |
-| `PROGRESS.md` | 장부에서 자동 렌더되는 진행 현황 (직접 수정 금지) |
-| `CLAUDE.md` | 하네스 규칙 골격 병합 (기존 파일은 백업 후 병합) |
+| 훅 콜드 스타트 p95 | 유휴 시 81~82ms (예산 150ms) — 아래 주석 참고 |
+| EXE 크기 / 빌드 | 94.1 MiB / 0.7~0.9초 |
+| v1↔v2 교차 검증 | 365건 대조, 불일치 0건 |
+| 데몬 드리프트 | 가속 500 tick 편차 0, 실시간 60 tick 평균 간격 정확 |
+| 테스트 | v2 530건, v1 397건 (2026-08-10) |
 
-## 사용량 초과 방어 동작
+재현: `bun run bench:startup`, `bun run parity`, `bun run verify:exe`, `bun test`
 
-워치독이 재기동 직후 90초 안에 세션이 죽고 출력에 사용량 패턴(`usage limit`, `rate limit`,
-`limit reached`, `overloaded`, `quota`, `credit balance`, 그리고 `429` 는 API 오류 문맥에
-인접할 때만 — "collected 429 items" 같은 우연 문자열 오탐 방지)이 보이면 **limit** 으로 분류합니다.
-
-- **limit**: 지수 백오프 **30 → 60 → 120 → 240 → 360분** 후 재시도합니다(이후에도 360분 간격
-  반복). **영구 포기는 없습니다** — 한도가 풀리면 자동으로 다시 달립니다.
-- **error**(사용량 외 비정상 종료): 15 → 30 → 60분 백오프로 재시도하되, **5회 연속** 실패하면
-  설정성 오류로 보고 `status=error` 로 정지합니다(사람 확인 필요, 사유는 watchdog.log 에 기록).
-- 90초 생존 또는 정상 종료(rc=0)면 카운터가 리셋되고 세션은 분리되어 계속 달립니다.
+**콜드 스타트는 기기 부하에 민감합니다.** 유휴 상태에서는 p95 81~82ms 로 일관되지만, 다른
+작업이 CPU 를 점유한 상태에서 재면 110~180ms 까지 오르며 예산을 넘기기도 합니다. 이 수치를
+받아들일 때는 측정 조건을 함께 보십시오 — 단일 값 하나로 판정할 성질이 아닙니다.
 
 ## 제거
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
-```
-
 ```bash
-bash ~/.claude/skills/autoharness/install.sh --uninstall
+autoharness install --uninstall     # 자동 시작·MCP 등록 해제
 ```
 
-스케줄러 작업(또는 cron 항목)·MCP 등록·스킬 폴더가 제거됩니다. 런타임 상태
-(`~/.claude/autoharness/`)는 **보존**되므로 재설치하시면 프로젝트 상태가 그대로 이어집니다.
-대상 저장소 안의 생성물은 저장소별로 직접 정리하시면 됩니다.
+**장부·레지스트리·로그는 남습니다** — 진행 상태를 지우지 않습니다. 완전히 지우려면
+`~/.claude/skills/autoharness/`, `~/.claude/autoharness/bin/` 을 직접 삭제하십시오.
+대상 저장소의 훅을 되돌리려면 위의 `--rollback` 을 쓰십시오.
 
 ---
 
 # 문제 해결
 
-**1. 훅이 동작하지 않는 것 같을 때**
+**`/autoharness` 가 안 뜹니다** — 새 세션을 여십시오. 스킬은 세션 시작 시 읽힙니다.
 
-`/autoharness status` 의 `hooks.state` 를 보십시오.
+**MCP 가 `Failed to connect` 입니다** — `autoharness install --status` 로 `exe_installed` 를
+보십시오. `exe_present: true, exe_installed: false` 면 그 자리에 우리 것이 아닌 파일이
+있는 것입니다(대표적으로 `bun run` 으로 설치해 런타임이 복사된 경우). 다시 빌드해
+`--exe` 로 지정해 설치하십시오.
 
-| 값 | 뜻 | 조치 |
-|---|---|---|
-| `active` | 정상 — 실제 발화 기록이 있음 | — |
-| `inactive` | 등록됐지만 한 번도 발화하지 않음 | **프로젝트 루트가 저장소 루트인지** 확인. 데스크톱 앱이면 Code 탭인지 확인 |
-| `not_registered` | 훅 미등록(수동 운용) | 정상 — 경고 대상이 아닙니다 |
+**훅이 안 걸립니다** — `status` 의 `hooks.state` 를 보십시오.
 
-**2. 워치독이 무엇을 했는지 보고 싶을 때**
+| 값 | 뜻 |
+|---|---|
+| `not_registered` | 훅 미등록(수동 운용) — 경고 대상이 아닙니다 |
+| `active` | 등록됐고 실제로 발화한 기록이 있습니다 |
+| `inactive` | 등록됐지만 한 번도 발화한 적이 없습니다 — **배선이 끊겼습니다** |
 
-- `~/.claude/autoharness/logs/watchdog.log` — 판단·기동·백오프가 한 줄씩 기록됩니다
-- 세션별 출력: `~/.claude/autoharness/logs/<프로젝트>-<시각>.log`
+`inactive` 의 가장 흔한 원인은 **세션의 프로젝트 루트가 저장소 밖**인 것입니다. 그러면
+저장소의 `.claude/settings.json` 이 로드되지 않아 훅 4종이 조용히 전부 죽습니다. 저장소
+루트에서 `claude` 를 실행하십시오.
 
-**3. 워치독이 등록만 되고 실행이 안 될 때**
+`settings.json` 이 깨진 경우도 같은 증상인데, 진단이 이 둘을 구분해 알려 줍니다.
 
-`/autoharness status` 의 워치독 `health` 가 스케줄러 마지막 결과 코드를 해석해 보고합니다
-(`0x800710E0` 요청 거부, `0x8004131F` 인스턴스 중복, `0x80070002` 경로 없음 등).
-`state` 가 `stale` 이면 등록은 돼 있으나 실제로 돌지 않는 상태입니다.
+**데몬이 도는지 모르겠습니다** — `daemon.log` 의 `tick` 줄과 `/api/status` 의 `pid`·
+`uptime_sec` 을 보십시오. 레지스트리의 `last_tick` 은 v1 워치독도 갱신하므로 v2 데몬의
+생존 증거로는 약합니다.
 
-```powershell
-schtasks /Query /TN AutoHarnessWatchdog /V /FO LIST
-```
-
-**4. MCP 서버가 안 잡힐 때**
-
-`claude mcp list` 에서 `autoharness` 줄을 확인하십시오. 등록 전이거나 실패한 환경에서는
-스킬이 폴백으로 `python scripts/harness_engine.py ...` 를 직접 실행하므로 주행은 계속됩니다.
-
-**5. 세션이 계속 안 뜰 때**
-
-레지스트리(`~/.claude/autoharness/registry.json`)의 프로젝트 `status` 를 확인하십시오.
-`error`(설정성 오류 5연속)·`needs_human`(blocked 작업 존재)은 사람 확인 후
-`/autoharness resume-project` 로 재개하시면 됩니다. `completed` 는 새 작업을 `task_add` 로
-추가하는 것만으로 자동 재활성화됩니다(백오프 리셋 포함).
-
-**6. auto 모드 분류기가 `harness_init` 을 차단할 때**
-
-settings.json 훅 주입과 권한 우회 등록은 분류기가 막도록 설계된 패턴이라 정상 동작입니다.
-에이전트가 엔진 init(장부 생성)까지 진행한 뒤, 나머지(사본 보완·훅 병합·레지스트리 등록)는
-**직접 터미널에서** 한 줄로 마무리하십시오.
+**두 감독자가 동시에 돕니다** — v1 워치독과 v2 데몬을 함께 두면 같은 저장소에 세션이 두 번
+뜰 수 있습니다. 이행이 끝나면 v1 워치독을 내리십시오:
 
 ```bash
-python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo <저장소경로> --permission-mode bypass
+schtasks /Delete /TN AutoHarnessWatchdog /F
 ```
 
-또는 해당 세션의 권한 모드를 auto 에서 default/acceptEdits 로 바꾸면(Shift+Tab) 차단 대신
-승인 프롬프트를 받게 됩니다.
+**작업이 blocked 됐습니다** — 시도 5회를 넘겼거나 사람 판단이 필요한 경계에 닿은 것입니다.
+`PROGRESS.md` 와 장부의 `last_error` 에 사유가 있습니다. 해결한 뒤 `pending` 으로 되돌리면
+다시 주행 대상이 됩니다.
