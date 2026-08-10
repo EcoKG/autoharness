@@ -13,6 +13,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { atomicWriteJson } from "./atomic.ts";
+import { withFileLock, type FileLockOptions } from "./filelock.ts";
 import { loadJson, type LoadState } from "./load.ts";
 import { userPaths } from "./paths.ts";
 import { isRegistry, nowIso, type Registry, type RegistryProject } from "./schema.ts";
@@ -90,17 +91,29 @@ export async function saveRegistry(reg: Registry, env: NodeJS.ProcessEnv = proce
 }
 
 /**
- * 읽기→수정→쓰기를 하나로 묶는다. **저장 직전에 다시 읽으므로** 그 사이 다른 주체가 남긴
- * 변경을 덮지 않는다 — 스케줄러의 통째 되쓰기가 MCP 변경을 되돌리던 결함의 해법이다.
+ * 읽기→수정→쓰기를 하나로 묶는다.
+ *
+ * **프로세스 간 잠금 안에서 수행한다.** 저장 직전 재읽기만으로는 A읽기 → B읽기 → B쓰기 →
+ * A쓰기 순서를 막지 못한다 — 창이 좁아질 뿐이다. 쓰기 주체가 상주 데몬과 세션마다 뜨는
+ * MCP 서버로 **별개 프로세스**이므로, 같은 프로세스 안의 직렬화로는 부족하다.
+ * 잠금을 못 얻으면 쓰기를 건너뛰지 않고 던진다 — 조용한 갱신 소실보다 시끄러운 실패가 낫다.
  */
 export async function mutateRegistry<T>(
   mutate: (reg: Registry) => T | Promise<T>,
   env: NodeJS.ProcessEnv = process.env,
+  /** 대기 상한 — 지연 예산이 빡빡한 호출자(훅)는 낮춰 잡을 수 있다. */
+  lockOptions?: FileLockOptions,
 ): Promise<T> {
-  const reg = await loadRegistryForWrite(env);
-  const result = await mutate(reg);
-  await saveRegistry(reg, env);
-  return result;
+  return withFileLock(
+    userPaths(env).registryLock,
+    async () => {
+      const reg = await loadRegistryForWrite(env);
+      const result = await mutate(reg);
+      await saveRegistry(reg, env);
+      return result;
+    },
+    lockOptions,
+  );
 }
 
 /** 경로 비교는 정규화 후에 한다 — 대소문자·상대 경로 차이로 같은 저장소를 놓치지 않는다. */

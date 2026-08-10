@@ -560,34 +560,46 @@ def project_key(proj):
 def save_registry_merged(registry_path, reg, touched, log):
     """저장 직전 디스크를 다시 읽어, **이번 주기에 실제로 바꾼 프로젝트만** 병합해 쓴다.
 
+    재읽기와 쓰기는 **프로세스 간 잠금 안에서** 한다. 재읽기만으로는 A읽기→B읽기→B쓰기→
+    A쓰기 순서를 막지 못하고 창이 좁아질 뿐인데, 쓰기 주체가 워치독·MCP 서버로 별개
+    프로세스라 같은 프로세스 안의 순서 보장으로는 부족하다. 잠금 파일 규약은 v2 구현과
+    공유한다. 잠금을 못 얻으면 이번 주기 저장을 건너뛰고 로그로 드러낸다 — 남의 갱신을
+    덮는 것보다 이번 주기 결과를 잃는 편이 낫다(다음 주기에 다시 판단한다).
+
     주기 시작에 읽은 메모리 사본을 통째로 되쓰면, 주기 도중 MCP 가 기록한 변경
     (task_add 재활성화·pause·model_set·설치 스탬프)이 조용히 되돌려진다. completed
     프로젝트에 작업을 넣어도 다음 주기가 completed 로 되돌리면 자동 부활이 영구 무효가
     되는 경로였다."""
-    disk = eng.load_json(registry_path)
-    if not isinstance(disk, dict) or not isinstance(disk.get("projects"), list):
-        eng.atomic_write_json(registry_path, reg)   # 디스크가 이상하면 메모리본을 쓴다
-        return
-    by_key = {}
-    for p in disk["projects"]:
-        by_key.setdefault(project_key(p), p)
-    added = 0
-    for p in reg.get("projects") or []:
-        key = project_key(p)
-        if key not in touched:
-            continue                     # 안 만진 프로젝트는 디스크 값을 그대로 둔다
-        target = by_key.get(key)
-        if target is None:
-            disk["projects"].append(p)   # 주기 중 새로 등록됐다가 사라진 경우는 없다
-            added += 1
-            continue
-        for field in WATCHDOG_OWNED_FIELDS:
-            if field in p:
-                target[field] = p[field]
-    disk["last_tick"] = reg.get("last_tick")
-    eng.atomic_write_json(registry_path, disk)
-    if added:
-        log("-", "info", "레지스트리 병합 저장 — 신규 항목 %d건" % added)
+    lock_path = os.path.join(os.path.dirname(registry_path), "registry.lock")
+    try:
+        with eng.file_lock(lock_path):
+            disk = eng.load_json(registry_path)
+            if not isinstance(disk, dict) or not isinstance(disk.get("projects"), list):
+                eng.atomic_write_json(registry_path, reg)   # 디스크가 이상하면 메모리본을 쓴다
+                return
+            by_key = {}
+            for p in disk["projects"]:
+                by_key.setdefault(project_key(p), p)
+            added = 0
+            for p in reg.get("projects") or []:
+                key = project_key(p)
+                if key not in touched:
+                    continue                     # 안 만진 프로젝트는 디스크 값을 그대로 둔다
+                target = by_key.get(key)
+                if target is None:
+                    disk["projects"].append(p)   # 주기 중 새로 등록됐다가 사라진 경우는 없다
+                    added += 1
+                    continue
+                for field in WATCHDOG_OWNED_FIELDS:
+                    if field in p:
+                        target[field] = p[field]
+            disk["last_tick"] = reg.get("last_tick")
+            eng.atomic_write_json(registry_path, disk)
+            if added:
+                log("-", "info", "레지스트리 병합 저장 — 신규 항목 %d건" % added)
+    except eng.LockTimeout as e:
+        # 조용히 덮지 않는다. 이번 주기 결과를 버리고 다음 주기에 다시 판단한다.
+        log("-", "warn", "레지스트리 잠금 획득 실패 — 이번 주기 저장을 건너뜁니다: %s" % e)
 
 
 # 워치독이 소유하는 필드 — 이 필드만 되쓴다

@@ -45,6 +45,9 @@ WATCHDOG_SRC = os.path.join(BIN_DIR, "harness_watchdog.py")
 TEMPLATES_DIR = os.path.abspath(os.path.join(BIN_DIR, "..", "templates"))
 RUNTIME_DIR = os.path.join(os.path.expanduser("~"), ".claude", "autoharness")
 REGISTRY_PATH = os.path.join(RUNTIME_DIR, "registry.json")
+# 레지스트리 쓰기의 프로세스 간 잠금. v2 TypeScript 구현과 **같은 경로**여야 한다 —
+# 마이그레이션 기간에 두 구현이 공존해도 서로의 갱신을 덮지 않으려면 규약이 하나여야 한다.
+REGISTRY_LOCK_PATH = os.path.join(RUNTIME_DIR, "registry.lock")
 WATCHDOG_LOG = os.path.join(RUNTIME_DIR, "logs", "watchdog.log")
 
 STDOUT_CAP = 30000          # harness_run 응답에 담는 stdout 상한(문자)
@@ -230,6 +233,20 @@ def registry_save(reg):
     eng.atomic_write_json(REGISTRY_PATH, reg)
 
 
+@contextlib.contextmanager
+def registry_write_lock():
+    """레지스트리 읽기→수정→쓰기를 감싸는 프로세스 간 잠금.
+
+    v2 TypeScript 구현과 같은 잠금 파일을 쓴다 — 마이그레이션 기간에 v1 과 v2 가 공존해도
+    서로의 갱신을 덮지 않게 하려면 규약이 하나여야 한다. 잠금을 못 얻으면 조용히 쓰지 않고
+    ToolError 로 드러낸다."""
+    try:
+        with eng.file_lock(REGISTRY_LOCK_PATH):
+            yield
+    except eng.LockTimeout as e:
+        raise ToolError(str(e))
+
+
 def registry_find(reg, repo):
     key = os.path.normcase(os.path.abspath(repo))
     for p in reg["projects"]:
@@ -240,27 +257,28 @@ def registry_find(reg, repo):
 
 def registry_upsert(project_id, repo, model, permission_args):
     """harness_init 용 upsert — 재초기화 시 카운터·백오프를 리셋하고 active 로 되돌린다."""
-    reg = registry_load()
-    repo_abs = os.path.abspath(repo)
-    entry = registry_find(reg, repo_abs)
-    if entry is None:
-        entry = {
-            "id": project_id, "repo": repo_abs, "model": model,
-            "permission_args": permission_args,
-            "status": "active", "consecutive_errors": 0, "limit_hits": 0,
-            "next_retry_at": None,
-            "last_launch": {"ts": None, "result": None, "log": None},
-            "created_at": now_iso(), "updated_at": now_iso(),
-        }
-        reg["projects"].append(entry)
-    else:
-        entry.update({"id": project_id, "repo": repo_abs, "model": model,
-                      "permission_args": permission_args, "status": "active",
-                      "consecutive_errors": 0, "limit_hits": 0, "next_retry_at": None,
-                      "updated_at": now_iso()})
-        entry.setdefault("last_launch", {"ts": None, "result": None, "log": None})
-        entry.setdefault("created_at", now_iso())
-    registry_save(reg)
+    with registry_write_lock():
+        reg = registry_load()
+        repo_abs = os.path.abspath(repo)
+        entry = registry_find(reg, repo_abs)
+        if entry is None:
+            entry = {
+                "id": project_id, "repo": repo_abs, "model": model,
+                "permission_args": permission_args,
+                "status": "active", "consecutive_errors": 0, "limit_hits": 0,
+                "next_retry_at": None,
+                "last_launch": {"ts": None, "result": None, "log": None},
+                "created_at": now_iso(), "updated_at": now_iso(),
+            }
+            reg["projects"].append(entry)
+        else:
+            entry.update({"id": project_id, "repo": repo_abs, "model": model,
+                          "permission_args": permission_args, "status": "active",
+                          "consecutive_errors": 0, "limit_hits": 0, "next_retry_at": None,
+                          "updated_at": now_iso()})
+            entry.setdefault("last_launch", {"ts": None, "result": None, "log": None})
+            entry.setdefault("created_at", now_iso())
+        registry_save(reg)
     return entry
 
 
@@ -574,13 +592,14 @@ def registry_reactivate_if_completed(repo):
     error(진단 필요)는 새 작업 추가만으로 자동 재개하지 않는다.
     되돌릴 때는 백오프 카운터(consecutive_errors·limit_hits·next_retry_at)도 리셋한다.
     """
-    reg = registry_load()
-    entry = registry_find(reg, repo)
-    if entry is None or entry.get("status") != "completed":
-        return None
-    entry.update({"status": "active", "consecutive_errors": 0, "limit_hits": 0,
-                  "next_retry_at": None, "updated_at": now_iso()})
-    registry_save(reg)
+    with registry_write_lock():
+        reg = registry_load()
+        entry = registry_find(reg, repo)
+        if entry is None or entry.get("status") != "completed":
+            return None
+        entry.update({"status": "active", "consecutive_errors": 0, "limit_hits": 0,
+                      "next_retry_at": None, "updated_at": now_iso()})
+        registry_save(reg)
     return entry
 
 
@@ -636,12 +655,13 @@ def tool_harness_pause(a):
         raise ToolError("저장소 경로가 없습니다: " + repo)
     flag = eng.rp(repo)["paused_flag"]
     write_text_lf(flag, "paused at %s\n" % now_iso())
-    reg = registry_load()
-    entry = registry_find(reg, repo)
-    if entry is not None:
-        entry["status"] = "paused"
-        entry["updated_at"] = now_iso()
-        registry_save(reg)
+    with registry_write_lock():
+        reg = registry_load()
+        entry = registry_find(reg, repo)
+        if entry is not None:
+            entry["status"] = "paused"
+            entry["updated_at"] = now_iso()
+            registry_save(reg)
     return {"ok": True, "flag": flag,
             "registry": entry if entry is not None else "레지스트리에 등록되지 않은 프로젝트입니다"}
 
@@ -656,12 +676,13 @@ def tool_harness_resume_project(a):
             removed = True
         except OSError as e:
             raise ToolError("PAUSED 플래그 제거 실패: %s" % e)
-    reg = registry_load()
-    entry = registry_find(reg, repo)
-    if entry is not None:
-        entry.update({"status": "active", "consecutive_errors": 0, "limit_hits": 0,
-                      "next_retry_at": None, "updated_at": now_iso()})
-        registry_save(reg)
+    with registry_write_lock():
+        reg = registry_load()
+        entry = registry_find(reg, repo)
+        if entry is not None:
+            entry.update({"status": "active", "consecutive_errors": 0, "limit_hits": 0,
+                          "next_retry_at": None, "updated_at": now_iso()})
+            registry_save(reg)
     return {"ok": True, "flag_removed": removed,
             "registry": entry if entry is not None else "레지스트리에 등록되지 않은 프로젝트입니다"}
 
@@ -686,12 +707,13 @@ def tool_model_set(a):
         eng.save_tracker(repo, tracker)
         eng.render(repo)
         updated["tracker"] = True
-    reg = registry_load()
-    entry = registry_find(reg, repo)
-    if entry is not None:
-        entry["model"] = model
-        entry["updated_at"] = now_iso()
-        registry_save(reg)
+    with registry_write_lock():
+        reg = registry_load()
+        entry = registry_find(reg, repo)
+        if entry is not None:
+            entry["model"] = model
+            entry["updated_at"] = now_iso()
+            registry_save(reg)
         updated["registry"] = True
     if not (updated["tracker"] or updated["registry"]):
         raise ToolError("장부도 레지스트리 항목도 없습니다 — 먼저 harness_init 을 실행하십시오: " + repo)
@@ -732,10 +754,11 @@ def tool_watchdog_install(a):
     if create["exit_code"] == 0:
         # 설치 시각 기록 — watchdog_status 가 '설치 직후 아직 주기 미도래'를 경고에서
         # 제외하는 유예 판정의 기준이다(오탐 금지).
-        reg = registry_load()
-        reg["settings"]["watchdog_installed_at"] = now_iso()
-        reg["settings"]["watchdog_interval_minutes"] = interval
-        registry_save(reg)
+        with registry_write_lock():
+            reg = registry_load()
+            reg["settings"]["watchdog_installed_at"] = now_iso()
+            reg["settings"]["watchdog_interval_minutes"] = interval
+            registry_save(reg)
     note = None
     if not os.path.exists(WATCHDOG_SRC):
         note = "harness_watchdog.py 가 아직 없습니다: %s — 파일이 생기면 다음 주기부터 동작합니다" % WATCHDOG_SRC
@@ -1298,10 +1321,11 @@ def cli_stamp_watchdog_install(argv):
     ap.add_argument("--interval-minutes", dest="interval_minutes", type=int, default=15)
     a = ap.parse_args(argv)
     try:
-        reg = registry_load()
-        reg["settings"]["watchdog_installed_at"] = now_iso()
-        reg["settings"]["watchdog_interval_minutes"] = max(1, a.interval_minutes)
-        registry_save(reg)
+        with registry_write_lock():
+            reg = registry_load()
+            reg["settings"]["watchdog_installed_at"] = now_iso()
+            reg["settings"]["watchdog_interval_minutes"] = max(1, a.interval_minutes)
+            registry_save(reg)
         print(json.dumps({"ok": True, "registry": REGISTRY_PATH,
                           "watchdog_installed_at": reg["settings"]["watchdog_installed_at"],
                           "watchdog_interval_minutes": reg["settings"]["watchdog_interval_minutes"]},

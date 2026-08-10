@@ -42,6 +42,8 @@ export interface UserPaths {
   claudeDir: string;
   runtimeDir: string;
   registry: string;
+  /** 레지스트리 쓰기의 프로세스 간 잠금. **v1 파이썬 구현과 같은 경로여야 한다.** */
+  registryLock: string;
   logs: string;
   daemonLog: string;
   webToken: string;
@@ -67,6 +69,7 @@ export function userPaths(env: NodeJS.ProcessEnv = process.env): UserPaths {
     claudeDir,
     runtimeDir,
     registry: join(runtimeDir, "registry.json"),
+    registryLock: join(runtimeDir, "registry.lock"),
     logs,
     daemonLog: join(logs, "daemon.log"),
     webToken: join(runtimeDir, "web-token"),

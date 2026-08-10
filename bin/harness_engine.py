@@ -7,6 +7,7 @@
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -85,6 +86,68 @@ def rp(repo):
 
 REPLACE_RETRIES = 5          # os.replace 총 시도 횟수
 REPLACE_BACKOFF_SEC = 0.1    # 첫 대기 — 이후 0.2→0.4→0.8초로 지수 증가
+
+
+REGISTRY_LOCK_STALE_SEC = 30    # 레지스트리 쓰기는 밀리초 단위 — 이보다 오래면 죽은 잠금이다
+REGISTRY_LOCK_TIMEOUT_SEC = 5   # 훅·MCP 응답이 잠금 때문에 붙들리지 않도록 상한을 둔다
+
+
+class LockTimeout(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def file_lock(path, timeout=REGISTRY_LOCK_TIMEOUT_SEC, stale=REGISTRY_LOCK_STALE_SEC):
+    """프로세스 간 배타 잠금 — v2 TypeScript 구현과 **같은 파일·같은 규약**을 쓴다.
+
+    레지스트리의 쓰기 주체는 최소 둘이다(상주 데몬/워치독과 세션마다 뜨는 MCP 서버). 저장
+    직전 재읽기만으로는 A읽기→B읽기→B쓰기→A쓰기 순서를 막지 못한다 — 창이 좁아질 뿐이다.
+    잃는 것이 pause 나 프로젝트 등록이면 사용자가 한 조작이 조용히 되돌아간다.
+
+    획득 실패는 조용히 통과시키지 않고 LockTimeout 을 올린다 — 잠금이 있는 척하며 그냥 쓰면
+    잠금이 없는 것만 못하다. 죽은 잠금(mtime 이 stale 초 경과)은 탈취한다."""
+    deadline = time.time() + timeout
+    delay = 0.005
+    fd = None
+    while True:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(path)
+            except OSError:
+                age = 0
+            if age > stale:
+                try:
+                    os.remove(path)      # 죽은 잠금 탈취 — 다음 회차에 정상 경로로 잡는다
+                except OSError:
+                    pass
+                continue
+            if time.time() >= deadline:
+                raise LockTimeout(
+                    "잠금을 %s초 안에 얻지 못했습니다: %s — 쓰기를 건너뛰지 않고 중단합니다"
+                    "(갱신 소실 방지)." % (timeout, path))
+            time.sleep(delay)
+            delay = min(0.05, delay * 2)
+    try:
+        try:
+            os.write(fd, json.dumps({"pid": os.getpid(), "at": now_iso()}).encode("utf-8"))
+        finally:
+            os.close(fd)
+            fd = None
+        yield
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def replace_with_retry(src, dst):

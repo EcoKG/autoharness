@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T04:33:08.504473+00:00",
+  "updated_at": "2026-08-10T04:41:39.009467+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -811,7 +811,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/ts-console-log-20260810T043113Z.log",
-      "commit": null,
+      "commit": "b181659",
       "started_at": "2026-08-10T04:31:13.589652+00:00",
       "finished_at": "2026-08-10T04:32:44.321532+00:00",
       "test_cmd": null
@@ -1013,13 +1013,13 @@
       "path": "daemon/src/core/registry.ts",
       "deps": [],
       "priority": 8,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/registry-write-race-20260810T043959Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-10T04:39:59.227224+00:00",
+      "finished_at": "2026-08-10T04:41:39.009467+00:00",
       "test_cmd": null
     }
   ]
