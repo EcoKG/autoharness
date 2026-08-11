@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T04:06:50.873Z",
+  "updated_at": "2026-08-11T04:18:36.855Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1666,13 +1666,13 @@
         "fix-daemon-deps-guard"
       ],
       "priority": 20,
-      "status": "pending",
-      "attempts": 0,
+      "status": "done",
+      "attempts": 1,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/speed-parallel-checks-20260811T041812Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-11T04:17:09.053Z",
+      "finished_at": "2026-08-11T04:18:36.855Z",
       "test_cmd": null
     },
     {
@@ -1733,6 +1733,21 @@
         "web-operability"
       ],
       "priority": 90,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "deploy-live-v2-exe",
+      "title": "검증 통과분이 실행 중 설치본에 반영되지 않는다 — v2 마이그레이션 이후 절반만 동작하는 계약. 이 저장소의 목표는 \"매 작업 검증 통과 시 실행 중 설치본에 즉시 반영\"인데, deploy_live.py 는 v1 자산(skill/SKILL.md, bin/*.py, templates/*, 문서·설치기)만 ~/.claude/skills/autoharness/ 로 복사한다. 정작 지금 실행되는 것은 ~/.claude/autoharness/bin/autoharness.exe 인데 그 EXE 는 아무도 갱신하지 않는다. 실측(2026-08-11): 배선 진단에 broken_path 를 넣고 검증을 통과시킨 직후에도 status 는 여전히 구버전 판정(inactive)을 냈다 — 훅·MCP·제어판이 전부 옛 코드로 돈다. 즉 daemon/ 을 고치는 모든 작업의 결과가 사람이 보는 자리에는 도달하지 않으며, 제어판 UI 작업은 화면에서 확인조차 할 수 없다. 요구: ① daemon/src 가 바뀐 경우에만 EXE 를 다시 빌드해 설치본에 반영할 것 — 매번 94MiB 를 복사하면 이번 라운드가 줄인 시간을 도로 까먹는다(변경 판정 근거는 소스 해시 등 실측 가능한 것으로) ② 데몬이 실행 중이면 Windows 에서 EXE 가 잠겨 교체가 실패한다 — 실패를 삼키지 말고 사유와 조치를 알릴 것(예: 데몬 정지 후 재시도). 검증 자체를 실패로 만들지는 말 것, 배포는 검증 뒤 별개 단계다 ③ bun 이 없거나 빌드가 실패하면 조용히 건너뛰지 말 것 ④ 기본 동작과 생략 플래그를 명확히 하고 run_checks 의 마지막 단계 계약(전 단계 통과 후 단독 실행)을 유지할 것 ⑤ 회귀 테스트로 고정할 것.",
+      "path": "scripts/deploy_live.py",
+      "deps": [],
+      "priority": 35,
       "status": "pending",
       "attempts": 0,
       "last_error": null,

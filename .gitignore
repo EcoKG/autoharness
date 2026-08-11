@@ -9,3 +9,4 @@ __pycache__/
 **/.claude/HARNESS_PAUSED
 **/.claude/settings.json.bak-*
 CLAUDE.md.bak-*
+.claude/checks-timing.json
