@@ -490,3 +490,102 @@ describe("진행 상황 한눈에", () => {
     expect(glance).toContain("createElement");
   });
 });
+
+/**
+ * 조작성 — 마우스 없이도, 색을 못 봐도, 좁은 화면에서도 쓸 수 있어야 한다.
+ *
+ * 실패 안내가 특히 중요하다. "토큰이 틀림" 과 "데몬이 꺼짐" 은 조치가 정반대인데
+ * 종전 화면은 둘 다 "인증 실패" 라고만 말했다 — 사용자는 토큰을 몇 번이고 다시
+ * 붙여넣으며 시간을 버린다.
+ */
+describe("연결 실패 안내", () => {
+  test("응답이 없는 경우와 401 을 다르게 분류한다", () => {
+    expect(UI_HTML).toContain("connectFailure");
+    expect(UI_HTML).toContain('kind = "unreachable"');
+    expect(UI_HTML).toContain('r.status === 401 ? "unauthorized"');
+  });
+
+  test("각 원인에 다음 조치를 적는다", () => {
+    expect(UI_HTML).toContain("데몬 없음");
+    expect(UI_HTML).toContain("토큰 불일치");
+    expect(UI_HTML).toContain("autoharness daemon 이 돌고 있는지");
+    expect(UI_HTML).toContain("web-token 파일을 다시 열어");
+  });
+
+  test("데몬이 꺼진 경우에 토큰을 다시 넣으라고 하지 않는다", () => {
+    const start = UI_HTML.indexOf('kind === "unreachable"');
+    const seg = UI_HTML.slice(start, UI_HTML.indexOf('kind === "unauthorized"'));
+    expect(seg).toContain("토큰 문제가 아닙니다");
+  });
+
+  test("뭉뚱그린 '인증 실패' 문구가 남아 있지 않다", () => {
+    expect(UI_HTML).not.toContain('setStatus("인증 실패"');
+  });
+});
+
+describe("키보드와 포커스", () => {
+  test("프로젝트 목록이 키보드로 닿고 화살표로 움직인다", () => {
+    expect(UI_HTML).toContain('id="projects" role="listbox" tabindex="0"');
+    expect(UI_HTML).toContain("moveSelection");
+    expect(UI_HTML).toContain('"ArrowDown"');
+    expect(UI_HTML).toContain('"ArrowUp"');
+    expect(UI_HTML).toContain("aria-activedescendant");
+  });
+
+  test("포커스가 보인다 — 브라우저 기본값에 맡기지 않는다", () => {
+    expect(UI_HTML).toContain(":focus-visible");
+  });
+
+  test("입력 중에는 전역 단축키가 먹지 않는다", () => {
+    expect(UI_HTML).toContain("function typing(el)");
+    expect(UI_HTML).toContain("if (typing(document.activeElement)");
+  });
+
+  test("상태를 바꾸는 동작에는 단축키를 주지 않는다 — 오타로 세션이 뜨면 안 된다", () => {
+    const handler = UI_HTML.slice(UI_HTML.indexOf('document.addEventListener("keydown"'));
+    const scope = handler.slice(0, handler.indexOf("});"));
+    for (const act of ["pause", "resume", "tick", "launch"]) {
+      expect(scope, act).not.toContain('act("' + act + '")');
+    }
+  });
+
+  test("단축키 도움말이 화면 안에 있다", () => {
+    expect(UI_HTML).toContain('id="shortcuts"');
+    expect(UI_HTML).toContain("<kbd>");
+  });
+});
+
+describe("테마", () => {
+  test("OS 설정을 기본으로 쓰되 수동 전환이 이긴다", () => {
+    expect(UI_HTML).toContain("prefers-color-scheme: light");
+    expect(UI_HTML).toContain(':root[data-theme="light"]');
+    expect(UI_HTML).toContain(':root[data-theme="dark"]');
+    expect(UI_HTML).toContain("toggleTheme");
+  });
+
+  test("선택은 sessionStorage 에만 둔다 — 토큰과 같은 규약", () => {
+    expect(UI_HTML).toContain('sessionStorage.setItem(THEME_KEY');
+    const theme = UI_HTML.slice(UI_HTML.indexOf("var THEME_KEY"));
+    expect(theme.slice(0, 900)).not.toContain("localStorage");
+  });
+});
+
+describe("좁은 화면과 색 의존", () => {
+  test("표가 페이지가 아니라 제 영역 안에서 가로 스크롤한다", () => {
+    expect(UI_HTML).toContain("scroll-x");
+    expect(UI_HTML).toContain("overflow-x:auto");
+  });
+
+  test("단일 컬럼 전환이 남아 있다", () => {
+    expect(UI_HTML).toContain("@media (max-width: 860px)");
+  });
+
+  test("한도 임박을 색만으로 알리지 않는다", () => {
+    expect(UI_HTML).toContain("한도 임박");
+    expect(UI_HTML).toContain("시도가 한도에 가깝습니다");
+  });
+
+  test("선택된 프로젝트를 색 말고도 표시한다", () => {
+    expect(UI_HTML).toContain('.proj[aria-selected="true"]::before');
+  });
+});

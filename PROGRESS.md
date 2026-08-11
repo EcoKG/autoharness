@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-11T04:34:59.600Z
+- 모델: claude-fable-5 / 갱신: 2026-08-11T04:39:13.309Z
 
-## 현황: done 107 / 110  (in_progress 0, failed 0, blocked 1, pending 2)
+## 현황: done 108 / 110  (in_progress 0, failed 0, blocked 1, pending 1)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -92,7 +92,7 @@
 | web-approval-queue | 승인 큐 — 사람 경계로 봉인된 작업을 모아 재투입·영구 거절을 화면에서 | ✅ done | 0/5 | ced199f | - |
 | fix-atomic-replace-retry | OneDrive/백신 잠금 내성 — atomic_write_json/atomic_write_text 의 os.replace 가 클라우드 동기화·바이러스 검사로 일시적 PermissionError 를 맞을 수 있음(이 저장소 자체가 OneDrive 안에 있음). 짧은 지수 재시도(0.1→0.2→0.4→0.8초, 총 5회) 후 실패 처리하도록 보강 + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | ts-selftest | G2 엔진: selftest 이식 — v1 과 동일한 7종 15항목(장부 초기화 / 실패 경로 exit1+attempts / 성공 경로 exit0+done / 한도 exit4+blocked / 의존성 게이팅 전후 / PROGRESS 렌더 / 더미 정리)을 임시 샌드박스에서 실행하고 PASS/FAIL 을 출력한다. 실제 저장소·레지스트리·설치본을 오염시키지 않아야 한다. 종료 코드 0/1. | ✅ done | 0/5 | 6512134 | - |
-| web-operability | 제어판 조작성 — 토큰 입력·키보드·테마. ① 지금은 사용자가 web-token 파일을 찾아 열고 복사해 붙여넣어야 연결되며, 실패하면 원인이 '토큰이 틀림'인지 '데몬이 꺼짐'인지 구분되지 않는다 — 두 경우의 조치가 정반대인데 화면은 같은 말을 한다. 실패 사유를 구분해 알리고 각각의 다음 조치를 제시할 것 ② 자주 쓰는 동작(연결·즉시 tick·세션 기동·콘솔 검색·고정)에 키보드 경로와 보이는 포커스 표시를 줄 것 — 현재는 마우스 전용이고 포커스 표시가 브라우저 기본값에 맡겨져 있다 ③ 라이트/다크 수동 토글을 둘 것(현재는 prefers-color-scheme 만이라 OS 설정과 다르게 볼 수 없다) — 선택은 sessionStorage 규약을 따를 것 ④ 좁은 화면(860px 이하 단일 컬럼)에서 콘솔·표가 가로 스크롤로 깨지지 않는지 점검할 것 ⑤ 접근성: 상태 배지가 색만으로 구분되지 않게 할 것 ⑥ 회귀 테스트로 고정할 것. | ⏳ pending | 0/5 | - | - |
+| web-operability | 제어판 조작성 — 토큰 입력·키보드·테마. ① 지금은 사용자가 web-token 파일을 찾아 열고 복사해 붙여넣어야 연결되며, 실패하면 원인이 '토큰이 틀림'인지 '데몬이 꺼짐'인지 구분되지 않는다 — 두 경우의 조치가 정반대인데 화면은 같은 말을 한다. 실패 사유를 구분해 알리고 각각의 다음 조치를 제시할 것 ② 자주 쓰는 동작(연결·즉시 tick·세션 기동·콘솔 검색·고정)에 키보드 경로와 보이는 포커스 표시를 줄 것 — 현재는 마우스 전용이고 포커스 표시가 브라우저 기본값에 맡겨져 있다 ③ 라이트/다크 수동 토글을 둘 것(현재는 prefers-color-scheme 만이라 OS 설정과 다르게 볼 수 없다) — 선택은 sessionStorage 규약을 따를 것 ④ 좁은 화면(860px 이하 단일 컬럼)에서 콘솔·표가 가로 스크롤로 깨지지 않는지 점검할 것 ⑤ 접근성: 상태 배지가 색만으로 구분되지 않게 할 것 ⑥ 회귀 테스트로 고정할 것. | ✅ done | 0/5 | - | - |
 | fix-heartbeat-long-stage | 장시간 스테이지 중 하트비트 공백 해소 — run 의 단일 스테이지가 stale_minutes(30분)에 근접하면(timeout_sec 기본 1800초) 워치독이 세션 사망으로 오판해 이중 기동할 수 있음. run_stage 실행 중 주기적(5분) 하트비트 갱신(데몬 스레드) 추가 + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | fix-task-add-reactivation | completed 프로젝트 재활성화 — 주행 완료 후(레지스트리 status=completed) 장부에 새 작업을 추가해도 워치독이 영영 재기동하지 않음. MCP task_add 성공 시 completed 항목을 active 로 되돌리고 백오프 카운터를 리셋하도록 수정(paused/needs_human/error 는 그대로 둠) + 회귀 테스트 | ✅ done | 0/5 | - | - |
 | ts-command-analysis | G3 훅: 토큰 기반 명령 판정 이식 — v1 이 적대 검증으로 다듬은 결과를 그대로 옮긴다. 따옴표를 존중해 토큰화한 뒤 연산자에서 세그먼트를 끊고(문자열 안 ;·|·개행이 분할점이 되면 안 된다), 역슬래시 줄바꿈을 접고, 선행 환경변수 대입과 수식어(env/nohup/timeout N/nice -n N/sudo -u user/xargs)를 인자 수까지 고려해 건너뛴 뒤 첫 토큰 basename 으로 판정한다. git 전역 옵션(-C/-c/--git-dir 등)을 건너뛰고 실제 서브커맨드를 식별한다. 래퍼(bash -c, sh -c, powershell -Command 및 접두사 축약, -EncodedCommand)는 재귀 분석(최대 3단). **파싱 실패를 그냥 통과시키지 않는다** — 위험 키워드가 보이면 게이트로 승격한다(fail-open 이 곧 우회 경로였다). 차단 대상은 두 축: 원격 변경(git push/subtree push, gh 쓰기 동사, gh api 쓰기 메서드)과 되돌릴 수 없는 로컬 파괴 (reset --hard, clean +force, branch -D, checkout --, restore(--staged 제외), stash drop/clear, reflog expire/delete, worktree remove, filter-branch, update-ref -d). rebase 는 의도적 제외. 커밋 트리거는 commit 외에 revert/cherry-pick/merge/am 도 포함하되 각 서브커맨드의 --no-commit/-n/--abort/--skip/--quit 는 제외. | ✅ done | 0/5 | ca93ab7 | - |

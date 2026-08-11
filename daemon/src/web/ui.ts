@@ -31,8 +31,16 @@ export const UI_HTML = `<!doctype html>
     --dim: #9aa3b2; --accent: #6ea8fe; --ok: #4ade80; --warn: #fbbf24; --err: #f87171;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
+  /* OS 설정을 기본으로 따르되, 사람이 이 탭에서만 뒤집을 수 있어야 한다 —
+     밝은 방에서 어두운 OS 테마를 쓰는 경우가 실제로 흔하다. data-theme 이 항상 이긴다. */
   @media (prefers-color-scheme: light) {
     :root { --bg:#f6f7f9; --panel:#fff; --line:#e2e5ea; --text:#14171c; --dim:#5b6472; --accent:#1a56db; }
+  }
+  :root[data-theme="light"] {
+    --bg:#f6f7f9; --panel:#fff; --line:#e2e5ea; --text:#14171c; --dim:#5b6472; --accent:#1a56db;
+  }
+  :root[data-theme="dark"] {
+    --bg:#0f1115; --panel:#171a21; --line:#262b35; --text:#e6e8ec; --dim:#9aa3b2; --accent:#6ea8fe;
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -65,6 +73,14 @@ export const UI_HTML = `<!doctype html>
   .bar .seg-failed { background:var(--warn); }
   .bar .seg-blocked { background:var(--err); }
   .why { color:var(--err); font-size:12px; margin-top:2px; }
+  /* 키보드로 어디에 있는지 보여야 한다 — 종전엔 브라우저 기본값에 맡겨 대비가 낮았다 */
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+  #projects:focus-visible { outline-offset:0; }
+  .proj[aria-selected="true"]::before { content:"▸ "; color:var(--accent); }
+  /* 좁은 화면에서 표·콘솔이 페이지를 밀지 않게 각자 안에서 스크롤한다 */
+  .scroll-x { overflow-x:auto; }
+  kbd { font-family:var(--mono); font-size:11px; border:1px solid var(--line); border-bottom-width:2px;
+        border-radius:4px; padding:0 4px; color:var(--dim); }
   .badge.active { color:var(--ok); border-color:var(--ok); }
   .badge.paused, .badge.needs_human { color:var(--warn); border-color:var(--warn); }
   .badge.error { color:var(--err); border-color:var(--err); }
@@ -90,10 +106,19 @@ export const UI_HTML = `<!doctype html>
   <span id="conn" class="badge">연결 안 됨</span>
   <span id="tick" class="muted"></span>
   <span class="sp"></span>
-  <input id="token" type="password" placeholder="web-token 붙여넣기" autocomplete="off">
+  <input id="token" type="password" placeholder="web-token 붙여넣기" autocomplete="off"
+         aria-label="web-token">
   <button id="connect">연결</button>
   <button id="forget" title="이 탭에서 토큰을 지웁니다">토큰 지우기</button>
+  <button id="theme" title="밝게/어둡게 (이 탭에만 적용)" aria-label="테마 전환">테마</button>
+  <button id="help" title="단축키" aria-label="단축키 도움말">?</button>
 </header>
+
+<p id="shortcuts" class="muted" style="padding:0 16px" hidden>
+  <kbd>/</kbd> 콘솔 검색 · <kbd>↑</kbd><kbd>↓</kbd> 프로젝트 이동 · <kbd>Enter</kbd> 선택 ·
+  <kbd>g</kbd> 콘솔 고정 · <kbd>d</kbd> 테마 · <kbd>?</kbd> 이 도움말 ·
+  <kbd>Esc</kbd> 입력에서 빠져나오기
+</p>
 
 <p id="hint" class="muted" style="padding:0 16px">
   토큰은 <code>~/.claude/autoharness/web-token</code>
@@ -104,8 +129,8 @@ export const UI_HTML = `<!doctype html>
 
 <main>
   <section>
-    <h2>프로젝트</h2>
-    <ul id="projects"></ul>
+    <h2 id="projectsLabel">프로젝트</h2>
+    <ul id="projects" role="listbox" tabindex="0" aria-labelledby="projectsLabel"></ul>
     <p id="noproj" class="muted">등록된 프로젝트가 없습니다.</p>
   </section>
 
@@ -153,10 +178,12 @@ export const UI_HTML = `<!doctype html>
 
     <section>
       <h2>장부</h2>
-      <table>
-        <thead><tr><th>작업</th><th>상태</th><th>시도</th><th>커밋</th><th></th></tr></thead>
-        <tbody id="tasks"></tbody>
-      </table>
+      <div class="scroll-x">
+        <table>
+          <thead><tr><th>작업</th><th>상태</th><th>시도</th><th>커밋</th><th></th></tr></thead>
+          <tbody id="tasks"></tbody>
+        </table>
+      </div>
       <p id="notasks" class="muted">작업이 없습니다.</p>
     </section>
 
@@ -202,17 +229,55 @@ export const UI_HTML = `<!doctype html>
   var $ = function (id) { return document.getElementById(id); };
   function setText(el, text) { el.textContent = text == null ? "" : String(text); }
 
+  /**
+   * 실패에 원인을 붙여 던진다.
+   *
+   * "토큰이 틀림" 과 "데몬이 꺼짐" 은 조치가 정반대인데 종전에는 화면이 둘 다
+   * "인증 실패" 라고 말했다. fetch 가 거부되면 응답 자체가 없는 것이므로 서버가 없거나
+   * 주소가 틀린 것이고, 401 이 오면 서버는 살아 있고 토큰이 틀린 것이다.
+   */
   function api(path, options) {
     options = options || {};
     var headers = { authorization: "Bearer " + token };
     if (options.body) headers["content-type"] = "application/json";
     return fetch(path, { method: options.method || "GET", headers: headers, body: options.body })
+      .catch(function (e) {
+        var err = new Error("서버에 닿지 못했습니다: " + (e && e.message ? e.message : e));
+        err.kind = "unreachable";
+        throw err;
+      })
       .then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (body) {
-          if (!r.ok) throw new Error((body && body.error) || ("HTTP " + r.status));
+          if (!r.ok) {
+            var err = new Error((body && body.error) || ("HTTP " + r.status));
+            err.kind = r.status === 401 ? "unauthorized" : "http";
+            err.status = r.status;
+            throw err;
+          }
           return body;
         });
       });
+  }
+
+  /** 원인별 조치 — 화면이 "무엇을 하라" 까지 말해야 사용자가 다음 걸음을 뗀다. */
+  function connectFailure(e) {
+    if (e && e.kind === "unreachable") {
+      return {
+        status: "데몬 없음",
+        // 이 문자열은 UI_HTML 템플릿 리터럴 안에 있다 — 역따옴표를 쓰면 문서가 거기서 끊긴다
+        detail: "데몬이 꺼져 있거나 주소가 다릅니다. autoharness daemon 이 돌고 있는지, " +
+                "그리고 이 주소가 데몬이 기동 로그에 남긴 주소와 같은지 확인하십시오. " +
+                "(토큰 문제가 아닙니다 — 다시 붙여넣어도 달라지지 않습니다)"
+      };
+    }
+    if (e && e.kind === "unauthorized") {
+      return {
+        status: "토큰 불일치",
+        detail: "데몬은 살아 있습니다. 토큰이 다릅니다 — 데몬이 다시 뜨면 토큰도 새로 생기므로 " +
+                "web-token 파일을 다시 열어 붙여넣으십시오."
+      };
+    }
+    return { status: "요청 실패", detail: (e && e.message) || "알 수 없는 오류" };
   }
 
   function badge(text, cls) {
@@ -300,10 +365,25 @@ export const UI_HTML = `<!doctype html>
       if (p.deadlocked && p.deadlocked.length) bits.push("교착 " + p.deadlocked.length);
       setText(sub, bits.join(" · "));
 
+      li.id = "proj-" + encodeURIComponent(p.id);
       li.append(top, progressBar(p.counts), sub);
       li.addEventListener("click", function () { select(p.id); });
       list.append(li);
     });
+    // 활성 항목을 목록에 알린다 — 화살표로 옮길 때 보조 기술이 따라올 수 있어야 한다
+    var active = state.projects.filter(function (p) { return p.id === selected; })[0];
+    if (active) list.setAttribute("aria-activedescendant", "proj-" + encodeURIComponent(active.id));
+    else list.removeAttribute("aria-activedescendant");
+  }
+
+  /** 목록 안에서 위/아래로 이동. 종전에는 클릭 말고는 프로젝트를 고를 방법이 없었다. */
+  function moveSelection(step) {
+    if (!state.projects.length) return;
+    var idx = state.projects.findIndex(function (p) { return p.id === selected; });
+    var next = idx < 0 ? 0 : Math.min(state.projects.length - 1, Math.max(0, idx + step));
+    select(state.projects[next].id);
+    var el = $("proj-" + encodeURIComponent(state.projects[next].id));
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
   }
 
   function progressText(p) {
@@ -535,7 +615,10 @@ export const UI_HTML = `<!doctype html>
       // 한도에 가까우면 눈에 띄게만 한다. **판정 문구는 쓰지 않는다** — 언제 봉인되는지는
       // 서버가 정하고 "막힌 곳" 카드가 말한다. 여기서 같은 문장을 쓰면 규칙이 바뀔 때 갈라진다.
       if (maxAttempts && t.attempts >= maxAttempts - 1 && t.status !== "done") {
+        // 색만으로 알리면 색을 못 보는 사람에게는 없는 정보다 — 이름표를 함께 단다
         attemptsCell.className = "err";
+        attemptsCell.title = "시도가 한도에 가깝습니다";
+        attemptsCell.setAttribute("aria-label", t.attempts + "/" + maxAttempts + " — 한도 임박");
       }
       tr.append(attemptsCell);
       tr.append(cell(t.commit || "-", "mono"));
@@ -966,8 +1049,9 @@ export const UI_HTML = `<!doctype html>
       if (window.__ahPoll) clearInterval(window.__ahPoll);
       window.__ahPoll = setInterval(function () { refresh().catch(function () {}); }, 10000);
     }).catch(function (e) {
-      setStatus("인증 실패", "error");
-      message(e.message, true);
+      var why = connectFailure(e);
+      setStatus(why.status, "error");
+      message(why.detail, true);
     });
   }
 
@@ -985,6 +1069,50 @@ export const UI_HTML = `<!doctype html>
   });
   document.querySelectorAll("[data-act]").forEach(function (b) {
     b.addEventListener("click", function () { act(b.getAttribute("data-act")); });
+  });
+
+  // ---- 테마: OS 설정이 기본, 사람이 이 탭에서만 뒤집는다(토큰과 같은 sessionStorage 규약)
+  var THEME_KEY = "autoharness.theme";
+  function applyTheme(value) {
+    if (value) document.documentElement.setAttribute("data-theme", value);
+    else document.documentElement.removeAttribute("data-theme");
+  }
+  function currentTheme() {
+    var saved = sessionStorage.getItem(THEME_KEY);
+    if (saved) return saved;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light" : "dark";
+  }
+  applyTheme(sessionStorage.getItem(THEME_KEY));
+  function toggleTheme() {
+    var next = currentTheme() === "dark" ? "light" : "dark";
+    sessionStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  }
+  $("theme").addEventListener("click", toggleTheme);
+  $("help").addEventListener("click", function () { $("shortcuts").hidden = !$("shortcuts").hidden; });
+
+  // ---- 키보드: 목록 이동은 목록에서, 전역 단축키는 입력 중이 아닐 때만
+  $("projects").addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); moveSelection(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); moveSelection(-1); }
+    else if (e.key === "Home") { e.preventDefault(); moveSelection(-state.projects.length); }
+    else if (e.key === "End") { e.preventDefault(); moveSelection(state.projects.length); }
+  });
+  function typing(el) {
+    return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && typing(document.activeElement)) { document.activeElement.blur(); return; }
+    // 상태를 바꾸는 동작(pause·tick·기동)에는 단축키를 주지 않는다 — 오타 한 번으로
+    // 세션이 뜨면 안 된다. 그 버튼들은 Tab 으로 닿고 Enter 로 눌린다.
+    if (typing(document.activeElement) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "/") { e.preventDefault(); $("search").focus(); }
+    else if (e.key === "?") { $("shortcuts").hidden = !$("shortcuts").hidden; }
+    else if (e.key === "g") { $("pin").click(); }
+    else if (e.key === "d") { toggleTheme(); }
+    else if (e.key === "j") { moveSelection(1); }
+    else if (e.key === "k") { moveSelection(-1); }
   });
   $("search").addEventListener("input", function () {
     consoleQuery = $("search").value.trim().toLowerCase();
