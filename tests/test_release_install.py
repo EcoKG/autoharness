@@ -91,7 +91,8 @@ class DownloadIntegrityTest(unittest.TestCase):
 
     def test_binary_is_exercised_before_install(self):
         """파일이 받아졌다고 우리 것은 아니다 — 실행해서 확인한다."""
-        self.assertIn('"$tmp/autoharness" version', self.src)
+        # 이름은 플랫폼마다 다르다(Windows 만 .exe) — 실행해서 확인한다는 계약이 핵심이다
+        self.assertIn('"$tmp/$exe_name" version', self.src)
         self.assertIn("받은 파일이 실행되지 않습니다", self.src)
 
     def test_failures_do_not_fall_through(self):
@@ -177,6 +178,58 @@ class PathGuidanceTest(unittest.TestCase):
         self.assertIn("PATH 에 이미 있습니다", self.src)
 
 
+class WindowsInstallPathTest(unittest.TestCase):
+    """Windows 에도 v2 설치 경로가 있어야 한다.
+
+    실측 결함: 릴리스는 `autoharness-windows-x64.exe.gz` 를 올리는데 **그것을 설치할 방법이
+    하나도 없었다.** install.sh 의 플랫폼 판정은 Linux·Darwin 뿐이라 Git Bash(uname -s 가
+    `MINGW64_NT-...`)에서 "지원하지 않는 플랫폼" 으로 끝났고, install.ps1 에는 v2 분기가
+    아예 없었다. 만들어 올려 놓고 아무도 못 받는 상태였다.
+    """
+
+    def setUp(self):
+        self.sh = read(INSTALL_SH)
+        self.ps1 = read(os.path.join(REPO, "install.ps1"))
+        self.release = read(RELEASE_TS)
+
+    def test_bash_recognises_windows_shells(self):
+        # Git Bash·MSYS2·Cygwin 전부 Windows 다
+        self.assertIn("MINGW*|MSYS*|CYGWIN*", self.sh)
+
+    def test_bash_asset_name_matches_release(self):
+        produced = set(re.findall(r'asset:\s*"([^"]+)"', self.release))
+        self.assertIn("autoharness-windows-x64.exe", produced)
+        self.assertIn("autoharness-windows-${arch}.exe", self.sh)
+
+    def test_installed_name_keeps_exe_suffix(self):
+        # 데몬·MCP·훅이 이 경로를 쓴다 — 확장자가 빠지면 설치는 되는데 아무도 못 찾는다
+        self.assertIn("installed_exe_name", self.sh)
+        self.assertRegex(self.sh, r'CYGWIN\*\)\s*echo "autoharness\.exe"')
+
+    def test_stop_uses_taskkill_on_windows(self):
+        # pkill 은 Windows 프로세스를 보지 못한다 — 멈춘 줄 알고 잠금으로 실패한다
+        self.assertIn("taskkill", self.sh)
+        self.assertIn("stop_running_exe", self.sh)
+
+    def test_powershell_has_v2_path(self):
+        self.assertIn("Install-AutoHarnessV2", self.ps1)
+        self.assertIn("[switch]$V2", self.ps1)
+        self.assertIn("autoharness-windows-x64.exe", self.ps1)
+
+    def test_powershell_verifies_before_installing(self):
+        """받은 것을 확인한 뒤에만 설치한다 — 이 경로도 같은 계약이다."""
+        self.assertIn("SHA256SUMS", self.ps1)
+        self.assertIn("체크섬 불일치", self.ps1)
+        self.assertIn("검증 없이 설치하지 않습니다", self.ps1)
+        self.assertIn("받은 파일이 실행되지 않습니다", self.ps1)
+
+    def test_powershell_simple_match_is_not_regex_escaped(self):
+        """-SimpleMatch 에 Regex::Escape 를 씌우면 영영 매치되지 않는다(실측)."""
+        idx = self.ps1.index("-SimpleMatch")
+        window = self.ps1[max(0, idx - 200):idx]
+        self.assertNotIn("[Regex]::Escape", window)
+
+
 class CronWatchdogPathTest(unittest.TestCase):
     """cron 워치독의 PATH — 등록 성공이 곧 동작은 아니다.
 
@@ -227,7 +280,18 @@ class UpdateBlockedGuidanceTest(unittest.TestCase):
     def test_guidance_names_what_to_stop(self):
         idx = self.src.index("설치본이 실행 중이라 덮어쓸 수 없습니다")
         tail = self.src[idx:idx + 400]
-        self.assertIn("pkill", tail, "멈출 명령이 제시되지 않았습니다")
+        self.assertIn("stop_command_hint", tail, "멈출 명령이 제시되지 않았습니다")
+
+    def test_stop_hint_is_platform_correct(self):
+        """안내는 그 플랫폼에서 실제로 듣는 명령이어야 한다.
+
+        pkill 은 Windows 프로세스를 보지 못한다 — Git Bash 사용자에게 pkill 을 안내하면
+        멈춘 줄 알고 다시 시도했다가 같은 잠금에 또 막힌다.
+        """
+        idx = self.src.index("stop_command_hint()")
+        body = self.src[idx:idx + 400]
+        self.assertIn("taskkill", body)
+        self.assertIn("pkill", body)
 
 
 class ChecksumAbortExecutionTest(unittest.TestCase):

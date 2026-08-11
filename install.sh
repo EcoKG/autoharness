@@ -90,7 +90,43 @@ v2_asset_name() {
     case "$os" in
         Linux)  echo "autoharness-linux-${arch}" ;;
         Darwin) echo "autoharness-darwin-${arch}" ;;
+        # Git Bash·MSYS2·Cygwin 은 Windows 다. 이걸 빼 두면 **릴리스에 바이너리가 있는데도
+        # "지원하지 않는 플랫폼" 으로 끝난다** — 실제로 그 상태였다(uname -s 는
+        # MINGW64_NT-10.0-26200 처럼 나온다). 자산 이름에 .exe 가 붙는 것도 여기뿐이다.
+        MINGW*|MSYS*|CYGWIN*) echo "autoharness-windows-${arch}.exe" ;;
         *) echo "" ; return 1 ;;
+    esac
+}
+
+# 설치될 실행 파일 이름 — Windows 만 확장자가 붙는다.
+# 데몬·MCP·훅이 이 경로를 그대로 쓰므로 플랫폼 규약(paths.ts 의 installedExePath)과
+# 어긋나면 설치는 되는데 아무것도 그것을 찾지 못한다.
+# 실행 중인 설치본을 멈춘다 — 플랫폼마다 수단이 다르다.
+# pkill 은 Windows 프로세스를 보지 못하므로 Git Bash 에서는 아무것도 멈추지 않고
+# "멈췄다" 는 착각만 남긴다. 그 상태로 cp 를 하면 잠금으로 실패한다.
+stop_running_exe() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            taskkill //F //IM "$(basename "$1")" >/dev/null 2>&1 || true
+            ;;
+        *)
+            pkill -f "$1 (daemon|mcp)" 2>/dev/null || true
+            ;;
+    esac
+}
+
+# 사용자에게 알려 줄 정지 명령 — 붙여넣어 그대로 실행되어야 한다
+stop_command_hint() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) echo "taskkill /F /IM autoharness.exe" ;;
+        *) echo "pkill -f 'autoharness daemon'" ;;
+    esac
+}
+
+installed_exe_name() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) echo "autoharness.exe" ;;
+        *) echo "autoharness" ;;
     esac
 }
 
@@ -166,31 +202,34 @@ install_v2() {
         exit 1
     fi
 
-    gunzip -c "$tmp/${asset}.gz" > "$tmp/autoharness"
-    chmod +x "$tmp/autoharness"
+    # 설치 이름은 플랫폼 규약을 따른다 — Windows 만 .exe 가 붙는다
+    exe_name="$(installed_exe_name)"
+    gunzip -c "$tmp/${asset}.gz" > "$tmp/$exe_name"
+    chmod +x "$tmp/$exe_name"
 
     # 받은 바이너리가 실제로 우리 것인지 한 번 더 — 동작으로 확인한다
-    if ! "$tmp/autoharness" version >/dev/null 2>&1; then
+    if ! "$tmp/$exe_name" version >/dev/null 2>&1; then
         step "받은 파일이 실행되지 않습니다 — 중단합니다."
         exit 1
     fi
-    step "버전: $("$tmp/autoharness" version)"
+    step "버전: $("$tmp/$exe_name" version)"
 
     bin_dir="$RUNTIME/bin"
     mkdir -p "$bin_dir"
-    exe="$bin_dir/autoharness"
+    exe="$bin_dir/$exe_name"
     # 실행 중이면 교체가 막힐 수 있다 — 먼저 내려 둔다.
     # 데몬만 잡으면 부족하다: 같은 파일을 MCP 서버도 실행하고 있어(모드만 다름) 그쪽이
-    # 남아 있으면 그대로 Text file busy 다. pkill -f 패턴은 ERE 라 두 모드를 함께 잡는다.
-    if [ -x "$exe" ]; then
-        pkill -f "$exe (daemon|mcp)" 2>/dev/null || true
+    # 남아 있으면 그대로 잠긴다.
+    # Windows 에서는 pkill 이 Windows 프로세스를 보지 못한다 — taskkill 을 써야 한다.
+    if [ -f "$exe" ]; then
+        stop_running_exe "$exe"
         sleep 1
     fi
     # 실패를 그냥 흘리면 맨 `cp: Text file busy` 만 남는다 — 무엇을 멈춰야 하는지 말한다.
     # (EXE 쪽 install 은 이미 같은 안내를 하는데, 원라인은 여기서 먼저 막혀 거기까지 못 간다)
-    if ! cp "$tmp/autoharness" "$exe"; then
+    if ! cp "$tmp/$exe_name" "$exe"; then
         step "설치본이 실행 중이라 덮어쓸 수 없습니다. 데몬·MCP 서버를 멈춘 뒤 다시 실행하십시오:"
-        step "  pkill -f '$exe'"
+        step "  $(stop_command_hint)"
         step "  멈춘 뒤 같은 명령을 다시 실행하면 됩니다."
         exit 1
     fi

@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T00:58:02.494528+00:00",
+  "updated_at": "2026-08-11T02:29:07.085587+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1578,9 +1578,39 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/release-v2.0.1-20260811T005523Z.log",
-      "commit": null,
+      "commit": "4a4b859",
       "started_at": "2026-08-10T23:58:33.542822+00:00",
       "finished_at": "2026-08-11T00:58:02.494528+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "fix-install-windows-bash",
+      "title": "Git Bash 에서 v2 설치 가능하게 — MINGW/MSYS/CYGWIN 판정과 Windows 자산 이름 처리",
+      "path": "install.sh",
+      "deps": [],
+      "priority": 5,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/fix-install-windows-bash-20260811T022639Z.log",
+      "commit": null,
+      "started_at": "2026-08-11T02:26:39.615259+00:00",
+      "finished_at": "2026-08-11T02:29:07.085587+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "fix-install-ps1-v2",
+      "title": "PowerShell 설치기에 v2 경로 추가 — Windows 바이너리를 받을 유일한 네이티브 길",
+      "path": "install.ps1",
+      "deps": [],
+      "priority": 6,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]
