@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T14:23:30.651Z",
+  "updated_at": "2026-08-11T14:41:43.197Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1848,9 +1848,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/release-v2.1.0-20260811T142303Z.log",
-      "commit": null,
+      "commit": "0315358",
       "started_at": "2026-08-11T14:23:03.349Z",
       "finished_at": "2026-08-11T14:23:30.651Z",
+      "test_cmd": null
+    },
+    {
+      "id": "release-publish-v2.1.0",
+      "title": "v2.1.0 공개 릴리스 발행 — 산출물 5종 중 4종을 이 기계에서 만들 수 없어 보류. 실측(2026-08-11): bun build --compile 이 windows-x64 만 성공하고 linux-x64/linux-arm64/darwin-arm64/darwin-x64 는 전부 'Failed to extract executable for bun-linux-x64-v1.3.14. The download may be incomplete.' 로 실패한다. 캐시를 비우고 재시도해도 동일. 원인 추정: 이 기계의 bun 이 npm 전역 설치본(AppData/Roaming/npm/bun.CMD)이라 교차 컴파일용 타깃 런타임을 받아 풀지 못한다 — 이전 릴리스를 만든 기계는 공식 설치본(~/.bun/bin)이었다. release.ts 는 4종 실패를 보고 '릴리스를 올리지 마십시오' 로 올바르게 중단시켰다. 윈도우 전용으로 올리면 install.sh 가 리눅스·macOS 에서 자산을 찾지 못해 '릴리스는 있는데 받지 못하는' 조용한 실패가 된다(release.ts 주석이 경고하는 바로 그 상황). 사람 판단 필요: ① 공식 설치기로 bun 을 다시 깔지(인터넷 스크립트 실행이라 자율 결정 대상 아님) ② 다른 기계·CI 에서 산출물을 만들지 ③ 릴리스를 미룰지. 결정 후 수행할 것: bun run release 로 5종 + SHA256SUMS 생성, 자산 이름이 install.sh 판정과 일치하는지 확인, git tag v2.1.0, 태그 푸시, gh release create 로 자산 첨부. 릴리스 노트에는 행동이 필요한 변경을 명시할 것 — .claude/settings.json 을 추적에서 뺐으므로 기존 사용자는 새 기계에서 autoharness install --migrate <저장소> 를 한 번 돌려야 한다.",
+      "path": "daemon/scripts/release.ts",
+      "deps": [],
+      "priority": 20,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/release-publish-v2.1.0-20260811T144111Z.log",
+      "commit": null,
+      "started_at": "2026-08-11T14:41:11.973Z",
+      "finished_at": "2026-08-11T14:41:43.197Z",
       "test_cmd": null
     }
   ]
