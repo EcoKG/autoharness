@@ -473,10 +473,45 @@ frontmatter `name: autoharness`, description 은 트리거 문구 포함(하네�
 스킬 본문에 MCP 도구 전체 이름(`mcp__autoharness__harness_detect` 등)을 명시한다.
 MCP 서버가 안 잡히는 환경(등록 전)을 위한 폴백: `python scripts/harness_engine.py ...` 직접 실행.
 
-## 12. install.ps1
+## 12. 설치·배포 경계
+
+### 12.0 배포 명세는 한 곳이다 (`scripts/deploy_manifest.py`)
+
+"무엇을 설치본에 넣는가" 의 답은 **한 파일**에만 있다. 종전에는 세 구현(install.ps1 /
+install.sh / deploy_live.py)이 각각 답했고 답이 달랐다 — install.ps1 이 `bin\*` 를 재귀
+복사해 `__pycache__` 를 설치본에 넣고, install.sh 는 install.ps1 만 배포하고 자기는 빼는
+식이었다(실측 2026-08-11).
+
+명세는 **허용과 금지를 모두** 적는다. 허용 목록만 두면 새 파일이 조용히 빠지고(설치본이
+낡는다), 금지 목록만 두면 새 부산물이 조용히 들어간다(사용자 계정이 이 저장소의 상태를
+물려받는다). 금지 쪽이 더 위험하다.
+
+- **배포 대상**: 루트 문서·설치기 5종 / `bin/*.py` / `templates/` 의 파일. 하위 디렉토리는
+  재귀하지 않는다 — 전부 부산물이다.
+- **금지 대상**: 장부·`PROGRESS.md`·`settings.json`·검증 캐시·`CLAUDE.md`·빌드 산출물
+  (`dist`·`node_modules`·`__pycache__`·`*.pyc`·`*.bun-build`)·로그·백업.
+- **오탐 금지**: `templates/agent_harness.sh`·`templates/CLAUDE.md.tmpl` 처럼 확장자만 보고
+  거르면 안 되는 것이 있다. 금지 판정은 명시 목록만으로 한다.
+- 제외한 항목은 사유와 함께 출력한다(조용히 빼지 않는다). 설치본에 **이미 들어가 있는**
+  금지 항목도 검출해 보고하되 **지우지는 않는다** — 사용자 계정의 파일을 배포 스크립트가
+  임의로 지우지 않는다.
+
+세 구현이 어긋나면 `tests/test_installer_parity.py` 가 실패한다. 이 테스트는 설치
+스크립트를 **실행하지 않고** 소스에서 복사 대상을 읽어 대조한다(실행하면 실제 사용자
+설치본을 덮어쓴다).
+
+### 12.1 기계에 속하는 것
+
+`.claude/settings.json` 은 저장소가 아니라 **기계**에 속한다. 훅 명령에 설치 시점의 절대
+EXE 경로가 박히기 때문이다(§8 `broken_path`). 저장소에 커밋하지 않고 `.gitignore` 에 넣으며,
+참조용으로 `.claude/settings.example.json`(자리표시자 경로)만 추적한다. 클론 후 복구는
+`autoharness install --repo <저장소>` 한 번이다.
+
+### 12.2 install.ps1
 
 - `-Install`(기본): 스킬 폴더로 복사(기존은 `.bak-<ts>` 백업 후 교체, **install.ps1 자신도
-  복사** — 설치본에서 -Watchdog/-Uninstall 재실행 가능해야 한다), 런타임 디렉토리 생성,
+  복사** — 설치본에서 -Watchdog/-Uninstall 재실행 가능해야 한다. install.sh 도 함께 둔다 —
+  Windows 로 설치한 계정에서 WSL 재설치를 설치본만으로 할 수 있어야 한다), 런타임 디렉토리 생성,
   `claude mcp remove -s user autoharness`(실패 무시) → `claude mcp add -s user autoharness --
   <python절대경로> <bin\harness_mcp.py 절대경로>`, 결과 검증 출력.
 - `-Watchdog`: **ScheduledTasks cmdlet(Register-ScheduledTask)** 로 등록(15분 간격, pythonw).

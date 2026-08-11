@@ -141,5 +141,64 @@ class UnitPlanningStillMatchesDiscovery(unittest.TestCase):
         self.assertTrue(callable(run_checks.discover_bun_tests))
 
 
+
+class DeployBoundaryDocsTest(unittest.TestCase):
+    """배포 경계가 문서에 있고, 문서가 말하는 항목이 실제 명세와 어긋나지 않는가.
+
+    문장을 통째로 비교하지 않는다 — 문서를 다듬을 때마다 깨지면 결국 단정문이 약해진다.
+    고정하는 것은 **명세가 정한 항목이 문서에 이름으로 등장하는가** 이다."""
+
+    def setUp(self):
+        sys.path.insert(0, SCRIPTS)
+        import deploy_manifest
+        self.man = deploy_manifest
+        self.readme = read("README.md")
+        self.design = read("DESIGN.md")
+        self.claude = read("CLAUDE.md")
+
+    def test_readme_has_a_single_deploy_boundary_section(self):
+        self.assertIn("배포 경계", self.readme)
+        for heading in ("설치본으로 가는 것", "절대 나가지 않는 것",
+                        "기계에 속하는 것", "하지 않는"):
+            self.assertIn(heading, self.readme, "배포 경계 절에 '%s' 가 없습니다" % heading)
+
+    def test_readme_names_every_deployed_file(self):
+        for _, dst in self.man.DEPLOY_FILES:
+            self.assertIn(dst, self.readme, "README 가 배포 대상 %s 를 말하지 않습니다" % dst)
+
+    def test_readme_names_every_deployed_directory(self):
+        for _, dst_dir, _ in self.man.DEPLOY_DIRS:
+            self.assertIn(dst_dir, self.readme)
+
+    def test_readme_names_the_forbidden_categories(self):
+        """금지 목록이 늘었는데 문서가 그대로면, 사람은 옛 경계를 믿는다."""
+        for name in ("agent_tracker.json", "settings.json", "PROGRESS.md",
+                     "checks-timing.json", "CLAUDE.md", "node_modules", "__pycache__"):
+            self.assertIn(name, self.readme, "README 가 금지 항목 %s 를 말하지 않습니다" % name)
+
+    def test_readme_lists_the_actions_the_harness_refuses(self):
+        for act in ("git push", "gh ", "reset --hard"):
+            self.assertIn(act, self.readme)
+
+    def test_design_records_the_single_source(self):
+        self.assertIn("deploy_manifest.py", self.design)
+        self.assertIn("test_installer_parity.py", self.design)
+
+    def test_claude_md_tells_the_worker_where_to_edit(self):
+        self.assertIn("deploy_manifest.py", self.claude)
+        self.assertIn("test_installer_parity.py", self.claude)
+
+    def test_docs_do_not_claim_settings_json_is_tracked(self):
+        """실측으로 틀린 것이 확인된 안내가 되살아나지 않게 한다."""
+        self.assertNotIn("| `.claude/settings.json` | 훅 4종·권한 (기존 설정과 병합, 백업 생성) | 추적 |",
+                         self.readme)
+        self.assertIn("settings.example.json", self.readme)
+
+    def test_the_exe_destination_is_documented_separately_from_the_skill_dir(self):
+        """스킬 폴더와 런타임 디렉토리는 다른 자리다 — 뭉치면 EXE 가 어디 가는지 알 수 없다."""
+        self.assertIn(".claude/autoharness/bin", self.readme)
+        self.assertIn(".claude/skills/autoharness", self.readme)
+
+
 if __name__ == "__main__":
     unittest.main()

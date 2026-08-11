@@ -303,12 +303,62 @@ autoharness install --rollback <저장소> --backup <settings.json.bak-…>
 **한 번에 끝내지 않아도 됩니다.** 두 구현이 같은 스키마와 같은 잠금 규약을 쓰므로 섞여
 있어도 장부가 깨지지 않습니다.
 
-## 배포의 한계선
+## 배포 경계 — 무엇이 나가고 무엇은 나가지 않는가
 
-이 하네스가 하는 것은 **배포 가능 상태까지의 검증과 로컬 커밋**입니다. `git push`·태그
-푸시·릴리스 발행은 훅이 차단합니다. 무인 세션에서는 하드 차단(exit 2)이고, 사람이 보고 있는
-대화형 세션에서는 승인 창으로 승격됩니다 — 위험 모델이 "사람이 없을 때의 무단 원격 반영"
-이기 때문입니다.
+세 가지 서로 다른 "배포" 가 섞이기 쉬워 한자리에 정리합니다.
+
+### ① 설치본으로 가는 것 (파일)
+
+명세는 **한 곳**입니다: [`scripts/deploy_manifest.py`](scripts/deploy_manifest.py).
+설치 경로 3종(`install.ps1` · `install.sh` · `scripts/deploy_live.py`)이 모두 이 집합을
+따르며, 어긋나면 `tests/test_installer_parity.py` 가 실패합니다.
+
+| 대상 | 어디로 |
+|---|---|
+| `skill/SKILL.md` → `SKILL.md`, `DESIGN.md`, `README.md`, `install.ps1`, `install.sh` | `~/.claude/skills/autoharness/` |
+| `bin/*.py` (파이썬 엔진·MCP·워치독) | `~/.claude/skills/autoharness/bin/` |
+| `templates/*` (파일만 — 하위 디렉토리는 부산물) | `~/.claude/skills/autoharness/templates/` |
+| v2 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
+
+### ② 절대 나가지 않는 것 (파일)
+
+허용 목록만 두면 새 파일이 조용히 빠지고, 금지 목록만 두면 새 부산물이 조용히 들어갑니다.
+그래서 **둘 다 명시**합니다. 금지 쪽이 더 위험합니다 — 이 저장소의 상태가 설치본에 흘러들면
+사용자 계정이 남의 프로젝트 진행 이력을 물려받습니다.
+
+| 안 나가는 것 | 왜 |
+|---|---|
+| `.claude/agent_tracker.json`, `PROGRESS.md` | 이 저장소의 진행 장부·렌더 산출물 |
+| `.claude/settings.json`, `settings.local.json` | **기계 고유 절대경로** (아래 ③) |
+| `.claude/checks-timing.json` | 검증 파이프라인 캐시 |
+| `CLAUDE.md` | 이 저장소 전용 주행 지침 (배포본은 `templates/CLAUDE.md.tmpl`) |
+| `daemon/dist/`, `daemon/node_modules/`, `__pycache__`, `*.pyc`, `*.bun-build` | 빌드 부산물 |
+| `*.log`, `*.bak-*`, `.DS_Store` 류 | 로그·백업·잡동사니 |
+
+이미 설치본에 들어가 있는 금지 항목은 `deploy_live` 가 **검출해 알리되 지우지는 않습니다** —
+사용자 계정의 파일을 배포 스크립트가 임의로 지우지 않습니다.
+
+### ③ 기계에 속하는 것 (저장소에 커밋하지 않음)
+
+`.claude/settings.json` 하나입니다. 훅 명령에 설치 시점의 절대 EXE 경로가 박히므로 저장소를
+따라 다니면 다른 계정에서 게이트 4종이 통째로 죽습니다. `.gitignore` 에 넣고, 클론 후
+`autoharness install --repo <저장소>` 를 한 번 돌리십시오. 배선 모양 참조는
+`.claude/settings.example.json` 입니다.
+
+### ④ 이 하네스가 **하지 않는** 배포 행위
+
+이 하네스가 하는 것은 **배포 가능 상태까지의 검증과 로컬 커밋**입니다. 아래는 하지 않습니다.
+
+| 하지 않는 것 | 어떻게 막히나 |
+|---|---|
+| `git push`, 태그 푸시 | 훅이 차단 |
+| `gh pr create/merge`, `gh release create` 등 원격 쓰기 | 훅이 차단 |
+| 되돌릴 수 없는 로컬 파괴(`reset --hard`, `clean -f`, `branch -D`, `stash drop` …) | 훅이 차단 |
+| 사용자 계정 파일의 임의 삭제 | 배포 스크립트가 알리기만 함 |
+
+무인 세션(`CLAUDE_AUTOHARNESS=1`)에서는 하드 차단(exit 2)이고, 사람이 보고 있는 대화형
+세션에서는 승인 창으로 승격됩니다 — 위험 모델이 "사람이 없을 때의 무단 원격 반영" 이기
+때문입니다. 릴리스 발행은 사람의 판단입니다(`bun run release` 로 산출물만 만듭니다).
 
 ---
 
