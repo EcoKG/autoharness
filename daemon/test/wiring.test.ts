@@ -19,6 +19,7 @@ import { nowIso } from "../src/core/schema.ts";
 import { MARKER_HOOK_OPS } from "../src/hooks/hooks.ts";
 import {
   WIRING_ACTIVE,
+  WIRING_BROKEN_PATH,
   WIRING_INACTIVE,
   REPO_PIN_FLAG,
   WIRING_NOT_REGISTERED,
@@ -28,12 +29,18 @@ import {
   hookWiringStatus,
   matcherCovers,
   pathIsRooted,
+  resolvableEnginePath,
 } from "../src/hooks/wiring.ts";
 
 let dir = "";
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ah-wiring-"));
   await mkdir(repoPaths(dir).claudeDir, { recursive: true });
+  // V1_ENGINE 이 가리키는 스크립트를 실제로 만든다 — 없으면 배선 진단이 (정당하게)
+  // broken_path 로 판정하므로, inactive/active 를 확인하려는 단정들이 엉뚱한 것을 본다.
+  // 실제 설치는 이 파일이 있는 상태이므로 이쪽이 올바른 픽스처다.
+  await mkdir(join(dir, "scripts"), { recursive: true });
+  await writeFile(join(dir, "scripts", "harness_engine.py"), "# fixture\n", "utf8");
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -73,6 +80,15 @@ async function writeSettings(opts: {
     hooks["Stop"] = [{ hooks: [{ type: "command", command: cmd("hook-stop") }] }];
   }
   await writeFile(path, JSON.stringify(settings, null, 2), "utf8");
+}
+
+/** 실존하는 실행 파일 하나 — 절대 경로 훅이 '살아 있는' 상태를 만들 때 쓴다. */
+async function makeFakeExe(name = "autoharness.exe"): Promise<string> {
+  const binDir = join(dir, "bin");
+  await mkdir(binDir, { recursive: true });
+  const path = join(binDir, name);
+  await writeFile(path, "", "utf8");
+  return path;
 }
 
 async function markFired(ops: readonly string[] = ["hook-prebash"]): Promise<void> {
@@ -289,12 +305,91 @@ describe("대상 저장소 고정", () => {
   });
 });
 
+/**
+ * 실측(2026-08-11): 이 저장소의 훅 4종이 `C:\Users\ruinp\...\autoharness.exe` 를 부르는데
+ * 현재 계정에 그 경로가 없어 게이트가 전부 무효였다. 그때 진단은 inactive 로 뭉개
+ * "저장소 루트에서 claude 를 실행하십시오"라는 **틀린 처방**을 냈다.
+ */
+describe("죽은 실행 경로(broken_path)", () => {
+  test("실존하지 않는 절대 경로는 inactive 가 아니라 broken_path 다", async () => {
+    const gone = join(dir, "nowhere", "autoharness.exe").replace(/\\/g, "/");
+    await writeSettings({ engine: gone });
+    const info = await hookWiringStatus(dir);
+    expect(info.state).toBe(WIRING_BROKEN_PATH);
+    expect(info.dead_engine_hooks.length).toBe(MARKER_HOOK_OPS.length);
+    expect(info.warning).toContain("실존하지 않는 실행 파일");
+    expect(info.warning).toContain("install");
+    // 처방이 다르므로 inactive 문구가 섞여 나오면 안 된다
+    expect(info.warning).not.toContain("저장소 루트(");
+  });
+
+  test("발화 기록이 있어도 지금 경로가 죽었으면 broken_path 다 (과거가 현재를 덮지 않는다)", async () => {
+    const gone = join(dir, "nowhere", "autoharness.exe").replace(/\\/g, "/");
+    await writeSettings({ engine: gone });
+    await markFired([...MARKER_HOOK_OPS]);
+    const info = await hookWiringStatus(dir);
+    expect(info.fired.length).toBeGreaterThan(0);
+    expect(info.state).toBe(WIRING_BROKEN_PATH);
+  });
+
+  test("실존하는 절대 경로는 broken_path 가 아니다 (오탐 금지)", async () => {
+    const exe = await makeFakeExe();
+    await writeSettings({ engine: exe.replace(/\\/g, "/") });
+    const info = await hookWiringStatus(dir);
+    expect(info.dead_engine_hooks).toEqual([]);
+    expect(info.state).toBe(WIRING_INACTIVE);
+  });
+
+  test("PATH 로 푸는 이름은 확인 대상이 아니다 (오탐 금지)", async () => {
+    // 진단 시점의 PATH 와 훅이 도는 환경의 PATH 는 다를 수 있다 — 없다고 단정하면 오탐이다
+    await writeSettings({ engine: "autoharness" });
+    const info = await hookWiringStatus(dir);
+    expect(info.dead_engine_hooks).toEqual([]);
+    expect(info.state).toBe(WIRING_INACTIVE);
+  });
+
+  test("훅 미등록 저장소는 여전히 경고 대상이 아니다", async () => {
+    const info = await hookWiringStatus(dir);
+    expect(info.state).toBe(WIRING_NOT_REGISTERED);
+    expect(info.dead_engine_hooks).toEqual([]);
+    expect(info.warning).toBeNull();
+  });
+
+  test("${CLAUDE_PROJECT_DIR} 는 저장소 루트로 치환해 확인한다", async () => {
+    // beforeEach 가 만든 scripts/harness_engine.py 가 있으므로 살아 있다
+    await writeSettings({});
+    expect((await hookWiringStatus(dir)).dead_engine_hooks).toEqual([]);
+    // 그 파일을 지우면 같은 명령이 죽은 경로가 된다 (v1→v2 이행에서 실제로 일어나는 일)
+    await rm(join(dir, "scripts", "harness_engine.py"), { force: true });
+    const after = await hookWiringStatus(dir);
+    expect(after.state).toBe(WIRING_BROKEN_PATH);
+    expect(after.dead_engine_hooks.length).toBe(MARKER_HOOK_OPS.length);
+  });
+
+  test("resolvableEnginePath 는 확인 불가 형태를 null 로 돌려준다", () => {
+    expect(resolvableEnginePath("autoharness", dir)).toBeNull(); // PATH 해석
+    expect(resolvableEnginePath("scripts/harness_engine.py", dir)).toBeNull(); // cwd 상대
+    expect(resolvableEnginePath("~/.claude/bin/autoharness", dir)).toBeNull(); // 셸이 푸는 홈
+    expect(resolvableEnginePath("%USERPROFILE%/bin/ah.exe", dir)).toBeNull(); // 셸이 푸는 변수
+    expect(resolvableEnginePath("", dir)).toBeNull();
+    expect(resolvableEnginePath("C:/x/autoharness.exe", dir)).toBe("C:/x/autoharness.exe");
+    expect(resolvableEnginePath("/usr/local/bin/autoharness", dir)).toBe("/usr/local/bin/autoharness");
+    expect(resolvableEnginePath("${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py", dir)).toBe(
+      `${dir}/scripts/harness_engine.py`,
+    );
+  });
+});
+
 describe("v1·v2 엔진 공존 인식", () => {
   test("v2 EXE 훅도 등록으로 인식한다 (마이그레이션 중 공존)", async () => {
-    await writeSettings({ engine: "C:/Users/me/.claude/bin/autoharness.exe" });
+    // 실존하는 EXE 를 가리켜야 이 테스트가 보려는 것(등록 인식)만 남는다 —
+    // 없는 경로를 쓰면 broken_path 판정이 겹쳐 무엇을 확인한 것인지 흐려진다.
+    const exe = await makeFakeExe();
+    await writeSettings({ engine: exe.replace(/\\/g, "/") });
     const info = await hookWiringStatus(dir);
     expect(info.registered).toEqual([...MARKER_HOOK_OPS].sort());
     expect(info.state).toBe(WIRING_INACTIVE);
+    expect(info.dead_engine_hooks).toEqual([]);
   });
 
   test("engineTokenIn 은 두 엔진을 모두 찾고 무관한 명령은 넘긴다", () => {

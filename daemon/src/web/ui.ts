@@ -488,7 +488,9 @@ export const UI_HTML = `<!doctype html>
 
     var head = document.createElement("p");
     head.style.margin = "0 0 6px";
-    var stateCls = h.state === "active" ? "active" : h.state === "inactive" ? "error" : "";
+    // broken_path 를 중립으로 두면 가장 위험한 상태가 화면에서 가장 조용해진다
+    var broken = h.state === "inactive" || h.state === "broken_path";
+    var stateCls = h.state === "active" ? "active" : broken ? "error" : "";
     head.append(badge(h.state, stateCls));
     box.append(head);
 
@@ -520,6 +522,9 @@ export const UI_HTML = `<!doctype html>
       "작업 디렉토리에 의존하는 훅: " + h.cwd_dependent_hooks.join(", "));
     (h.uncovered_tools || []).length && warn(box,
       "matcher 가 덮지 못하는 도구: " + h.uncovered_tools.join(", "));
+    (h.dead_engine_hooks || []).length && warn(box,
+      "실행 파일이 없는 훅: " + h.dead_engine_hooks.join(" / ") +
+      " — 다른 계정·기계에서 설치한 경로입니다. autoharness install 로 다시 쓰십시오.");
     if (h.state === "inactive") {
       warn(box, "등록은 됐지만 발화 기록이 없습니다 — 저장소 루트에서 claude 를 실행하십시오.");
     }

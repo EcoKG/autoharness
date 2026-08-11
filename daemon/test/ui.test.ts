@@ -270,6 +270,15 @@ describe("훅 배선 카드", () => {
     expect(UI_HTML).toContain("등록은 됐지만 발화 기록이 없습니다");
   });
 
+  test("실행 파일이 없는 훅(broken_path)도 붉게 칠하고 처방을 함께 낸다", () => {
+    // 중립으로 두면 가장 위험한 상태가 화면에서 가장 조용해진다
+    expect(UI_HTML).toContain("broken_path");
+    expect(UI_HTML).toContain("dead_engine_hooks");
+    expect(UI_HTML).toContain("실행 파일이 없는 훅");
+    // inactive 의 처방("저장소 루트에서 실행")과 섞이지 않아야 한다 — 여기선 무효한 조언이다
+    expect(UI_HTML).toContain("autoharness install");
+  });
+
   test("미등록은 결함으로 칠하지 않는다 — 수동 운용도 정상이다", () => {
     // 미등록 배지에 error 클래스를 붙이지 않는다는 판단이 코드에 남아 있어야 한다
     expect(UI_HTML).toContain("미등록은 결함이 아니다");

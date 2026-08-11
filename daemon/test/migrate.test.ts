@@ -17,6 +17,7 @@ import { createTracker, loadTracker, newTask, saveTracker } from "../src/core/le
 import { repoPaths } from "../src/core/paths.ts";
 import { REPO_PIN_FLAG, hookWiringStatus } from "../src/hooks/wiring.ts";
 import { migrateRepo, rollbackInstructions, rollbackRepo } from "../src/install/migrate.ts";
+import { hookCommandPathIsDead, mergeSettings } from "../src/install/settings.ts";
 
 let repo = "";
 let home = "";
@@ -241,5 +242,107 @@ describe("v1·v2 공존", () => {
     const report = await migrateRepo(repo, { exePath: EXE, env });
     expect(report.after.every((h) => !h.legacy)).toBe(true);
     expect(report.after.every((h) => h.command.includes(EXE))).toBe(true);
+  });
+});
+
+/**
+ * 훅 명령에는 설치 시점의 절대 EXE 경로가 박히는데 `.claude/settings.json` 은 저장소를
+ * 따라 다닌다 — 다른 계정·다른 기계로 옮기면 그 경로가 사라진다. 실측(2026-08-11):
+ * 이 저장소가 `C:\Users\ruinp\...\autoharness.exe` 를 부르는 채로 다른 계정에 있었고,
+ * 게이트 4종이 전부 무효였는데 진단은 그것을 '한 번도 발화 안 함'으로만 말했다.
+ *
+ * 살아 있는 쪽 대조군은 **basename 이 autoharness 인 실존 파일**이어야 한다.
+ * `process.execPath` 는 bun 을 가리켜 하네스 훅으로 인식조차 되지 않으므로 대조가 안 된다.
+ */
+describe("죽은 절대 경로 복구", () => {
+  const DEAD_EXE = join(tmpdir(), "ah-없는폴더", "autoharness.exe");
+  let liveExe = "";
+
+  beforeEach(async () => {
+    liveExe = join(repo, "bin", "autoharness.exe");
+    await mkdir(join(repo, "bin"), { recursive: true });
+    await writeFile(liveExe, "", "utf8");
+  });
+
+  /** 훅 4종을 주어진 실행 파일로 심는다(설치가 만드는 모양 그대로). */
+  async function seedRepoWith(exe: string): Promise<void> {
+    const cmd = (op: string) => `"${exe}" ${op} ${REPO_PIN_FLAG}`;
+    const matcher = "Bash|PowerShell";
+    await writeFile(
+      join(repoPaths(repo).claudeDir, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ type: "command", command: cmd("brief") }] }],
+          PreToolUse: [{ matcher, hooks: [{ type: "command", command: cmd("hook-prebash") }] }],
+          PostToolUse: [{ matcher, hooks: [{ type: "command", command: cmd("hook-postbash") }] }],
+          Stop: [{ hooks: [{ type: "command", command: cmd("hook-stop") }] }],
+        },
+      }, null, 2),
+      "utf8",
+    );
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [newTask("todo", "남은 작업")];
+    await saveTracker(repo, t);
+  }
+
+  /** settings.json 안의 훅 명령 전부 — 경로 이스케이프에 기대지 않고 값으로 본다. */
+  async function hookCommands(): Promise<string[]> {
+    const raw = JSON.parse(
+      await readFile(join(repoPaths(repo).claudeDir, "settings.json"), "utf8"),
+    ) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    return Object.values(raw.hooks).flatMap((entries) =>
+      entries.flatMap((entry) => entry.hooks.map((h) => h.command)),
+    );
+  }
+
+  test("진단이 broken_path 로 드러낸다 — inactive 로 뭉개지 않는다", async () => {
+    await seedRepoWith(DEAD_EXE);
+    const wiring = await hookWiringStatus(repo);
+    expect(wiring.state).toBe("broken_path");
+    expect(wiring.dead_engine_hooks.length).toBe(4); // 훅 명령 4종 전부가 죽은 경로다
+    expect(wiring.warning).toContain("실존하지 않는 실행 파일");
+  });
+
+  test("설치가 죽은 경로를 현재 실행 파일로 다시 쓴다", async () => {
+    await seedRepoWith(DEAD_EXE);
+    const result = await mergeSettings(repo, { exePath: liveExe });
+    const commands = await hookCommands();
+    expect(commands.length).toBe(4);
+    expect(commands.every((c) => !c.includes("없는폴더"))).toBe(true);
+    expect(commands.every((c) => c.includes(liveExe))).toBe(true);
+    expect(result.migrated_hooks.length).toBe(4);
+    expect((await hookWiringStatus(repo)).dead_engine_hooks).toEqual([]);
+    expect((await hookWiringStatus(repo)).state).not.toBe("broken_path");
+  });
+
+  test("다시 쓰기 전에 기존 설정을 백업한다", async () => {
+    await seedRepoWith(DEAD_EXE);
+    const before = await readFile(join(repoPaths(repo).claudeDir, "settings.json"), "utf8");
+    const result = await mergeSettings(repo, { exePath: liveExe });
+    expect(result.backup).not.toBeNull();
+    expect(await readFile(result.backup!, "utf8")).toBe(before);
+  });
+
+  test("살아 있는 경로는 건드리지 않는다 (오탐 금지)", async () => {
+    await seedRepoWith(liveExe);
+    const before = await hookCommands();
+    const result = await mergeSettings(repo, { exePath: liveExe });
+    expect(result.migrated_hooks).toEqual([]);
+    expect(result.skipped_hooks.length).toBe(4);
+    expect(await hookCommands()).toEqual(before);
+  });
+
+  test("--repo 고정은 죽은 경로를 고치면서도 유지된다", async () => {
+    await seedRepoWith(DEAD_EXE);
+    await mergeSettings(repo, { exePath: liveExe });
+    expect((await hookCommands()).every((c) => c.includes("--repo"))).toBe(true);
+    expect((await hookWiringStatus(repo)).repo_unpinned_hooks).toEqual([]);
+  });
+
+  test("hookCommandPathIsDead 는 확인 불가 형태를 죽었다고 하지 않는다", async () => {
+    expect(await hookCommandPathIsDead(`"${DEAD_EXE}" hook-stop`, repo)).toBe(true);
+    expect(await hookCommandPathIsDead(`"${liveExe}" hook-stop`, repo)).toBe(false);
+    expect(await hookCommandPathIsDead("autoharness hook-stop", repo)).toBe(false); // PATH 해석
+    expect(await hookCommandPathIsDead("git status", repo)).toBe(false); // 하네스 훅이 아니다
   });
 });

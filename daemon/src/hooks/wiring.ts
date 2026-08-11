@@ -9,12 +9,19 @@
  * stdin 을 먹여도 같은 기록이 남아 끊긴 저장소를 정상으로 오판한다. 실제 훅 호출에만 있는
  * Claude Code 런타임 필드를 본 뒤에 마커를 남긴다(hooks.ts `recordHookFire`).
  *
- * 이 모듈이 드러내는 것은 네 가지이며, v1 이 각각을 놓쳐 본 적이 있다:
+ * 이 모듈이 드러내는 것은 다섯 가지이며, v1 이 각각을 놓쳐 본 적이 있다:
  *   1. 등록됐는데 한 번도 발화하지 않음(inactive)
  *   2. matcher 가 일부 실행 도구만 덮어 나머지 경로로 게이트가 통째로 우회됨
  *   3. 훅 4종 중 일부만 등록됨(부분 등록) — 나머지 규칙은 존재하지 않는 상태
  *   4. settings.json 파손 — 이것을 '미등록(수동 운용)'으로 오판하면 오탐 금지 규칙에
  *      가려져 게이트가 전부 죽은 상태가 경고에서 빠진다
+ *   5. 훅 명령이 **실존하지 않는 실행 파일**을 가리킴(broken_path) — 훅 명령에는 설치
+ *      시점의 절대 EXE 경로가 박히는데, 그 파일은 계정·기계가 바뀌면 사라진다. 그런데
+ *      `.claude/settings.json` 은 저장소를 따라 다니므로 클론·계정 이전마다 재발한다.
+ *      실측(2026-08-11, 이 저장소): 훅 4종이 `C:\Users\ruinp\...\autoharness.exe` 를
+ *      부르는데 현재 계정에 그 경로가 없어 게이트가 전부 무효였다. 이때 `inactive` 로
+ *      뭉개면 **처방이 틀린다** — 화면은 "저장소 루트에서 claude 를 실행하십시오"라고
+ *      말하지만 루트에서 실행해도 없는 파일은 여전히 없다.
  *
  * **경고만 하고 주행은 막지 않는다**(fail-open). 훅을 쓰지 않는 저장소는 경고 대상이
  * 아니다 — 수동 운용은 결함이 아니다(오탐 금지).
@@ -31,10 +38,12 @@ import { MARKER_HOOK_OPS } from "./hooks.ts";
 export const WIRING_NOT_REGISTERED = "not_registered"; // 훅 미등록(수동 운용) — 경고 대상 아님
 export const WIRING_ACTIVE = "active"; // 등록 + 실제 발화 기록 있음
 export const WIRING_INACTIVE = "inactive"; // 등록됐으나 한 번도 발화한 적 없음 — 경고
+export const WIRING_BROKEN_PATH = "broken_path"; // 등록됐으나 실행 파일이 실존하지 않음 — 경고
 export type WiringState =
   | typeof WIRING_NOT_REGISTERED
   | typeof WIRING_ACTIVE
-  | typeof WIRING_INACTIVE;
+  | typeof WIRING_INACTIVE
+  | typeof WIRING_BROKEN_PATH;
 
 /** matcher 로 도구 범위가 정해지는 훅(hook-stop 은 Stop 이벤트라 도구 무관) */
 export const MATCHER_SCOPED_OPS: readonly string[] = ["hook-prebash", "hook-postbash"];
@@ -77,6 +86,8 @@ export interface WiringInfo {
   readonly missing_hooks: string[];
   readonly cwd_dependent_hooks: string[];
   readonly repo_unpinned_hooks: string[];
+  /** 실존하지 않는 실행 파일을 가리키는 훅 명령(정렬) — 확인 가능한 경로만 센다. */
+  readonly dead_engine_hooks: string[];
   readonly done_total: number;
   readonly done_without_commit: number;
   readonly warning: string | null;
@@ -194,6 +205,45 @@ export function cwdDependentHooksFrom(files: readonly SettingsFile[]): string[] 
   return [...weak].sort();
 }
 
+/**
+ * 훅 명령의 엔진 토큰을 **존재를 확인할 수 있는** 파일 경로로 푼다. 못 풀면 null.
+ *
+ * 확인 대상은 cwd 와 무관하게 한 파일로 고정되는 경로뿐이다 — 절대 경로와
+ * `${CLAUDE_PROJECT_DIR}` 로 시작하는 경로(저장소 루트로 치환하면 고정된다).
+ *
+ * **못 푸는 것을 죽었다고 단정하지 않는다**(오탐 금지). 이름만 쓴 실행 파일(`autoharness`)은
+ * PATH 로 해석되는데 훅이 도는 환경의 PATH 는 진단 시점의 PATH 와 다를 수 있고, `~`·`%VAR%`
+ * 는 셸이 푸는 것이라 진단이 흉내 내면 틀린다. 구분자가 있는 상대 경로는 이미
+ * `cwd_dependent_hooks` 가 다루므로 여기서 또 세지 않는다.
+ */
+export function resolvableEnginePath(token: string, repo: string): string | null {
+  if (!token) return null;
+  const expanded = token
+    .replace(/\$\{CLAUDE_PROJECT_DIR\}/g, repo)
+    .replace(/\$CLAUDE_PROJECT_DIR/g, repo);
+  if (expanded.includes("${") || expanded.includes("%") || expanded.startsWith("~")) return null;
+  const isAbsolute = /^[/\\]/.test(expanded) || (expanded.length > 1 && expanded[1] === ":");
+  return isAbsolute ? expanded : null;
+}
+
+/** 확인 가능한 경로인데 그 파일이 없는 훅 명령 목록(정렬). */
+export async function deadEngineHooksFrom(
+  files: readonly SettingsFile[],
+  repo: string,
+): Promise<string[]> {
+  const dead = new Set<string>();
+  for (const file of files) {
+    for (const { command } of iterHookCommands(file.settings)) {
+      const token = engineTokenIn(command);
+      if (!token) continue;
+      const path = resolvableEnginePath(token, repo);
+      if (!path) continue;
+      if (!(await Bun.file(path).exists())) dead.add(command.trim());
+    }
+  }
+  return [...dead].sort();
+}
+
 /** 훅 명령이 대상 저장소를 cwd 에 맡기는가 — `--repo` 가 없으면 엔진이 cwd 를 저장소로 본다. */
 export function hookCommandIsRepoUnpinned(command: string): boolean {
   if (!command || !engineTokenIn(command)) return false;
@@ -235,8 +285,12 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
   const done = (resolved?.tasks ?? []).filter((t) => t.status === "done");
   const noCommit = done.filter((t) => !t.commit);
 
+  // 죽은 경로는 **과거 발화 기록을 이긴다** — 예전에 발화했더라도 지금 없는 파일은 못 부른다.
+  const deadHooks = await deadEngineHooksFrom(files, repo);
+
   let state: WiringState;
   if (registered.length === 0) state = WIRING_NOT_REGISTERED;
+  else if (deadHooks.length > 0) state = WIRING_BROKEN_PATH;
   else if (fired.length > 0) state = WIRING_ACTIVE;
   else state = WIRING_INACTIVE;
 
@@ -265,6 +319,7 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
     missing_hooks: [...missing],
     cwd_dependent_hooks: weakHooks,
     repo_unpinned_hooks: unpinnedHooks,
+    dead_engine_hooks: deadHooks,
     done_total: done.length,
     done_without_commit: noCommit.length,
     warning: null as string | null,
@@ -304,9 +359,25 @@ export async function hookWiringStatus(repo: string, tracker?: Tracker | null): 
         `찾지 못해 커밋 게이트와 Stop 게이트가 조용히 통과합니다. 훅 명령 끝에 \`${REPO_PIN_FLAG}\` 를 붙이십시오.`,
     );
   }
+  if (state === WIRING_BROKEN_PATH) warnings.unshift(brokenPathWarning(info));
   if (state === WIRING_INACTIVE) warnings.unshift(inactiveWarning(repo, info));
 
   return { ...info, warning: warnings.length > 0 ? warnings.join("\n") : null };
+}
+
+/**
+ * inactive 와 처방이 다르다 — 여기서 "저장소 루트에서 실행하십시오"는 아무 도움이 안 된다.
+ * 없는 파일은 어디서 실행해도 없다. 고치는 방법은 훅 명령의 경로를 다시 쓰는 것뿐이다.
+ */
+function brokenPathWarning(info: WiringInfo): string {
+  return (
+    "[AutoHarness 경고] 훅이 실존하지 않는 실행 파일을 가리킵니다 — " +
+    `${info.dead_engine_hooks.length}건: ${info.dead_engine_hooks.join(" / ")}. ` +
+    "커밋 게이트·금지 명령 차단·SHA 동기화·Stop 게이트가 전부 무효입니다. 훅 명령에는 설치 " +
+    "시점의 절대 경로가 박히는데 .claude/settings.json 은 저장소를 따라 다니므로, 다른 계정·" +
+    "다른 기계로 옮기면 이 상태가 됩니다. `autoharness install --repo <저장소>` 로 훅 경로를 " +
+    "현재 실행 파일로 다시 쓰십시오(기존 설정은 백업됩니다). (경고일 뿐 주행은 계속합니다)"
+  );
 }
 
 function inactiveWarning(repo: string, info: WiringInfo): string {
