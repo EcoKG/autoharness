@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T05:12:22.044Z",
+  "updated_at": "2026-08-11T05:14:58.929Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1780,13 +1780,13 @@
         "deploy-manifest"
       ],
       "priority": 20,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/deploy-installer-parity-20260811T051430Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-11T05:14:30.661Z",
+      "finished_at": "2026-08-11T05:14:58.929Z",
       "test_cmd": null
     },
     {

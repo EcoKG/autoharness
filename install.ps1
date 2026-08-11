@@ -111,13 +111,24 @@ function Install-AutoHarness {
     New-Item -ItemType Directory -Force -Path $Dst | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $Dst "bin") | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $Dst "templates") | Out-Null
-    Copy-Item -Path (Join-Path $Src "skill\SKILL.md") -Destination (Join-Path $Dst "SKILL.md") -Force
-    Copy-Item -Path (Join-Path $Src "bin\*")          -Destination (Join-Path $Dst "bin") -Recurse -Force
-    Copy-Item -Path (Join-Path $Src "templates\*")    -Destination (Join-Path $Dst "templates") -Recurse -Force
-    Copy-Item -Path (Join-Path $Src "DESIGN.md")      -Destination $Dst -Force
-    Copy-Item -Path (Join-Path $Src "README.md")      -Destination $Dst -Force
+    # 배포 목록은 scripts/deploy_manifest.py 가 정합니다 — 세 설치 경로가 같은 집합을
+    # 복사해야 하며, 어긋나면 tests/test_installer_parity.py 가 실패합니다.
+    #
+    # bin\ 은 **.py 만** 가져갑니다. 종전에는 `bin\*` 를 재귀 복사해 저장소에 실재하는
+    # bin\__pycache__ 를 그대로 설치본에 넣었습니다(다른 파이썬 버전의 .pyc 가 사용자
+    # 계정에 남습니다). templates\ 도 하위 디렉토리는 부산물이라 파일만 가져갑니다.
+    Copy-Item -Path (Join-Path $Src "skill\SKILL.md")   -Destination (Join-Path $Dst "SKILL.md") -Force
+    Copy-Item -Path (Join-Path $Src "bin\*.py")         -Destination (Join-Path $Dst "bin") -Force
+    Get-ChildItem -Path (Join-Path $Src "templates") -File |
+        Copy-Item -Destination (Join-Path $Dst "templates") -Force
+    Copy-Item -Path (Join-Path $Src "DESIGN.md")        -Destination $Dst -Force
+    Copy-Item -Path (Join-Path $Src "README.md")        -Destination $Dst -Force
     # 설치본에서 -Watchdog / -Uninstall 을 다시 실행할 수 있도록 자기 자신도 복사합니다.
-    Copy-Item -Path $PSCommandPath                    -Destination (Join-Path $Dst "install.ps1") -Force
+    Copy-Item -Path $PSCommandPath                      -Destination (Join-Path $Dst "install.ps1") -Force
+    # install.sh 도 함께 둡니다 — Windows 로 설치한 계정에서 WSL 로 재설치할 때
+    # 설치본만 가지고 할 수 있어야 합니다(install.sh 는 양쪽을 다 복사하고 있었습니다).
+    $shPath = Join-Path $Src "install.sh"
+    if (Test-Path $shPath) { Copy-Item -Path $shPath -Destination (Join-Path $Dst "install.sh") -Force }
     Write-Step ("스킬 설치 완료: " + $Dst)
 
     # 3) 런타임 디렉토리 (registry.json·워치독 로그가 여기 쌓입니다)

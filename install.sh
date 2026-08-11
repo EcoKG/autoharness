@@ -341,9 +341,12 @@ if [ -d "$DST" ]; then
 fi
 
 mkdir -p "$DST/bin" "$DST/templates" "$RUNTIME/logs"
+# 배포 목록은 scripts/deploy_manifest.py 가 정한다 — 세 설치 경로가 같은 집합을 복사해야
+# 하며, 어긋나면 tests/test_installer_parity.py 가 실패한다.
+# bin 은 .py 만, templates 는 파일만(하위 디렉토리는 부산물이다).
 cp "$SRC/skill/SKILL.md" "$DST/SKILL.md"
 cp "$SRC"/bin/*.py "$DST/bin/"
-cp "$SRC"/templates/* "$DST/templates/"
+find "$SRC/templates" -maxdepth 1 -type f -exec cp {} "$DST/templates/" \;
 cp "$SRC/install.sh" "$DST/install.sh" 2>/dev/null || true
 cp "$SRC/install.ps1" "$DST/install.ps1" 2>/dev/null || true
 for doc in README.md DESIGN.md; do

@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-11T05:12:22.046Z
+- 모델: claude-fable-5 / 갱신: 2026-08-11T05:14:58.933Z
 
-## 현황: done 110 / 114  (in_progress 0, failed 0, blocked 1, pending 3)
+## 현황: done 111 / 114  (in_progress 0, failed 0, blocked 1, pending 2)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -52,7 +52,7 @@
 | detect-dead-watchdog | 워치독 '등록만 되고 실행 안 됨'을 감지하지 못하는 결함 — 이 PC 에서 실측: 작업은 Ready 로 등록돼 있으나 스케줄러가 매 기동을 0x800710E0(요청 거부)로 반려해 설치 이후 단 한 번도 실행되지 않았다. 증거는 logs/watchdog.log 파일 자체의 부재와 레지스트리 전 프로젝트 last_launch=null 이었고, 그 사이 status/watchdog_status 는 '등록됨(Ready)'만 보고해 정상처럼 보였다. 즉 자동 부활 보장이 두 프로젝트(autoharness·LieDetectorOCR)에서 내내 무효였는데 아무도 몰랐다. 요구사항: ① watchdog_status 가 스케줄러 등록 여부와 '실제 실행 이력'을 분리해 보고하고, 등록됨 + (watchdog.log 부재 또는 마지막 기록이 기대 주기의 3배 이상 경과)면 명시적으로 경고할 것 ② 스케줄러의 LastTaskResult 가 0 이 아니면 코드와 함께 보고할 것(0x800710E0=거부, 0x41303=미실행 등 흔한 값은 해석 문구 포함) ③ 레지스트리 last_launch 가 전 프로젝트 null 인 상태를 '한 번도 기동된 적 없음' 신호로 함께 제시 ④ 감지·경고 로직과 오탐 경계(설치 직후 아직 주기가 안 온 경우는 경고 대상 아님)를 tests/ 회귀 테스트로 고정 | ✅ done | 0/5 | 4a63ecb | - |
 | fix-skill-doc-v2-commands | 스킬 문서가 v1 전용이라 v2 사용자에게 없는 파일 실행을 지시하던 것 수정 | ✅ done | 0/5 | 9d4506c | - |
 | fix-cron-path-claude | cron 워치독 PATH 에 실제 claude 경로 반영 — 설치기가 찾아 놓고 버리던 값 | ✅ done | 0/5 | 87101e6 | - |
-| deploy-installer-parity | 설치 경로 3종이 같은 명세를 서로 다르게 구현하고 있다 — 실측 차이 3건(2026-08-11). ① install.ps1 은 `bin\*` 를 재귀 복사해 __pycache__ 를 넣는데 install.sh 는 `bin/*.py` 만 복사한다 ② install.sh 는 install.ps1 과 install.sh 를 둘 다 설치본에 넣지만 install.ps1 은 install.sh 를 넣지 않는다 — Windows 로 설치한 계정에서는 설치본만 가지고 WSL 재설치를 할 수 없다 ③ deploy_live 는 또 다른 규칙(파일만, .pyc 제외)을 쓴다. 같은 질문에 세 답이 있는 상태이고, 어느 것이 맞는지 저장소 어디에도 적혀 있지 않다. 요구: ① 세 경로가 deploy-manifest 가 정한 같은 집합을 배포하도록 맞출 것 ② 세 구현이 어긋나면 실패하는 교차 검증 테스트를 추가할 것 — 셸·PowerShell 을 실행하지 말고 소스에서 복사 대상 목록을 추출해 대조하는 방식으로 (CLAUDE.md 6절: 테스트가 실제 설치본을 오염시키지 않는다) ③ 앞으로 배포 대상이 늘 때 세 곳을 모두 고쳐야 한다는 사실이 테스트 실패로 드러나게 할 것. | ⏳ pending | 0/5 | - | - |
+| deploy-installer-parity | 설치 경로 3종이 같은 명세를 서로 다르게 구현하고 있다 — 실측 차이 3건(2026-08-11). ① install.ps1 은 `bin\*` 를 재귀 복사해 __pycache__ 를 넣는데 install.sh 는 `bin/*.py` 만 복사한다 ② install.sh 는 install.ps1 과 install.sh 를 둘 다 설치본에 넣지만 install.ps1 은 install.sh 를 넣지 않는다 — Windows 로 설치한 계정에서는 설치본만 가지고 WSL 재설치를 할 수 없다 ③ deploy_live 는 또 다른 규칙(파일만, .pyc 제외)을 쓴다. 같은 질문에 세 답이 있는 상태이고, 어느 것이 맞는지 저장소 어디에도 적혀 있지 않다. 요구: ① 세 경로가 deploy-manifest 가 정한 같은 집합을 배포하도록 맞출 것 ② 세 구현이 어긋나면 실패하는 교차 검증 테스트를 추가할 것 — 셸·PowerShell 을 실행하지 말고 소스에서 복사 대상 목록을 추출해 대조하는 방식으로 (CLAUDE.md 6절: 테스트가 실제 설치본을 오염시키지 않는다) ③ 앞으로 배포 대상이 늘 때 세 곳을 모두 고쳐야 한다는 사실이 테스트 실패로 드러나게 할 것. | ✅ done | 0/5 | - | - |
 | docs-skill-routing-sync | 라우팅 계약 문서 반영 — DESIGN.md §11(스킬 절)에 모드 판정 원칙·폴백 규칙을 계약으로 명시하고, README 사용 흐름에 "하네스가 이미 있는 저장소에 새 목표를 줄 때는 init 재실행이 아니라 task_add + resume" 경로를 추가 | ✅ done | 0/5 | - | - |
 | fix-add-task-self-dep | add-task 자기/순환 의존 결함 수정 — cmd_add_task 의 `d != a.id` 조건이 자기 의존을 오히려 허용해 영구 교착 작업이 생김. 자기 의존·순환 의존을 add-task 시점에 거부하고, next/brief/status 가 '충족 불가능한 pending(교착)'을 구분해 알리도록 개선 + tests/ 회귀 테스트 | ✅ done | 0/5 | - | - |
 | fix-log-ring-pollution | 세션 출력이 데몬 판단 줄을 링에서 밀어내던 구조 결함 — 링을 분리해 밤새 무슨 일이 있었는지 남게 | ✅ done | 0/5 | b687041 | - |
