@@ -351,7 +351,7 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 | 경로 | 내용 | git |
 |---|---|---|
 | `.claude/agent_tracker.json` | **장부 — 진실의 원천** | 추적 |
-| `.claude/settings.json` | 훅 4종·권한 (기존 설정과 병합, 백업 생성) | 추적 |
+| `.claude/settings.json` | 훅 4종·권한 (기존 설정과 병합, 백업 생성) | **무시 권장** |
 | `PROGRESS.md` | 장부에서 렌더한 산출물 (직접 수정 금지) | 추적 |
 | `.claude/harness-logs/` | 실행 로그 | 무시 |
 | `.claude/harness-{state,heartbeat,hooks-seen}.json` | 런타임 상태 | 무시 |
@@ -359,6 +359,19 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 
 v1 은 여기에 `scripts/harness_engine.py` 사본과 `scripts/agent_harness.sh` 를 더 둡니다.
 v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않습니다.
+
+> **`.claude/settings.json` 은 커밋하지 마십시오.** 훅 명령에는 설치 시점의 **절대** EXE
+> 경로가 박힙니다 — Claude Code 는 훅 명령의 `~`·`%USERPROFILE%` 을 풀어 주지 않고, 상대
+> 경로는 훅이 현재 작업 디렉토리에서 실행되므로 하위 폴더에서 게이트가 사라집니다. 절대
+> 경로가 유일한 선택지이고, 따라서 이 파일은 저장소가 아니라 **기계**에 속합니다.
+> 커밋하면 다른 계정·다른 기계에서 클론한 사람의 훅 4종이 통째로 죽습니다(실측으로 겪은
+> 일입니다). `.gitignore` 에 넣고, 클론한 뒤 한 번 복구 명령을 돌리십시오:
+>
+> ```bash
+> autoharness install --repo <저장소>
+> ```
+>
+> 배선 모양을 참고할 것이 필요하면 이 저장소의 `.claude/settings.example.json` 을 보십시오.
 
 ## 사용량 초과 방어
 
@@ -452,10 +465,18 @@ autoharness install --uninstall     # 자동 시작·MCP 등록 해제
 | `not_registered` | 훅 미등록(수동 운용) — 경고 대상이 아닙니다 |
 | `active` | 등록됐고 실제로 발화한 기록이 있습니다 |
 | `inactive` | 등록됐지만 한 번도 발화한 적이 없습니다 — **배선이 끊겼습니다** |
+| `broken_path` | 훅이 **실존하지 않는 실행 파일**을 가리킵니다 — 게이트 4종이 무효입니다 |
 
 `inactive` 의 가장 흔한 원인은 **세션의 프로젝트 루트가 저장소 밖**인 것입니다. 그러면
 저장소의 `.claude/settings.json` 이 로드되지 않아 훅 4종이 조용히 전부 죽습니다. 저장소
 루트에서 `claude` 를 실행하십시오.
+
+`broken_path` 는 처방이 다릅니다 — 없는 파일은 어디서 실행해도 없습니다. 다른 계정·기계에서
+설치한 `settings.json` 을 그대로 받은 경우이므로 경로를 다시 씁니다:
+
+```bash
+autoharness install --repo <저장소>
+```
 
 `settings.json` 이 깨진 경우도 같은 증상인데, 진단이 이 둘을 구분해 알려 줍니다.
 

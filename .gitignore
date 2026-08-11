@@ -10,3 +10,9 @@ __pycache__/
 **/.claude/settings.json.bak-*
 CLAUDE.md.bak-*
 .claude/checks-timing.json
+
+# 훅 명령에는 설치 시점의 절대 EXE 경로가 박힌다 — Claude Code 는 ~ 나 %VAR% 를 풀어
+# 주지 않고 상대 경로는 cwd 종속이라(daemon/DESIGN.md 5.1) 절대 경로가 유일한 선택지다.
+# 따라서 이 파일은 저장소가 아니라 **기계**에 속한다. 커밋하면 다른 계정에서 훅 4종이
+# 통째로 죽는다(실측: broken_path). 참조는 .claude/settings.example.json 을 본다.
+.claude/settings.json

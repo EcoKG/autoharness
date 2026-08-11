@@ -89,6 +89,8 @@ const PARITY_MAP: Record<string, readonly string[]> = {
   "test_deploy_manifest.py": [],
   // 설치기 대조는 셸·PowerShell 소스를 읽는다 — v2 가 다룰 대상이 아니다.
   "test_installer_parity.py": [],
+  // 로컬 설정 경계는 이 저장소의 git 추적 상태를 본다 — v2 에 대응물이 없다.
+  "test_local_config_boundary.py": [],
   "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
   "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],
   // 스킬 문서는 v1 자산이라 v1 테스트가 계속 소유한다(v2 는 스킬을 배치만 한다)
