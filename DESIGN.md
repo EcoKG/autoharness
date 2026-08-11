@@ -321,7 +321,7 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 - **출력**: `run` 시작 시 stderr 경고 1줄(종료 코드·주행에는 영향 없음), `status` 의 `hooks`
   필드(`dead_engine_hooks` 포함), `brief` 는 경고 상태일 때만 경고 줄(정상·미등록 저장소에는
   잡음을 더하지 않는다).
-- **복구**: `autoharness install --repo <저장소>` 가 죽은 절대 경로를 현재 실행 파일로 다시
+- **복구**: `autoharness install --migrate <저장소>` 가 죽은 절대 경로를 현재 실행 파일로 다시
   쓴다(기존 설정은 백업).
 
 ## 9. 모델 추천 휴리스틱 (추천은 도구가, 결정은 사용자가)
@@ -505,7 +505,7 @@ install.sh / deploy_live.py)이 각각 답했고 답이 달랐다 — install.ps
 `.claude/settings.json` 은 저장소가 아니라 **기계**에 속한다. 훅 명령에 설치 시점의 절대
 EXE 경로가 박히기 때문이다(§8 `broken_path`). 저장소에 커밋하지 않고 `.gitignore` 에 넣으며,
 참조용으로 `.claude/settings.example.json`(자리표시자 경로)만 추적한다. 클론 후 복구는
-`autoharness install --repo <저장소>` 한 번이다.
+`autoharness install --migrate <저장소>` 한 번이다.
 
 ### 12.2 install.ps1
 

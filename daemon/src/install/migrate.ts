@@ -18,7 +18,12 @@ import { loadTracker } from "../core/ledger.ts";
 import { isRecord, loadJson } from "../core/load.ts";
 import { repoPaths } from "../core/paths.ts";
 import { engineTokenIn, hookCommandIsRepoUnpinned, hookWiringStatus, pathIsRooted } from "../hooks/wiring.ts";
-import { COMMAND_TOOL_MATCHER, isLegacyEngineCommand, mergeSettings } from "./settings.ts";
+import {
+  COMMAND_TOOL_MATCHER,
+  hookCommandPathIsDead,
+  isLegacyEngineCommand,
+  mergeSettings,
+} from "./settings.ts";
 import { installedExePath } from "./install.ts";
 
 export interface HookSnapshot {
@@ -28,6 +33,13 @@ export interface HookSnapshot {
   legacy: boolean;
   repoUnpinned: boolean;
   cwdDependent: boolean;
+  /**
+   * 가리키는 실행 파일이 실존하지 않는다 — **경로가 고정돼 있는 것과는 다른 조건이다.**
+   * `cwdDependent` 는 "어디서 실행하느냐에 따라 달라지는가" 를 보고, 이쪽은 "그 파일이
+   * 실제로 있는가" 를 본다. 이것을 교체 사유에서 빠뜨려 진단(broken_path)만 있고 복구는
+   * 동작하지 않는 상태였다(실측 2026-08-11).
+   */
+  deadPath: boolean;
 }
 
 export interface MigrateReport {
@@ -44,7 +56,7 @@ export interface MigrateReport {
   notes: string[];
 }
 
-function snapshotOf(settings: unknown): HookSnapshot[] {
+async function snapshotOf(settings: unknown, repo: string): Promise<HookSnapshot[]> {
   const out: HookSnapshot[] = [];
   if (!isRecord(settings)) return out;
   const hooks = settings["hooks"];
@@ -65,6 +77,7 @@ function snapshotOf(settings: unknown): HookSnapshot[] {
           legacy: isLegacyEngineCommand(command),
           repoUnpinned: hookCommandIsRepoUnpinned(command),
           cwdDependent: token !== null && !pathIsRooted(token),
+          deadPath: await hookCommandPathIsDead(command, repo),
         });
       }
     }
@@ -98,7 +111,7 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
   const dryRun = options.dryRun === true;
   const notes: string[] = [];
 
-  const before = snapshotOf(await readSettingsRaw(repo));
+  const before = await snapshotOf(await readSettingsRaw(repo), repo);
   const ledgerBefore = await ledgerBytes(repo);
   const { tracker } = await loadTracker(repo);
   const taskCount = tracker?.tasks.length ?? 0;
@@ -106,7 +119,11 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
   if (before.length === 0) {
     notes.push("훅이 등록돼 있지 않습니다 — 마이그레이션할 배선이 없습니다.");
   }
-  const needsWork = before.filter((h) => h.legacy || h.repoUnpinned || h.cwdDependent);
+  // 죽은 경로도 교체 사유다 — 이것을 빠뜨려 "이미 v2 배선입니다" 라고 답하면서 게이트
+  // 4종이 무효인 상태를 그대로 두었다(실측 2026-08-11).
+  const needsWork = before.filter(
+    (h) => h.legacy || h.repoUnpinned || h.cwdDependent || h.deadPath,
+  );
   if (before.length > 0 && needsWork.length === 0) {
     notes.push("이미 v2 배선입니다 — 바꿀 것이 없습니다.");
   }
@@ -119,14 +136,15 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
       migrated: needsWork.map((h) => h.event),
       notes: [
         ...notes,
-        `(dry-run) v1 훅 ${before.filter((h) => h.legacy).length}건을 ${exePath} 로 교체하고, ` +
+        `(dry-run) v1 훅 ${before.filter((h) => h.legacy).length}건과 ` +
+          `실행 파일이 없는 훅 ${before.filter((h) => h.deadPath).length}건을 ${exePath} 로 교체하고, ` +
           `matcher 를 ${COMMAND_TOOL_MATCHER} 로 넓히고, --repo 를 못 박습니다.`,
       ],
     };
   }
 
   const merge = await mergeSettings(repo, { exePath, replaceLegacy: true });
-  const after = snapshotOf(await readSettingsRaw(repo));
+  const after = await snapshotOf(await readSettingsRaw(repo), repo);
   const ledgerAfter = await ledgerBytes(repo);
 
   // 제1 원칙 — 장부는 한 바이트도 달라지면 안 된다
@@ -146,6 +164,12 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
   if (stillUnpinned.length > 0) {
     notes.push(`--repo 가 없는 훅이 ${stillUnpinned.length}건 남았습니다.`);
   }
+  const stillDead = after.filter((h) => h.deadPath);
+  if (stillDead.length > 0) {
+    notes.push(
+      `실행 파일이 없는 훅이 ${stillDead.length}건 남았습니다: ${stillDead.map((h) => h.event).join(", ")}`,
+    );
+  }
 
   const wiring = await hookWiringStatus(repo, tracker);
   if (wiring.uncovered_tools.length > 0) {
@@ -154,7 +178,8 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
 
   return {
     repo,
-    ok: ledgerIntact && stillLegacy.length === 0 && stillUnpinned.length === 0,
+    ok: ledgerIntact && stillLegacy.length === 0 && stillUnpinned.length === 0 &&
+      stillDead.length === 0,
     dryRun: false,
     ledgerIntact,
     ledgerTasks: taskCount,

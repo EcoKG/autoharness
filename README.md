@@ -342,7 +342,7 @@ autoharness install --rollback <저장소> --backup <settings.json.bak-…>
 
 `.claude/settings.json` 하나입니다. 훅 명령에 설치 시점의 절대 EXE 경로가 박히므로 저장소를
 따라 다니면 다른 계정에서 게이트 4종이 통째로 죽습니다. `.gitignore` 에 넣고, 클론 후
-`autoharness install --repo <저장소>` 를 한 번 돌리십시오. 배선 모양 참조는
+`autoharness install --migrate <저장소>` 를 한 번 돌리십시오. 배선 모양 참조는
 `.claude/settings.example.json` 입니다.
 
 ### ④ 이 하네스가 **하지 않는** 배포 행위
@@ -418,7 +418,7 @@ v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않�
 > 일입니다). `.gitignore` 에 넣고, 클론한 뒤 한 번 복구 명령을 돌리십시오:
 >
 > ```bash
-> autoharness install --repo <저장소>
+> autoharness install --migrate <저장소>
 > ```
 >
 > 배선 모양을 참고할 것이 필요하면 이 저장소의 `.claude/settings.example.json` 을 보십시오.
@@ -525,7 +525,7 @@ autoharness install --uninstall     # 자동 시작·MCP 등록 해제
 설치한 `settings.json` 을 그대로 받은 경우이므로 경로를 다시 씁니다:
 
 ```bash
-autoharness install --repo <저장소>
+autoharness install --migrate <저장소>
 ```
 
 `settings.json` 이 깨진 경우도 같은 증상인데, 진단이 이 둘을 구분해 알려 줍니다.

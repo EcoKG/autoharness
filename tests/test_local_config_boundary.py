@@ -108,7 +108,7 @@ class RecoveryPathTest(unittest.TestCase):
 
     def test_readme_and_claude_md_name_the_repair_command(self):
         for name in ("README.md", "CLAUDE.md"):
-            self.assertIn("install --repo", read(name),
+            self.assertIn("install --migrate", read(name),
                           "%s 에 복구 명령이 없습니다" % name)
 
     def test_example_is_not_deployed_to_the_installed_copy(self):

@@ -91,6 +91,8 @@ const PARITY_MAP: Record<string, readonly string[]> = {
   "test_installer_parity.py": [],
   // 로컬 설정 경계는 이 저장소의 git 추적 상태를 본다 — v2 에 대응물이 없다.
   "test_local_config_boundary.py": [],
+  // 처방 명령 실재 검사는 저장소 문서 전체를 훑는다 — v1 쪽이 소유한다.
+  "test_prescribed_commands.py": [],
   "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
   "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],
   // 스킬 문서는 v1 자산이라 v1 테스트가 계속 소유한다(v2 는 스킬을 배치만 한다)

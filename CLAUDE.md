@@ -33,7 +33,7 @@
 - `skill/SKILL.md`(개발본)이 설치본 `SKILL.md` 의 원본이다. 문서 수정도 개발본에서만.
 - `.claude/settings.json` 은 **추적하지 않는다**(기계 고유 절대경로). 참조는
   `.claude/settings.example.json`. 새 기계에서 클론했으면 한 번 복구한다 —
-  `autoharness install --repo <저장소>`. `status` 의 `hooks.state` 가 `broken_path` 면 이것이다.
+  `autoharness install --migrate <저장소>`. `status` 의 `hooks.state` 가 `broken_path` 면 이것이다.
 - **배포 대상을 늘릴 때는 세 곳이 아니라 한 곳을 고친다** — `scripts/deploy_manifest.py`.
   install.ps1·install.sh 도 같이 고쳐야 하며, 잊으면 `tests/test_installer_parity.py` 가 실패한다.
 

@@ -49,7 +49,7 @@ class WiringStateTest(unittest.TestCase):
 
     def test_design_records_the_remedy_for_broken_path(self):
         """상태만 적고 조치를 안 적으면 사용자는 여전히 갇힌다."""
-        self.assertIn("install --repo", self.design)
+        self.assertIn("install --migrate", self.design)
 
 
 class RunChecksDocsTest(unittest.TestCase):

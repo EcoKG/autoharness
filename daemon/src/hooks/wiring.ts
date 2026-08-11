@@ -69,6 +69,16 @@ export const ENGINE_BASENAMES: readonly string[] = ["harness_engine.py", "autoha
  */
 export const REPO_PIN_FLAG = '--repo "${CLAUDE_PROJECT_DIR}"';
 
+/**
+ * 죽은 배선을 고치는 실제 명령.
+ *
+ * **문자열을 여기 한 곳에 둔다.** 경고문·문서가 각자 명령을 적으면 실재하지 않는 표면을
+ * 처방하게 된다 — 실측(2026-08-11): 경고와 문서가 `install --repo <저장소>` 를 시켰는데
+ * install 에는 `--repo` 옵션이 없어 "알 수 없는 install 옵션입니다" 로 거부됐다. 사용자는
+ * 정확히 시킨 대로 쳤는데 아무것도 고칠 수 없었다.
+ */
+export const REPAIR_COMMAND = "install --migrate <저장소>";
+
 /** 인터프리터가 cwd 기준으로 여는 스크립트 — 이름만 써도 PATH 로 해석되지 않는다. */
 const SCRIPT_EXT_RE = /\.(py|js|ts|mjs|cjs|sh)$/i;
 const TOKEN_RE = /"([^"]*)"|'([^']*)'|(\S+)/g;
@@ -375,7 +385,7 @@ function brokenPathWarning(info: WiringInfo): string {
     `${info.dead_engine_hooks.length}건: ${info.dead_engine_hooks.join(" / ")}. ` +
     "커밋 게이트·금지 명령 차단·SHA 동기화·Stop 게이트가 전부 무효입니다. 훅 명령에는 설치 " +
     "시점의 절대 경로가 박히는데 .claude/settings.json 은 저장소를 따라 다니므로, 다른 계정·" +
-    "다른 기계로 옮기면 이 상태가 됩니다. `autoharness install --repo <저장소>` 로 훅 경로를 " +
+    `다른 기계로 옮기면 이 상태가 됩니다. \`autoharness ${REPAIR_COMMAND}\` 로 훅 경로를 ` +
     "현재 실행 파일로 다시 쓰십시오(기존 설정은 백업됩니다). (경고일 뿐 주행은 계속합니다)"
   );
 }

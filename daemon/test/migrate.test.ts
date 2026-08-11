@@ -22,13 +22,23 @@ import { hookCommandPathIsDead, mergeSettings } from "../src/install/settings.ts
 let repo = "";
 let home = "";
 let env: NodeJS.ProcessEnv = {};
-const EXE = process.platform === "win32" ? "C:/tools/autoharness.exe" : "/usr/local/bin/autoharness";
+/**
+ * 마이그레이션 대상 EXE — **실재하는 파일이어야 한다.**
+ *
+ * 없는 경로로 옮기면 결과는 실제로 깨진 배선이고, 보고서가 ok:false 로 그것을 말하는 것이
+ * 옳은 동작이다(deadPath 검사). 그러면 이 절이 보려는 것 — v1 훅이 v2 로 바뀌는가 — 이
+ * 흐려지므로 픽스처를 실제 설치 모양으로 맞춘다.
+ */
+let EXE = "";
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "ah-mig-"));
   home = await mkdtemp(join(tmpdir(), "ah-mighome-"));
   env = { ...process.env, AUTOHARNESS_HOME: home };
   await mkdir(repoPaths(repo).claudeDir, { recursive: true });
+  EXE = join(home, "bin", "autoharness.exe");
+  await mkdir(join(home, "bin"), { recursive: true });
+  await writeFile(EXE, "", "utf8");
 });
 afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
@@ -344,5 +354,96 @@ describe("죽은 절대 경로 복구", () => {
     expect(await hookCommandPathIsDead(`"${liveExe}" hook-stop`, repo)).toBe(false);
     expect(await hookCommandPathIsDead("autoharness hook-stop", repo)).toBe(false); // PATH 해석
     expect(await hookCommandPathIsDead("git status", repo)).toBe(false); // 하네스 훅이 아니다
+  });
+});
+
+/**
+ * 죽은 경로를 마이그레이션이 실제로 고치는가 — **진단만 있고 복구가 비어 있었다.**
+ *
+ * 실측(2026-08-11): 훅 4종이 실존하지 않는 EXE 를 가리키는 상태에서 dry-run 이
+ * "이미 v2 배선입니다 — 바꿀 것이 없습니다" 라고 답했다. needsWork 판정이 legacy·
+ * repoUnpinned·cwdDependent 만 보고 "그 파일이 실제로 있는가" 를 보지 않았기 때문이다.
+ * mergeSettings 에는 이미 검사가 들어가 있었지만 migrateRepo 가 그 앞에서 단락됐다.
+ *
+ * 진단이 정확한데 복구가 동작하지 않는 조합이 가장 나쁘다 — 사용자는 시킨 대로 했는데
+ * 아무것도 달라지지 않는다.
+ */
+describe("죽은 경로 마이그레이션", () => {
+  const DEAD = join(tmpdir(), "ah-없는폴더", "autoharness.exe");
+
+  async function seedDeadRepo(): Promise<void> {
+    const cmd = (op: string) => `"${DEAD}" ${op} ${REPO_PIN_FLAG}`;
+    const matcher = "Bash|PowerShell";
+    await writeFile(
+      join(repoPaths(repo).claudeDir, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ type: "command", command: cmd("brief") }] }],
+          PreToolUse: [{ matcher, hooks: [{ type: "command", command: cmd("hook-prebash") }] }],
+          PostToolUse: [{ matcher, hooks: [{ type: "command", command: cmd("hook-postbash") }] }],
+          Stop: [{ hooks: [{ type: "command", command: cmd("hook-stop") }] }],
+        },
+      }, null, 2),
+      "utf8",
+    );
+    const t = createTracker({ project: "p", objective: "o", source: "A", target: "B", test: "exit 0" });
+    t.tasks = [newTask("todo", "남은 작업")];
+    await saveTracker(repo, t);
+  }
+
+  test("스냅샷이 deadPath 를 드러낸다", async () => {
+    await seedDeadRepo();
+    const report = await migrateRepo(repo, { exePath: EXE, env, dryRun: true });
+    expect(report.before.every((h) => h.deadPath)).toBe(true);
+    // 다른 축과 구분된다 — 경로는 고정돼 있고(cwd 무관) --repo 도 붙어 있다
+    expect(report.before.every((h) => !h.cwdDependent && !h.repoUnpinned && !h.legacy)).toBe(true);
+  });
+
+  test("dry-run 이 '바꿀 것이 없다' 고 말하지 않는다", async () => {
+    await seedDeadRepo();
+    const report = await migrateRepo(repo, { exePath: EXE, env, dryRun: true });
+    expect(report.notes.join(" ")).not.toContain("이미 v2");
+    expect(report.migrated.length).toBe(4);
+    expect(report.notes.join(" ")).toContain("실행 파일이 없는 훅 4건");
+  });
+
+  test("실제 실행이 경로를 다시 쓰고 배선이 살아난다", async () => {
+    await seedDeadRepo();
+    const report = await migrateRepo(repo, { exePath: EXE, env });
+    expect(report.ok).toBe(true);
+    expect(report.after.some((h) => h.deadPath)).toBe(false);
+    expect(report.after.every((h) => h.command.includes(EXE))).toBe(true);
+    expect((await hookWiringStatus(repo)).state).not.toBe("broken_path");
+  });
+
+  test("장부는 그대로다 — 복구도 진행 상태를 건드리지 않는다", async () => {
+    await seedDeadRepo();
+    const before = await readFile(repoPaths(repo).tracker, "utf8");
+    const report = await migrateRepo(repo, { exePath: EXE, env });
+    expect(report.ledgerIntact).toBe(true);
+    expect(await readFile(repoPaths(repo).tracker, "utf8")).toBe(before);
+  });
+
+  test("고칠 수 없으면 ok 가 아니다 — 없는 곳으로 옮기고 성공이라 하지 않는다", async () => {
+    await seedDeadRepo();
+    const report = await migrateRepo(repo, { exePath: DEAD, env });
+    expect(report.ok).toBe(false);
+    expect(report.notes.join(" ")).toContain("실행 파일이 없는 훅이");
+  });
+
+  test("PATH 로 푸는 이름은 죽었다고 보지 않는다 (오탐 금지)", async () => {
+    const cmd = (op: string) => `autoharness ${op} ${REPO_PIN_FLAG}`;
+    await writeFile(
+      join(repoPaths(repo).claudeDir, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [{ type: "command", command: cmd("hook-prebash") }] }],
+        },
+      }, null, 2),
+      "utf8",
+    );
+    const report = await migrateRepo(repo, { exePath: EXE, env, dryRun: true });
+    expect(report.before.every((h) => !h.deadPath)).toBe(true);
+    expect(report.notes.join(" ")).toContain("이미 v2");
   });
 });
