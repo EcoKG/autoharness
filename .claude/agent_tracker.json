@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-10T23:54:08.542424+00:00",
+  "updated_at": "2026-08-11T00:58:02.494528+00:00",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1563,9 +1563,24 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/web-approval-queue-20260810T235126Z.log",
-      "commit": null,
+      "commit": "ced199f",
       "started_at": "2026-08-10T23:51:26.384832+00:00",
       "finished_at": "2026-08-10T23:54:08.542424+00:00",
+      "test_cmd": null
+    },
+    {
+      "id": "release-v2.0.1",
+      "title": "v2.0.1 배포 — 설치기 결함 7건과 제어판 개선을 공개 릴리스에 반영",
+      "path": "daemon/src/version.ts",
+      "deps": [],
+      "priority": 5,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/release-v2.0.1-20260811T005523Z.log",
+      "commit": null,
+      "started_at": "2026-08-10T23:58:33.542822+00:00",
+      "finished_at": "2026-08-11T00:58:02.494528+00:00",
       "test_cmd": null
     }
   ]
