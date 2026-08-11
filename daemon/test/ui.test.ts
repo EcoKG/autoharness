@@ -423,3 +423,70 @@ describe("승인 대기 큐", () => {
     expect(approval).not.toContain('"done"');
   });
 });
+
+/**
+ * 한눈에 보기 — 이 화면을 여는 이유가 "주행이 멈췄나" 인데 정작 그 답이 없었다.
+ *
+ * 종전 화면에는 프로젝트 목록·설정·막힌 곳·승인 대기·훅 배선·장부 표·세션 로그·콘솔이
+ * 있었지만 진행률도, 지금 붙잡고 있는 작업도, 다음 기동 시각도 없었다. 사람이 장부 표를
+ * 세고 타임스탬프를 뺄셈해야 알 수 있는 것들이다.
+ */
+describe("진행 상황 한눈에", () => {
+  test("진행률 막대를 그린다 — done 만 세지 않고 막힌 몫을 색으로 가른다", () => {
+    expect(UI_HTML).toContain("progressBar");
+    expect(UI_HTML).toContain("seg-blocked");
+    expect(UI_HTML).toContain("seg-failed");
+    expect(UI_HTML).toContain("seg-progress");
+  });
+
+  test("막대에 대체 텍스트를 단다 — 색만으로 구분되지 않게", () => {
+    const bar = UI_HTML.slice(UI_HTML.indexOf("function progressBar"));
+    expect(bar).toContain("aria-label");
+    expect(bar.slice(0, 1200)).toContain("완료 ");
+  });
+
+  test("지금 진행 중인 작업과 경과 시간을 보여 준다", () => {
+    expect(UI_HTML).toContain("currentTaskText");
+    expect(UI_HTML).toContain('t.status === "in_progress"');
+    expect(UI_HTML).toContain("경과");
+    expect(UI_HTML).toContain("started_at");
+  });
+
+  test("다음 기동까지 남은 시간을 보여 주고 백오프를 먼저 말한다", () => {
+    // 백오프 중이면 주기가 와도 안 뜬다 — 주기만 보여 주면 틀린 기대를 만든다
+    const fn = UI_HTML.slice(UI_HTML.indexOf("function nextRunText"));
+    expect(fn.indexOf("백오프")).toBeLessThan(fn.indexOf("interval_minutes"));
+    expect(UI_HTML).toContain("interval_minutes");
+  });
+
+  test("머리글이 마지막 tick 을 시각이 아니라 경과로 말한다", () => {
+    expect(UI_HTML).toContain("tickText");
+    expect(UI_HTML).toContain("마지막 tick ");
+    expect(UI_HTML).toContain("다음 tick 이 지났습니다");
+  });
+
+  test("실패 원인 첫 줄이 클릭 없이 보인다", () => {
+    expect(UI_HTML).toContain("firstLine");
+    expect(UI_HTML).toContain('why.className = "why mono"');
+    // 전문은 여전히 '자세히' 뒤에 있다 — 표에 다 펴면 읽을 수 없다
+    expect(UI_HTML).toContain("toggleDetail");
+  });
+
+  test("stage= 머리글만 보여 주지 않는다 — 그것은 원인이 아니다", () => {
+    expect(UI_HTML).toContain('indexOf("stage=")');
+  });
+
+  test("판정은 서버가 준 값으로만 한다 — 화면이 규칙을 다시 쓰지 않는다", () => {
+    // counts·next_retry_at·last_tick·interval_minutes 는 전부 응답 필드다
+    for (const field of ["counts", "next_retry_at", "last_tick", "interval_minutes", "next_task"]) {
+      expect(UI_HTML).toContain(field);
+    }
+  });
+
+  test("DOM 은 createElement 로 만든다 — 장부 문자열을 innerHTML 로 붙이지 않는다", () => {
+    const glance = UI_HTML.slice(UI_HTML.indexOf("function progressBar"),
+                                 UI_HTML.indexOf("function renderProjects"));
+    expect(glance).not.toContain("innerHTML");
+    expect(glance).toContain("createElement");
+  });
+});

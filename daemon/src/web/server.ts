@@ -49,6 +49,12 @@ export interface WebContext {
   /** 즉시 기동 요청 — 데몬이 넘겨준다. */
   requestLaunch?: (projectId: string) => Promise<unknown>;
   staticAssets?: Record<string, { body: string; type: string }>;
+  /**
+   * tick 주기(분). 화면이 "다음 기동까지 남은 시간" 을 계산하려면 `last_tick` 만으로는
+   * 안 된다 — 주기를 모르면 마지막 시각만 보여 주고 끝난다. 판정은 서버가 하고 화면은
+   * 그리기만 한다는 규약을 지키려면 이 값을 여기서 준다.
+   */
+  intervalMinutes?: number;
 }
 
 export interface WebServerHandle {
@@ -276,6 +282,7 @@ async function handleGet(
       ok: true,
       pid: process.pid,
       uptime_sec: Math.round(process.uptime()),
+      interval_minutes: ctx.intervalMinutes ?? null,
       ...summary,
     });
   }

@@ -57,6 +57,14 @@ export const UI_HTML = `<!doctype html>
   .proj[aria-selected="true"] { border-color:var(--accent); background:rgba(110,168,254,.08); }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .badge { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  /* 진행률 막대 — 이 화면을 여는 이유가 "어디까지 왔나" 인데 그 답이 없었다 */
+  .bar { display:flex; height:6px; border-radius:999px; overflow:hidden; background:var(--line); margin:4px 0 2px; }
+  .bar > span { display:block; height:100%; }
+  .bar .seg-done { background:var(--ok); }
+  .bar .seg-progress { background:var(--accent); }
+  .bar .seg-failed { background:var(--warn); }
+  .bar .seg-blocked { background:var(--err); }
+  .why { color:var(--err); font-size:12px; margin-top:2px; }
   .badge.active { color:var(--ok); border-color:var(--ok); }
   .badge.paused, .badge.needs_human { color:var(--warn); border-color:var(--warn); }
   .badge.error { color:var(--err); border-color:var(--err); }
@@ -214,6 +222,53 @@ export const UI_HTML = `<!doctype html>
     return el;
   }
 
+  /** 사람이 읽는 기간 — "3시간 12분" 이 "11520초" 보다 판단에 쓸모 있다. */
+  function duration(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + "초";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + "분";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + "시간 " + (m % 60) + "분";
+    return Math.floor(h / 24) + "일 " + (h % 24) + "시간";
+  }
+
+  function parseTs(value) {
+    if (!value) return null;
+    var t = Date.parse(value);
+    return isNaN(t) ? null : t;
+  }
+
+  function totalOf(counts) {
+    if (!counts) return 0;
+    return counts.done + counts.pending + counts.in_progress + counts.failed + counts.blocked;
+  }
+
+  /**
+   * 진행률 막대 — done/전체를 한눈에, 그리고 **막힌 몫을 색으로 구분**한다.
+   * done 만 세면 blocked 가 쌓여 멈춘 프로젝트도 "거의 다 됐다" 로 보인다.
+   */
+  function progressBar(counts) {
+    var bar = document.createElement("div");
+    bar.className = "bar";
+    var total = totalOf(counts);
+    if (!total) return bar;
+    [["done", counts.done], ["progress", counts.in_progress],
+     ["failed", counts.failed], ["blocked", counts.blocked]].forEach(function (pair) {
+      if (!pair[1]) return;
+      var seg = document.createElement("span");
+      seg.className = "seg-" + pair[0];
+      seg.style.width = (pair[1] * 100 / total) + "%";
+      bar.append(seg);
+    });
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label",
+      "완료 " + counts.done + " / 전체 " + total +
+      (counts.blocked ? ", 막힘 " + counts.blocked : "") +
+      (counts.failed ? ", 실패 " + counts.failed : ""));
+    return bar;
+  }
+
   function renderProjects() {
     var list = $("projects");
     list.replaceChildren();
@@ -234,17 +289,64 @@ export const UI_HTML = `<!doctype html>
       var sub = document.createElement("div");
       sub.className = "muted mono";
       var bits = [];
-      if (p.counts) bits.push("done " + p.counts.done + "/" + (p.counts.done + p.counts.pending +
-        p.counts.in_progress + p.counts.failed + p.counts.blocked));
+      if (p.counts) {
+        var total = totalOf(p.counts);
+        bits.push("done " + p.counts.done + "/" + total +
+          (total ? " (" + Math.round(p.counts.done * 100 / total) + "%)" : ""));
+        if (p.counts.blocked) bits.push("막힘 " + p.counts.blocked);
+      }
       if (p.next_task) bits.push("다음 " + p.next_task);
       if (p.next_retry_at) bits.push("백오프 " + p.next_retry_at.slice(0, 19).replace("T", " "));
       if (p.deadlocked && p.deadlocked.length) bits.push("교착 " + p.deadlocked.length);
       setText(sub, bits.join(" · "));
 
-      li.append(top, sub);
+      li.append(top, progressBar(p.counts), sub);
       li.addEventListener("click", function () { select(p.id); });
       list.append(li);
     });
+  }
+
+  function progressText(p) {
+    var c = p.counts;
+    if (!c) return "장부를 읽을 수 없습니다 (" + p.ledger_state + ")";
+    var total = totalOf(c);
+    if (!total) return "작업 없음 — 적재 대기";
+    var text = c.done + "/" + total + " (" + Math.round(c.done * 100 / total) + "%)";
+    var rest = [];
+    if (c.in_progress) rest.push("진행 " + c.in_progress);
+    if (c.failed) rest.push("실패 " + c.failed);
+    if (c.blocked) rest.push("막힘 " + c.blocked);
+    if (c.pending) rest.push("대기 " + c.pending);
+    return rest.length ? text + " · " + rest.join(" · ") : text;
+  }
+
+  /**
+   * 지금 붙잡고 있는 작업과 경과 시간.
+   *
+   * 경과가 보여야 "돌고 있다" 와 "멈춰서 붙잡고 있다" 를 구분할 수 있다 — 종전에는
+   * 둘 다 그냥 in_progress 였다.
+   */
+  function currentTaskText(p) {
+    if (selected !== p.id) return "-";
+    var running = lastTasks.filter(function (t) { return t.status === "in_progress"; })[0];
+    if (!running) {
+      return p.next_task ? "대기 — 다음 " + p.next_task : "진행 중인 작업 없음";
+    }
+    var since = parseTs(running.started_at);
+    return running.id + (since ? " · " + duration(Date.now() - since) + " 경과" : "");
+  }
+
+  /** 다음 기동까지. 백오프 중이면 그쪽이 먼저다 — 주기가 와도 안 뜨기 때문이다. */
+  function nextRunText(p) {
+    var retry = parseTs(p.next_retry_at);
+    if (retry && retry > Date.now()) return "백오프 — " + duration(retry - Date.now()) + " 후";
+    if (p.status !== "active") return p.status + " — 자동 기동 대상 아님";
+    var last = parseTs(state.last_tick);
+    var mins = state.interval_minutes;
+    if (!last || !mins) return "tick 주기를 알 수 없습니다";
+    var due = last + mins * 60000;
+    return due > Date.now() ? duration(due - Date.now()) + " 후 (주기 " + mins + "분)"
+                            : "곧 (주기 " + mins + "분, 마지막 tick 이 지났습니다)";
   }
 
   function renderDetail() {
@@ -254,13 +356,15 @@ export const UI_HTML = `<!doctype html>
     document.querySelectorAll("[data-act]").forEach(function (b) { b.disabled = !p; });
     if (!p) { setText(box, "왼쪽에서 프로젝트를 고르십시오."); return; }
 
-    var rows = [
+    // "지금 무엇을 하는 중인가" 를 맨 앞에 둔다 — 이 화면을 여는 이유가 그것이다.
+    box.append(progressBar(p.counts));
+    var rows = [["진행", progressText(p)], ["지금", currentTaskText(p)], ["다음 기동", nextRunText(p)]];
+    rows = rows.concat([
       ["저장소", p.repo], ["상태", p.status], ["모델", p.model],
       ["연속 오류", String(p.consecutive_errors)], ["사용량 초과", String(p.limit_hits)],
-      ["다음 재시도", p.next_retry_at || "-"],
       ["마지막 기동", p.last_launch && p.last_launch.ts ? p.last_launch.ts + " (" + p.last_launch.result + ")" : "없음"],
       ["장부", p.ledger_state],
-    ];
+    ]);
     var dl = document.createElement("div");
     dl.className = "mono";
     rows.forEach(function (r) {
@@ -460,9 +564,25 @@ export const UI_HTML = `<!doctype html>
       td.colSpan = 5;
       td.className = "muted title";
       setText(td, t.title);
+      // 실패 원인 첫 줄은 클릭 없이 보인다 — "왜 멈췄나" 가 이 화면의 첫 질문이다.
+      // 전문은 여전히 '자세히' 에 있다(여기서 다 펴면 표를 읽을 수 없다).
+      if (t.last_error && t.status !== "done") {
+        var why = document.createElement("div");
+        why.className = "why mono";
+        setText(why, firstLine(t.last_error));
+        td.append(why);
+      }
       title.append(td);
       body.append(tr, title);
     });
+  }
+
+  /** 오류 요약의 첫 실질 줄. stage= 머리글만 보여 주면 원인이 안 보인다. */
+  function firstLine(text) {
+    var lines = String(text).split("\n").map(function (s) { return s.trim(); })
+      .filter(function (s) { return s && s.indexOf("stage=") !== 0; });
+    var head = lines[0] || String(text).trim().split("\n")[0] || "";
+    return head.length > 160 ? head.slice(0, 160) + "…" : head;
   }
 
   function message(text, isError) {
@@ -632,10 +752,26 @@ export const UI_HTML = `<!doctype html>
     });
   }
 
+  /**
+   * 머리글의 tick 표시 — 시각만 찍으면 그것이 방금인지 이틀 전인지 사람이 뺄셈해야 한다.
+   * 데몬이 멈췄는지 확인하러 오는 화면이므로 "얼마나 지났나" 가 곧 답이다.
+   */
+  function tickText(s) {
+    var last = parseTs(s.last_tick);
+    if (!last) return "tick 기록 없음";
+    var text = "마지막 tick " + duration(Date.now() - last) + " 전";
+    if (s.interval_minutes) {
+      var due = last + s.interval_minutes * 60000;
+      text += due > Date.now() ? " · 다음 " + duration(due - Date.now()) + " 후"
+                               : " · 다음 tick 이 지났습니다";
+    }
+    return text;
+  }
+
   function refresh() {
     return api("/api/status").then(function (s) {
       state = s;
-      setText($("tick"), s.last_tick ? "마지막 tick " + s.last_tick.slice(0, 19).replace("T", " ") : "tick 기록 없음");
+      setText($("tick"), tickText(s));
       if (selected && !s.projects.some(function (p) { return p.id === selected; })) selected = null;
       if (!selected && s.projects.length) selected = s.projects[0].id;
       renderProjects();
@@ -653,6 +789,8 @@ export const UI_HTML = `<!doctype html>
         renderBlockers(r.blockers || []);
         renderApprovals(r.tasks || []);
         fillConfig(r.commands, r.max_attempts);
+        // '지금' 줄은 작업 목록이 있어야 채워진다 — 목록이 온 뒤 한 번 더 그린다
+        renderDetail();
       })
       .catch(function (e) {
         renderTasks([]);

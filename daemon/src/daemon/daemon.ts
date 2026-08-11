@@ -192,6 +192,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<DaemonResu
           requestTick: async (projectId) => runTick({ ...options, env, log, onlyProject: projectId }),
           requestLaunch: async (projectId) =>
             runTick({ ...options, env, log, onlyProject: projectId, forceLaunch: true }),
+          intervalMinutes: interval, // 화면이 '다음 tick 까지' 를 계산하려면 주기를 알아야 한다
         },
         options.webPort ?? 0,
       );

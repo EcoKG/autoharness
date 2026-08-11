@@ -491,3 +491,31 @@ describe("설정 변경 API", () => {
     expect(r.status).toBe(400);
   });
 });
+
+/**
+ * 판정은 서버가 한다 — 화면이 규칙을 다시 쓰지 않게.
+ *
+ * "다음 tick 까지 얼마 남았나" 를 그리려면 `last_tick` 만으로는 안 된다. 주기를 모르면
+ * 화면은 마지막 시각만 찍고 끝나고, 브라우저가 15분을 하드코딩하면 --interval 로 바꾼
+ * 사용자에게 계속 틀린 값을 보여 준다.
+ */
+describe("tick 주기 노출", () => {
+  test("status 가 주기를 함께 준다", async () => {
+    await server.stop();
+    server = await createWebServer({ log, env, intervalMinutes: 7 }, 0);
+    base = `http://${BIND_HOST}:${server.port}`;
+    const body = (await (await fetch(`${base}/api/status`, { headers: auth() })).json()) as {
+      interval_minutes: number | null;
+      last_tick: string | null;
+    };
+    expect(body.interval_minutes).toBe(7);
+    expect(body).toHaveProperty("last_tick");
+  });
+
+  test("주기를 모르면 null 이다 — 기본값을 지어내지 않는다", async () => {
+    const body = (await (await fetch(`${base}/api/status`, { headers: auth() })).json()) as {
+      interval_minutes: number | null;
+    };
+    expect(body.interval_minutes).toBeNull();
+  });
+});
