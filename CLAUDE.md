@@ -7,7 +7,13 @@
 
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
 - 빌드: (없음 — 장부 commands.build=null, 테스트만 수행)
-- 테스트: `python scripts/run_checks.py` (init 때 1회 실측 검증된 명령: 컴파일 검사 → 엔진 selftest 15항목 → tests/ 단위 테스트 → 실행 중 설치본 동기화)
+- 테스트: `python scripts/run_checks.py` — 3단계다. ⓪게이트(py_compile 전량 + daemon
+  devDependency 확인, 직렬) → ①검증 단위 **병렬**(엔진 selftest 15항목 / tests 모듈마다 /
+  daemon 타입검사 / daemon 테스트 파일마다) → ②deploy(전 단계 통과 후 단독). 실측 2026-08-11:
+  직렬 131초 → 병렬 24초, 같은 집합·같은 판정. `--jobs N`·`--serial` 로 조절한다.
+  **매 실행마다 집합 대조를 한다** — 계획한 모듈·파일 집합과 실행한 테스트 수가 발견 집합과
+  어긋나면 통과가 아니라 실패다(샤드 누락 = 조용한 커버리지 축소).
+- 전제: bun(daemon 검증·빌드)과 `cd daemon && bun install`(타입 검사의 tsc 는 devDependency).
 - 린트: (없음)
 - 스코프 실행: test_cmd 에 `{path}` 치환 없음 — 항상 전역 검증이다.
 
@@ -20,6 +26,10 @@
   건드리지 않는다. 갱신은 마지막 작업(refresh-loop-engine)에서만 한다.
 - `%USERPROFILE%\.claude\skills\autoharness\` — **실행 중 설치본**. 직접 편집 금지.
   `run_checks.py` 의 마지막 단계(deploy_live)가 검증 통과분만 자동 반영한다.
+- `%USERPROFILE%\.claude\autoharness\bin\autoharness.exe` — **v2 실행 중 설치본**. 훅·MCP·
+  제어판을 실제로 실행하는 것은 이 EXE 다. deploy_live 가 daemon 소스 해시를 보고 바뀐
+  경우에만 다시 빌드해 교체한다. 데몬이 돌고 있으면 잠겨서 교체가 미뤄지는데, 그때는
+  검증을 실패시키지 않고 사유만 알린다(데몬 정지 후 다시 검증하면 반영된다).
 - `skill/SKILL.md`(개발본)이 설치본 `SKILL.md` 의 원본이다. 문서 수정도 개발본에서만.
 
 ## 3. 자가 치유 루프

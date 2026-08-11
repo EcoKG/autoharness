@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-11T04:39:13.309Z
+- 모델: claude-fable-5 / 갱신: 2026-08-11T04:43:17.870Z
 
-## 현황: done 108 / 110  (in_progress 0, failed 0, blocked 1, pending 1)
+## 현황: done 109 / 110  (in_progress 0, failed 0, blocked 1, pending 0)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -100,7 +100,7 @@
 | ts-hooks | G3 훅: 훅 3종 + brief 이식 — hook-prebash(금지 명령 게이트·커밋 게이트·발화 마커·하트비트), hook-postbash(커밋 SHA 동기화, prebash 마커로 새 커밋 생성 검증해 오귀속 방지), hook-stop(자율 주행 게이트, 진전 가드 3회). **게이트 처리는 컨텍스트가 정한다**: 헤드리스(CLAUDE_AUTOHARNESS=1)=deny(exit 2+stderr), 대화형·일시정지=ask(exit 0 + hookSpecificOutput.permissionDecision). 두 게이트가 같은 판정 함수를 쓴다. 훅은 fail-open 이되 침묵하지 않는다 — 하트비트 쓰기 실패 등은 stderr 에 남긴다. 발화 마커는 stdin 에 Claude Code 런타임 필드(session_id 등)가 있을 때만 기록한다(사람이 흉내 낸 호출과 구분). | ✅ done | 1/5 | 2e8ae01 | - |
 | tests-watchdog | 워치독 단위 테스트 구축 — is_usage_limited(429 문맥 오탐 포함)·backoff_pick·pid_alive·잠금 획득/사망 pid 탈취·handle_project 판단 순서(임시 --registry 오버라이드 + --dry-run)를 검증하는 tests/test_watchdog.py 작성. 실제 스케줄러 등록·claude 기동·실 레지스트리 접근 금지 | ✅ done | 0/5 | - | - |
 | ts-wiring-diagnosis | G3 훅: 훅 배선 진단 이식 — 등록 여부 × 발화 마커로 not_registered/active/inactive 를 판정하고, matcher 커버리지(명령 실행 도구 전부를 덮는가), 부분 등록(누락된 훅), 설정 파일 상태(ok/missing/corrupt)를 함께 보고한다. 설정 파손을 '미등록(수동 운용)'으로 오판하지 않아야 한다. 훅을 등록하지 않은 저장소는 경고 대상이 아니다(오탐 금지). 경고만 하고 주행을 막지 않는다. | ✅ done | 0/5 | 72d2960 | - |
-| docs-speed-ui-sync | 이번 라운드 반영과 문서-실제 교차 검증 — 검증 파이프라인이 병렬 구조로 바뀌고, 배선 진단에 상태가 하나 늘고, 부트스트랩 계약과 제어판 화면 구성이 바뀌었다. DESIGN.md·daemon/DESIGN.md·README.md 에 ① 병렬 실행 구조와 실측 전후 수치(직렬 약 124초 기준선, 최장 불가분 단위와 그것이 정하는 하한), --jobs·--serial 표면, 실행 집합 동일성 검증 규칙 ② 배선 진단의 새 상태와 판정 근거 ③ 부트스트랩 프롬프트가 지시하는 CLI 표면 ④ 제어판 화면 구성 갱신 ⑤ 검증 전제(bun 과 daemon devDependency) 를 반영할 것. 문서에만 있고 코드에 없는 서술, 코드에 있는데 문서에 없는 표면이 남지 않도록 교차 검증하고, 이 저장소가 이미 갖고 있는 문서 드리프트 회귀 테스트 방식으로 고정할 것. | ⏳ pending | 0/5 | - | - |
+| docs-speed-ui-sync | 이번 라운드 반영과 문서-실제 교차 검증 — 검증 파이프라인이 병렬 구조로 바뀌고, 배선 진단에 상태가 하나 늘고, 부트스트랩 계약과 제어판 화면 구성이 바뀌었다. DESIGN.md·daemon/DESIGN.md·README.md 에 ① 병렬 실행 구조와 실측 전후 수치(직렬 약 124초 기준선, 최장 불가분 단위와 그것이 정하는 하한), --jobs·--serial 표면, 실행 집합 동일성 검증 규칙 ② 배선 진단의 새 상태와 판정 근거 ③ 부트스트랩 프롬프트가 지시하는 CLI 표면 ④ 제어판 화면 구성 갱신 ⑤ 검증 전제(bun 과 daemon devDependency) 를 반영할 것. 문서에만 있고 코드에 없는 서술, 코드에 있는데 문서에 없는 표면이 남지 않도록 교차 검증하고, 이 저장소가 이미 갖고 있는 문서 드리프트 회귀 테스트 방식으로 고정할 것. | ✅ done | 0/5 | - | - |
 | tests-mcp-protocol | MCP 프로토콜 단위 테스트 구축 — bin/harness_mcp.py 를 서브프로세스 stdio 파이프로 띄워 initialize/ping/tools/list(14종)/미지 메서드(-32601)/tools/call(harness_detect) 왕복을 실측하는 tests/test_mcp_protocol.py 작성. 사용자 레지스트리·설치본 오염 금지(읽기 전용 도구만 호출) | ✅ done | 0/5 | - | - |
 | ts-mcp-server | G4 MCP: JSON-RPC 2.0 stdio 서버와 도구 14종 — 개행 구분 JSON-RPC, initialize/ping/tools/list/tools/call 처리, notification(id 없음)은 무응답, 미지 request 는 -32601, 잘못된 줄에도 크래시 금지. 도구 이름과 입출력은 daemon/DESIGN.md 4절 목록 그대로 유지한다(외부 계약). 데몬이 떠 있으면 로컬 HTTP 로 위임하고, 없으면 인프로세스로 직접 수행하는 폴백을 갖춘다 — 두 경로의 결과가 같아야 한다. harness_run 만은 실제 종료 코드(0/1/2/3/4)를 그대로 전달한다. | ✅ done | 0/5 | 1647746 | - |
 | docs-consistency | 문서 정합화 — selftest '7종/15항목' 표기 통일(DESIGN §4·§13, install.sh 메시지 기준), 이번 라운드 수정·신규 기능(자기 의존 거부, SHA 오귀속 방지, 재시도, 작업별 test_cmd, completed 재활성화, 하트비트 보강)을 DESIGN.md·README.md·skill/SKILL.md 에 반영하고 종료 코드·경로 계약 교차 검증 | ✅ done | 0/5 | - | - |

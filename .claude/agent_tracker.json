@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T04:39:13.306Z",
+  "updated_at": "2026-08-11T04:43:17.867Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1733,13 +1733,13 @@
         "web-operability"
       ],
       "priority": 90,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/docs-speed-ui-sync-20260811T044251Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-11T04:42:51.124Z",
+      "finished_at": "2026-08-11T04:43:17.867Z",
       "test_cmd": null
     },
     {

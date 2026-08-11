@@ -83,6 +83,8 @@ const PARITY_MAP: Record<string, readonly string[]> = {
   "test_run_checks_parallel.py": [],
   // deploy_live 도 이 저장소의 배포 스크립트다(v2 EXE 를 만들어 설치본에 넣는 쪽).
   "test_deploy_live_v2.py": [],
+  // 문서-실제 교차 검증은 저장소 전체 문서를 대상으로 하므로 v1 쪽이 소유한다.
+  "test_docs_drift.py": [],
   "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
   "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],
   // 스킬 문서는 v1 자산이라 v1 테스트가 계속 소유한다(v2 는 스킬을 배치만 한다)
