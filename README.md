@@ -120,10 +120,22 @@ curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh |
 ```
 
 자동 시작까지 걸려면 `--v2 --autostart` 를 주십시오. Bun 도 파이썬도 필요 없습니다 —
-플랫폼(linux/darwin × x64/arm64)에 맞는 바이너리를 받아 **SHA256 으로 검증한 뒤에만**
-설치합니다. 체크섬이 어긋나거나 산출물을 받지 못하면 **아무것도 설치하지 않고 중단**합니다.
+플랫폼에 맞는 바이너리를 받아 **SHA256 으로 검증한 뒤에만** 설치합니다. 체크섬이 어긋나거나
+산출물을 받지 못하면 **아무것도 설치하지 않고 중단**합니다.
 
-사내 미러나 오프라인 배포는 `AUTOHARNESS_RELEASE_BASE` 로 기점을 바꾸십시오.
+지원 플랫폼: linux(x64·arm64) · macOS(arm64·x64) · **Windows(x64)**.
+Windows 에서 이 명령은 Git Bash 에서 실행하십시오.
+
+### Windows — PowerShell (Git Bash 없이)
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -V2
+```
+
+저장소를 받은 뒤 실행합니다. bash 경로와 같은 계약입니다 — 체크섬 대조와 실행 확인을
+통과한 것만 설치 위치에 놓습니다.
+
+사내 미러나 오프라인 배포는 `AUTOHARNESS_RELEASE_BASE` 로 기점을 바꾸십시오(두 경로 모두).
 
 ### 소스에서 빌드하기
 
@@ -188,11 +200,13 @@ curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh |
 autoharness daemon &
 ```
 
-Windows(PowerShell)에서는 이렇게 멈춥니다:
+Windows 에서는 `pkill` 이 Windows 프로세스를 보지 못합니다. PowerShell 이라면:
 
 ```bash
 powershell -Command "Get-Process autoharness -ErrorAction SilentlyContinue | Stop-Process -Force"
 ```
+
+Git Bash 라면 `taskkill /F /IM autoharness.exe` 입니다 — 설치기도 이 명령을 안내합니다.
 
 자동 시작을 등록해 뒀다면 다시 띄울 필요 없이 다음 로그온에 새 버전으로 올라옵니다.
 잠금 때문에 실패하면 설치기가 멈출 대상과 명령을 함께 알려 줍니다.
