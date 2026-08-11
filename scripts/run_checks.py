@@ -15,6 +15,8 @@ bin/ 원본이 일시적으로 깨져도 루프는 멈추지 않는다.
 """
 
 import argparse
+import io
+import json
 import os
 import py_compile
 import shutil
@@ -92,6 +94,35 @@ def _find_bun():
     return candidate if os.path.exists(candidate) else None
 
 
+TSC_MISSING_MARK = "command not found: tsc"
+DEPS_FIX_HINT = ("해결: cd daemon && bun install  "
+                 "— 빌드에는 devDependency 가 필요 없지만(런타임 의존성 0) "
+                 "타입 검사는 tsc 를 쓰므로 필요합니다")
+
+
+def daemon_missing_dev_deps(daemon_dir):
+    """package.json 이 요구하는 devDependency 중 node_modules 에 없는 것(정렬).
+
+    도구 부재와 실제 타입 오류는 처방이 정반대다 — 전자는 `bun install`, 후자는 코드 수정.
+    한데 뭉치면 새로 클론한 사람이 원인을 알 수 없다(실측: 2026-08-11, tsc 부재로 검증
+    자체가 통과 불능인데 출력은 "daemon typecheck 실패 (exit 1)" 한 줄뿐이었다).
+
+    **판정 불가면 빈 목록을 돌려준다**(오탐 금지) — package.json 을 못 읽는 것을 근거로
+    "의존성이 없다"고 단정하지 않는다."""
+    pkg = os.path.join(daemon_dir, "package.json")
+    try:
+        with io.open(pkg, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    dev = data.get("devDependencies")
+    if not isinstance(dev, dict) or not dev:
+        return []
+    node_modules = os.path.join(daemon_dir, "node_modules")
+    return sorted(name for name in dev
+                  if not os.path.isdir(os.path.join(node_modules, *name.split("/"))))
+
+
 def stage_daemon():
     """v2 TypeScript 데몬 검증 — 타입 검사 + 단위 테스트.
 
@@ -107,15 +138,32 @@ def stage_daemon():
         print("[checks][ERROR] daemon/src 가 있는데 bun 을 찾을 수 없습니다. "
               "https://bun.sh 설치 후 다시 실행하십시오 (건너뛰면 v2 코드가 무검증으로 통과합니다)")
         return False
+
+    missing = daemon_missing_dev_deps(daemon_dir)
+    if missing:
+        print("[checks][ERROR] daemon devDependency 미설치: %s" % ", ".join(missing))
+        print("[checks][ERROR] %s" % DEPS_FIX_HINT)
+        return False
+
     for label, argv in (("typecheck", [bun, "run", "typecheck"]),
                         ("bun test", [bun, "test"])):
         try:
-            r = subprocess.run(argv, cwd=daemon_dir, timeout=600)
+            # 출력은 그대로 흘리되 도구 부재 신호를 보기 위해 손에도 쥔다.
+            r = subprocess.run(argv, cwd=daemon_dir, timeout=600, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             print("[checks][ERROR] daemon %s 가 600초를 초과했습니다" % label)
             return False
+        output = (r.stdout or "") + (r.stderr or "")
+        sys.stdout.write(output)
         if r.returncode != 0:
-            print("[checks][ERROR] daemon %s 실패 (exit %d)" % (label, r.returncode))
+            # node_modules 가 있어도 깨져 있으면 위 사전 검사를 통과한다 — 그때의 안전망
+            if TSC_MISSING_MARK in output:
+                print("[checks][ERROR] daemon %s 실패 — tsc 를 찾을 수 없습니다"
+                      "(타입 오류가 아니라 도구 부재입니다)" % label)
+                print("[checks][ERROR] %s" % DEPS_FIX_HINT)
+            else:
+                print("[checks][ERROR] daemon %s 실패 (exit %d)" % (label, r.returncode))
             return False
     return True
 

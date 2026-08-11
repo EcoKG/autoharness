@@ -77,6 +77,9 @@ const PARITY_MAP: Record<string, readonly string[]> = {
   // 다만 릴리스 산출물 이름은 양쪽이 맞아야 하므로 그 대조는 파이썬 테스트가 직접 한다.
   "test_release_install.py": [],
   "test_registry_lock.py": ["filelock.test.ts"],
+  // scripts/run_checks.py 는 **이 저장소의 검증 파이프라인**이지 하네스 기능이 아니다.
+  // v2 는 사용자가 준 test 명령을 실행할 뿐 그 안을 모른다 — 대응물이 있을 자리가 없다.
+  "test_run_checks_deps.py": [],
   "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
   "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],
   // 스킬 문서는 v1 자산이라 v1 테스트가 계속 소유한다(v2 는 스킬을 배치만 한다)

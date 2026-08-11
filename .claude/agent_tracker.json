@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T03:58:27.091Z",
+  "updated_at": "2026-08-11T04:06:50.873Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1649,13 +1649,13 @@
       "path": "scripts/run_checks.py",
       "deps": [],
       "priority": 10,
-      "status": "pending",
-      "attempts": 0,
+      "status": "done",
+      "attempts": 1,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/fix-daemon-deps-guard-20260811T040441Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-11T04:01:55.515Z",
+      "finished_at": "2026-08-11T04:06:50.873Z",
       "test_cmd": null
     },
     {

@@ -88,7 +88,7 @@ zsh 는 `~/.zshrc`, fish 는 `fish_add_path ~/.claude/autoharness/bin` 입니다
 |---|---|---|
 | claude CLI | MCP 등록·세션 재기동에 필요 | `claude --version` |
 | Python | v1 을 쓰거나 v2 를 빌드하지 않을 때 3.8+ (stdlib 만) | `python --version` |
-| Bun | v2 를 직접 빌드할 때만 | `bun --version` |
+| Bun | v2 를 직접 빌드하거나 검증할 때만 | `bun --version` |
 
 ## v1 설치 (Python — 가장 간단)
 
@@ -147,7 +147,15 @@ cd daemon && bun run build
 ./dist/autoharness.exe install --exe "$PWD/dist/autoharness.exe" --skill ../skill --autostart
 ```
 
-`bun install` 은 필요 없습니다 — 런타임 의존성이 없어 클론 직후 바로 빌드됩니다.
+**빌드에는** `bun install` 이 필요 없습니다 — 런타임 의존성이 없어 클론 직후 바로 빌드됩니다.
+
+**검증에는 필요합니다.** 타입 검사(`bun run typecheck`)가 쓰는 `tsc` 는 devDependency 라
+설치하지 않으면 `command not found: tsc` 로 실패합니다. 이 저장소를 직접 개발한다면
+한 번 받아 두십시오 — 안 받으면 `python scripts/run_checks.py` 가 통과할 수 없습니다.
+
+```bash
+cd daemon && bun install
+```
 
 `bun run ... install` 형태로 부를 때는 `--exe` 가 **필수**입니다. 그때 `process.execPath` 가
 **bun 자신**이라 런타임을 복사하게 됩니다(설치기가 원본을 실행해 버전을 확인하므로 거부되긴
