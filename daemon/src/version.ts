@@ -10,4 +10,4 @@
  *
  * 훅 시작 시간이 계약이라 이 모듈은 상수 하나만 둔다 — 무엇도 import 하지 않는다.
  */
-export const VERSION = "2.0.1";
+export const VERSION = "2.1.0";

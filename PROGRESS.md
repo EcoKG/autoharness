@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-11T05:41:24.191Z
+- 모델: claude-fable-5 / 갱신: 2026-08-11T14:23:30.654Z
 
-## 현황: done 114 / 115  (in_progress 0, failed 0, blocked 1, pending 0)
+## 현황: done 115 / 116  (in_progress 0, failed 0, blocked 1, pending 0)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -42,6 +42,7 @@
 | readme-install-guide | README 설치·사용 안내 재구성 — 실행 환경별(데스크톱 앱 / CLI 터미널 / WSL·리눅스) 설치 절차를 분리해 제시하고, 설치 이후는 환경 무관 공통 사용법으로 합치기. 현재 README 는 'Linux/WSL 원라인'과 'Windows 체크아웃' 두 절뿐이라 데스크톱 앱 사용자가 어디서 무엇을 실행해야 하는지 알 수 없다. 실측 근거: install.ps1 은 $PSScriptRoot 기준이라 다운로드 경로가 없어 체크아웃이 필수인 반면 install.sh 는 curl 파이프로 타르볼을 받는다. 설치본은 ~/.claude/skills/autoharness 와 사용자 스코프 MCP 로 계정당 하나이므로 데스크톱·CLI·IDE 확장이 공유한다. 포함할 것: ① 준비물(Python 3.8+, claude CLI) ② 환경별 설치 3종과 워치독 등록 차이(작업 스케줄러 대 cron) ③ 설치 확인 절차 ④ 공통 사용법 ⑤ 훅이 죽는 두 조건 경고 — 저장소 루트가 아닌 상위 폴더를 프로젝트로 열면 .claude/settings.json 이 로드되지 않는다는 점과 그 경우 status 의 hooks.state 가 inactive 로 알린다는 점 | ✅ done | 0/5 | c9b94fa | - |
 | refresh-loop-engine-audit-round | 주행용 엔진 사본 재갱신 — 적대 검증 라운드의 엔진 변경(토큰 판정기 강화, 금지 범위 재구성, 커밋 게이트 범위, 조용한 실패 3건, 배선 진단 사각)을 scripts/ 고정 사본에 반영한다. 저장소의 훅이 실행하는 것은 이 사본이므로 갱신 전에는 이 저장소 자신의 게이트가 구버전으로 동작한다. 갱신 후 실측 확인: 새 차단 대상(gh 쓰기·branch -D·restore)이 실제 훅에서 걸리는지, 오탐 대상이 통과하는지, hooks.state 가 active 이고 missing_hooks 가 비었는지. | ✅ done | 0/5 | 2b8e38f | - |
 | refresh-loop-engine-detection | 주행용 엔진 사본 재갱신 — 훅 배선 비활성 감지가 반영된 bin/harness_engine.py 를 scripts/ 고정 사본으로 복사한다. 이번 라운드에서 등록된 훅(python scripts/harness_engine.py hook-*)이 실행하는 것은 이 사본이므로, 갱신 전에는 발화 마커(.claude/harness-hooks-seen.json)가 기록되지 않아 이 저장소 자신의 배선 진단이 inactive 로 오보고된다. 갱신 후 status 의 hooks 필드가 active 로 뒤집히는지 실측 확인할 것. | ✅ done | 0/5 | dd46b43 | - |
+| release-v2.1.0 | v2.1.0 릴리스 — 두 라운드(속도·UI/UX, 배포 경계)의 결과를 공개 배포본에 반영한다. 현재 VERSION 은 2.0.1 이고 같은 이름의 태그가 이미 있어 그대로는 릴리스할 수 없다. 변경 성격은 minor 다: 기능 추가(검증 병렬화 --jobs/--serial, 배선 진단 broken_path 상태, deadPath 마이그레이션 복구, /api/status 의 interval_minutes, 제어판 진행률·조작성, v2 EXE 자동 배포, 배포 명세 단일화)와 필드 추가뿐이고 종료 코드·장부 스키마·MCP 도구 이름 같은 계약은 그대로다. 요구: ① 버전 선언 두 곳(daemon/src/version.ts, daemon/package.json)을 2.1.0 으로 올릴 것 — 어긋나면 기존 테스트가 잡는다 ② 전체 검증을 통과시킬 것 ③ bun run release 로 다섯 플랫폼 산출물과 SHA256SUMS 를 만들고, 자산 이름이 install.sh 의 판정과 일치하는지(TARGETS 의 asset 이름) 실측 확인할 것 — 어긋나면 '릴리스는 있는데 받지 못하는' 조용한 실패가 된다 ④ 산출물 크기·체크섬을 보고에 남길 것 ⑤ 릴리스 노트는 사용자가 무엇을 얻는지와 **행동이 필요한 변경**(설정 파일을 추적에서 뺀 것, 새 기계에서 install --migrate 한 번 필요)을 명시할 것. | ✅ done | 0/5 | - | - |
 | skill-mode-routing | 스킬 모드 라우팅 결함 수정 — 모드 표가 메커니즘 어휘("하네스 구축")로만 매칭해 결과 서술형 요청("검증하고 문제 있으면 수정", "master 승격 가능한지 확인")이 어느 모드에도 안 걸리고, 매칭 실패 시 폴백 조항이 없어 에이전트가 장부·커밋 게이트·훅 없이 맨손 작업으로 빠짐(실사용 실측). ① 모드 표를 의도 기반으로 재작성(결과 서술형 트리거 추가, 장부 유무로 init↔task_add+resume 분기) ② 폴백 조항 명문화(맨손 다단계 작업 금지) ③ frontmatter description 에도 결과 서술형 트리거 반영 ④ 엔진에 build_parser() 추출 후 tests/test_skill_contract.py 로 계약 회귀 검증(4모드·종료코드표↔엔진 상수·폴백 조항·폴백 표↔실제 CLI 표면 일치) | ✅ done | 1/5 | - | - |
 | tests-engine-hooks | 엔진 훅 단위 테스트 구축 — hook-prebash(금지 명령 차단·커밋 게이트)·hook-stop(6단계 게이트·진전 가드)·hook-postbash(SHA 동기화)를 stdin JSON 실측으로 검증하는 tests/test_engine_hooks.py 작성. 임시 샌드박스 저장소 사용, 실제 저장소·사용자 상태 오염 금지 | ✅ done | 0/5 | - | - |
 | ts-toolchain | G1 기반: Bun 도입과 프로젝트 스캐폴딩 — 이 PC 에 Bun 이 없다(실측: node v24.13.0/npm 11.6.2 만 있음). daemon/ 아래 Bun 프로젝트를 세운다: package.json, tsconfig(strict), 테스트 러너(bun test), 린트/포맷 최소 설정, 그리고 `bun build --compile` 로 EXE 가 실제로 나오는지 최소 예제로 확인한다. 산출물 크기·빌드 시간·콜드 스타트를 실측해 기록할 것 — daemon/DESIGN.md 3절의 훅 시작 예산(p95 150ms) 달성 가능 여부를 여기서 판단한다. 달성 불가로 보이면 그 사실을 근거와 함께 남기고 훅 위임 경로를 별도 작업으로 제안한다. 검증 명령은 이 단계에서 daemon 테스트를 포함하도록 scripts/run_checks.py 에 배선한다(파이썬 검증은 그대로 유지). | ✅ done | 0/5 | 017d456 | - |
