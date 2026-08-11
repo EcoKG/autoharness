@@ -48,16 +48,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 같은 일시적 잠금에서 여기만 실패한다.
 sys.path.insert(0, os.path.join(REPO, "bin"))
 import harness_engine as eng  # noqa: E402
-DST = os.path.join(os.path.expanduser("~"), ".claude", "skills", "autoharness")
 
-# (개발 사본 상대경로, 설치본 상대경로) — 존재하지 않는 원본은 건너뛴다(install.sh 등 OS별 선택 파일)
-ROOT_MAPPING = [
-    ("skill/SKILL.md", "SKILL.md"),
-    ("DESIGN.md", "DESIGN.md"),
-    ("README.md", "README.md"),
-    ("install.ps1", "install.ps1"),
-    ("install.sh", "install.sh"),
-]
+# 무엇을 배포하고 무엇은 절대 배포하지 않는가 — 정의는 여기 한 곳뿐이다.
+# 두 번째 목록을 여기에 두지 않는다(그것이 세 구현이 갈라진 원인이다).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deploy_manifest import deploy_pairs, scan_forbidden  # noqa: E402
+
+DST = os.path.join(os.path.expanduser("~"), ".claude", "skills", "autoharness")
 
 
 def md5(path):
@@ -242,16 +239,12 @@ def main():
         print("[deploy][ERROR] 설치본이 없습니다: %s — install.ps1 로 최초 설치가 선행돼야 합니다" % DST)
         return 2
 
-    pairs = list(ROOT_MAPPING)
-    for sub in ("bin", "templates"):
-        srcdir = os.path.join(REPO, sub)
-        if not os.path.isdir(srcdir):
-            continue
-        for name in sorted(os.listdir(srcdir)):
-            if name == "__pycache__" or name.endswith(".pyc"):
-                continue
-            if os.path.isfile(os.path.join(srcdir, name)):
-                pairs.append((sub + "/" + name, sub + "/" + name))
+    pairs, skipped = deploy_pairs(REPO)
+    if skipped:
+        # 조용히 빼지 않는다 — 무엇이 왜 빠졌는지 보여야 명세가 틀렸을 때 드러난다
+        print("[deploy] 배포 대상에서 제외 %d건:" % len(skipped))
+        for rel, why in skipped:
+            print("         - %s — %s" % (rel, why))
 
     copied, same, failed = [], [], []
     for rel_src, rel_dst in pairs:
@@ -278,6 +271,18 @@ def main():
             print("[deploy][ERROR] 복사 실패: %s — %s" % (rel_dst, why))
         return 1
     print("[deploy] 스킬 자산 동기화 완료: %s" % DST)
+
+    # 과거 설치가 남긴 것은 지금 규칙으로 저절로 사라지지 않는다. 알리기만 하고 지우지
+    # 않는다 — 사용자 계정의 파일을 배포 스크립트가 임의로 지우지 않는다.
+    stale = scan_forbidden(DST)
+    if stale:
+        print("[deploy][주의] 설치본에 배포 대상이 아닌 항목이 %d건 있습니다(과거 설치의 잔재):"
+              % len(stale))
+        for rel, why in stale[:10]:
+            print("              - %s — %s" % (rel, why))
+        if len(stale) > 10:
+            print("              … 외 %d건" % (len(stale) - 10))
+        print("              지우려면 직접 확인 후 삭제하십시오: %s" % DST)
 
     if a.no_v2:
         print("[deploy] --no-v2 — EXE 단계 생략")
