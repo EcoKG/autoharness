@@ -4,9 +4,9 @@
 
 - 목표: 결함 탐색·개선으로 프로젝트 고도화 — 매 작업 검증(컴파일→selftest→단위테스트) 통과 시 실행 중 설치본에 즉시 반영
 - 이식: Python 3.9 stdlib (CLI 엔진 + MCP 서버 + 워치독, Windows/WSL) → 동일 스택 — 결함 수정·테스트 확충·신뢰성/운영성 고도화
-- 모델: claude-fable-5 / 갱신: 2026-08-11T04:22:56.491Z
+- 모델: claude-fable-5 / 갱신: 2026-08-11T04:29:53.351Z
 
-## 현황: done 105 / 110  (in_progress 0, failed 0, blocked 1, pending 4)
+## 현황: done 106 / 110  (in_progress 0, failed 0, blocked 1, pending 3)
 
 | ID | 제목 | 상태 | 시도 | 커밋 | 비고 |
 |---|---|---|---|---|---|
@@ -81,7 +81,7 @@
 | web-blocked-summary | 막힌 곳 요약 — blocked·한도 임박·교착을 사유와 함께. 판정은 서버가 하고 화면은 그리기만 | ✅ done | 2/5 | ca14ede | - |
 | web-console-filter | 콘솔 필터·검색·고정 — 저장소가 여럿이면 지금은 읽을 수 없다 | ✅ done | 1/5 | dce6db3 | - |
 | web-session-log-viewer | 세션·검증 로그 뷰어 — 이미 구현된 API 를 UI 가 한 번도 부르지 않고 있었다 | ✅ done | 0/5 | 2fe5e62 | - |
-| deploy-live-v2-exe | 검증 통과분이 실행 중 설치본에 반영되지 않는다 — v2 마이그레이션 이후 절반만 동작하는 계약. 이 저장소의 목표는 "매 작업 검증 통과 시 실행 중 설치본에 즉시 반영"인데, deploy_live.py 는 v1 자산(skill/SKILL.md, bin/*.py, templates/*, 문서·설치기)만 ~/.claude/skills/autoharness/ 로 복사한다. 정작 지금 실행되는 것은 ~/.claude/autoharness/bin/autoharness.exe 인데 그 EXE 는 아무도 갱신하지 않는다. 실측(2026-08-11): 배선 진단에 broken_path 를 넣고 검증을 통과시킨 직후에도 status 는 여전히 구버전 판정(inactive)을 냈다 — 훅·MCP·제어판이 전부 옛 코드로 돈다. 즉 daemon/ 을 고치는 모든 작업의 결과가 사람이 보는 자리에는 도달하지 않으며, 제어판 UI 작업은 화면에서 확인조차 할 수 없다. 요구: ① daemon/src 가 바뀐 경우에만 EXE 를 다시 빌드해 설치본에 반영할 것 — 매번 94MiB 를 복사하면 이번 라운드가 줄인 시간을 도로 까먹는다(변경 판정 근거는 소스 해시 등 실측 가능한 것으로) ② 데몬이 실행 중이면 Windows 에서 EXE 가 잠겨 교체가 실패한다 — 실패를 삼키지 말고 사유와 조치를 알릴 것(예: 데몬 정지 후 재시도). 검증 자체를 실패로 만들지는 말 것, 배포는 검증 뒤 별개 단계다 ③ bun 이 없거나 빌드가 실패하면 조용히 건너뛰지 말 것 ④ 기본 동작과 생략 플래그를 명확히 하고 run_checks 의 마지막 단계 계약(전 단계 통과 후 단독 실행)을 유지할 것 ⑤ 회귀 테스트로 고정할 것. | ⏳ pending | 0/5 | - | - |
+| deploy-live-v2-exe | 검증 통과분이 실행 중 설치본에 반영되지 않는다 — v2 마이그레이션 이후 절반만 동작하는 계약. 이 저장소의 목표는 "매 작업 검증 통과 시 실행 중 설치본에 즉시 반영"인데, deploy_live.py 는 v1 자산(skill/SKILL.md, bin/*.py, templates/*, 문서·설치기)만 ~/.claude/skills/autoharness/ 로 복사한다. 정작 지금 실행되는 것은 ~/.claude/autoharness/bin/autoharness.exe 인데 그 EXE 는 아무도 갱신하지 않는다. 실측(2026-08-11): 배선 진단에 broken_path 를 넣고 검증을 통과시킨 직후에도 status 는 여전히 구버전 판정(inactive)을 냈다 — 훅·MCP·제어판이 전부 옛 코드로 돈다. 즉 daemon/ 을 고치는 모든 작업의 결과가 사람이 보는 자리에는 도달하지 않으며, 제어판 UI 작업은 화면에서 확인조차 할 수 없다. 요구: ① daemon/src 가 바뀐 경우에만 EXE 를 다시 빌드해 설치본에 반영할 것 — 매번 94MiB 를 복사하면 이번 라운드가 줄인 시간을 도로 까먹는다(변경 판정 근거는 소스 해시 등 실측 가능한 것으로) ② 데몬이 실행 중이면 Windows 에서 EXE 가 잠겨 교체가 실패한다 — 실패를 삼키지 말고 사유와 조치를 알릴 것(예: 데몬 정지 후 재시도). 검증 자체를 실패로 만들지는 말 것, 배포는 검증 뒤 별개 단계다 ③ bun 이 없거나 빌드가 실패하면 조용히 건너뛰지 말 것 ④ 기본 동작과 생략 플래그를 명확히 하고 run_checks 의 마지막 단계 계약(전 단계 통과 후 단독 실행)을 유지할 것 ⑤ 회귀 테스트로 고정할 것. | ✅ done | 1/5 | - | - |
 | apply-gate-fixes-to-self | 이번 라운드 게이트 수정을 이 저장소 자신에게 적용 — 주행용 고정 사본 갱신 + settings.json matcher 마이그레이션. 저장소의 훅이 실행하는 것은 scripts/harness_engine.py 고정 사본이라, bin/ 원본을 아무리 고쳐도 이 저장소 자신의 게이트는 구버전으로 동작한다. 실측 증거: 토큰 판정을 도입한 뒤에도 진단 명령·커밋 명령·작업 등록 명령이 계속 오탐 차단됐다. 순서가 중요하다 — 사본 갱신을 먼저 하고 matcher 를 넓혀야 한다. 반대로 하면 새로 포함된 PowerShell 경로에서 구버전 하드 차단이 걸린다. 수행: ① bin/harness_engine.py 를 scripts/ 로 복사 ② harness_mcp.merge_settings 로 이 저장소의 .claude/settings.json matcher 를 Bash|PowerShell 로 마이그레이션(백업 포함) ③ 실측 검증 — 종전 오탐 명령이 통과하는지, 대화형에서 금지 명령이 하드 차단이 아니라 승인 요청으로 뜨는지, hooks.state 가 active 이고 uncovered_tools 가 비었는지 확인. | ✅ done | 0/5 | 09dca87 | - |
 | config-task-priority-deps | 작업 우선순위·의존성을 나중에 바꿀 수단 추가 — 자동화 제어의 핵심인데 추가할 때만 정할 수 있었다 | ✅ done | 0/5 | f2600b3 | - |
 | fix-model-recommend-lang | model_recommend 언어 전환 오탐 수정 — 스택명이 비ASCII(한글 등)면 lang() 이 빈 문자열을 반환해 '언어 간 이식(+3)' 이 잘못 가산됨(이번 init 에서 실측). 한쪽 언어 토큰이 비어 있으면 가산하지 않도록 수정 + 회귀 테스트 | ✅ done | 0/5 | - | - |

@@ -35,7 +35,17 @@ async function invoke(args: string[]): Promise<{ code: number; stdout: string; s
   return { code: await proc.exited, stdout, stderr };
 }
 
-export async function runSelftest(): Promise<{ checks: Check[]; allOk: boolean }> {
+/**
+ * 자가 검증 15항목.
+ *
+ * 쓴 샌드박스 경로를 돌려준다 — 호출자(테스트)가 **그 경로가** 지워졌는지 정확히 확인할
+ * 수 있어야 하기 때문이다. 종전 테스트는 tmpdir 안의 `autoharness-selftest-*` 개수를
+ * 세어 판정했는데, 같은 접두사를 v1 파이썬 selftest(bin/harness_engine.py)도 쓰므로
+ * 둘이 동시에 돌면 남의 진행 중 디렉토리를 내 누수로 오판했다(실측: 검증 파이프라인을
+ * 병렬화하자 곧바로 재현). 개수 세기는 반대 방향으로도 약하다 — 내가 흘려도 남이 둘을
+ * 치우면 통과한다.
+ */
+export async function runSelftest(): Promise<{ checks: Check[]; allOk: boolean; sandbox: string }> {
   const checks: Check[] = [];
   const add = (name: string, ok: boolean, detail = "") => checks.push({ name, ok, detail });
 
@@ -104,7 +114,7 @@ export async function runSelftest(): Promise<{ checks: Check[]; allOk: boolean }
     add("7-cleanup", !(await Bun.file(repoPaths(sandbox).tracker).exists()), sandbox);
   }
 
-  return { checks, allOk: checks.every((c) => c.ok) };
+  return { checks, allOk: checks.every((c) => c.ok), sandbox };
 }
 
 export async function cmdSelftest(): Promise<number> {
