@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-12T03:41:01.485Z",
+  "updated_at": "2026-08-12T03:42:07.427Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1964,7 +1964,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/v1-drop-docs-20260812T034034Z.log",
-      "commit": null,
+      "commit": "d9162fd",
       "started_at": "2026-08-12T03:40:34.630Z",
       "finished_at": "2026-08-12T03:41:01.485Z",
       "test_cmd": null
@@ -1977,13 +1977,13 @@
         "v1-drop-docs"
       ],
       "priority": 70,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/release-v3.0.0-20260812T034140Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-12T03:41:40.622Z",
+      "finished_at": "2026-08-12T03:42:07.427Z",
       "test_cmd": null
     }
   ]
