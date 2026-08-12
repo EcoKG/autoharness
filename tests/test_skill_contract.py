@@ -9,31 +9,46 @@
 여기서 고정하는 계약:
   ① frontmatter·모드 표가 결과 서술형 요청을 트리거로 포함한다
   ② 모드 판정 원칙에 장부 기반 폴백과 맨손 주행 금지가 명시돼 있다
-  ③ 종료 코드 표가 엔진 상수와 일치한다
-  ④ 폴백 표의 서브커맨드·옵션이 실제 CLI 표면(build_parser)과 일치하고, 훅을 제외한
-     모든 서브커맨드가 문서에 등장한다 (문서 드리프트 차단)
+  ③ 종료 코드 표가 실제 계약(daemon/src/exit.ts)과 일치한다
+  ④ 폴백 표의 서브커맨드·옵션이 실제 CLI 표면(main.ts 의 MODES·INSTALL_FLAGS)과 일치하고,
+     내부 모드를 제외한 모든 서브커맨드가 문서에 등장한다 (문서 드리프트 차단)
 """
 
-import argparse
+import io
 import os
 import re
-import sys
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(REPO, "bin")
-if BIN not in sys.path:
-    sys.path.insert(0, BIN)
-
-import harness_engine as eng  # noqa: E402
+MAIN_TS = os.path.join(REPO, "daemon", "src", "main.ts")
 
 SKILL_PATH = os.path.join(REPO, "skill", "SKILL.md")
 
 # 훅은 settings.json 이 부르는 내부 표면이라 스킬 문서에 등장하지 않아도 된다
-INTERNAL_SUBCOMMANDS = {"hook-prebash", "hook-postbash", "hook-stop"}
+# 스킬이 안내할 대상이 아닌 모드 — 훅은 Claude Code 가 부르고, daemon·mcp 는 런타임이
+# 스스로 띄우며, version 은 진단용이다. 에이전트가 절차 중에 칠 일이 없다.
+INTERNAL_SUBCOMMANDS = {"hook-prebash", "hook-postbash", "hook-stop",
+                        "daemon", "mcp", "version"}
 
-# 엔진 호출 한 줄에서 서브커맨드를 뽑는다: ... harness_engine.py[" ] <subcmd>
-ENGINE_CALL_RE = re.compile(r"harness_engine\.py\"?\s+([a-z][a-z0-9-]*)")
+# 하네스 호출 한 줄에서 서브커맨드를 뽑는다. **같은 줄만** 보고, CLI 호출이 아닌 두 형태는
+# 걸러 낸다 — `/autoharness resume`(스킬 슬래시 커맨드)과 `claude "autoharness resume"`
+# (claude 에게 주는 자연어 프롬프트). 셋을 뭉치면 없는 서브커맨드라며 헛되이 실패한다.
+_Q = "\"'`"
+ENGINE_CALL_RE = re.compile(
+    r"([^\s" + _Q + r"]*(?:\$AH|autoharness(?:\.exe)?))[" + _Q + r"]?[ \t]+([a-z][a-z0-9-]*)")
+
+
+def documented_calls(text):
+    out = []
+    for m in ENGINE_CALL_RE.finditer(text):
+        exe, word = m.group(1), m.group(2)
+        if exe == "/autoharness":
+            continue
+        before = text[max(0, m.start() - 12):m.start()]
+        if re.search(r"""claude\s+["']$""", before):
+            continue
+        out.append(word)
+    return out
 
 
 def read_skill():
@@ -68,12 +83,26 @@ def parse_frontmatter(text):
     return out
 
 
-def subparser_map():
-    """build_parser() 에서 {서브커맨드: 파서} 를 뽑는다."""
-    for action in eng.build_parser()._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            return dict(action.choices)
-    raise AssertionError("엔진 파서에 서브커맨드가 없습니다")
+def cli_modes():
+    """v2 CLI 표면의 단일 출처 — main.ts 의 MODES 배열.
+
+    종전에는 v1 엔진의 build_parser() 를 import 해서 얻었다. 그 엔진이 사라졌으므로
+    이제 실제 표면인 TypeScript 선언을 읽는다. **문서가 아니라 코드에서 얻는다**는
+    성질은 그대로다 — 그것이 이 테스트의 존재 이유다."""
+    with io.open(MAIN_TS, encoding="utf-8") as fh:
+        src = fh.read()
+    block = src[src.index("export const MODES = ["):]
+    block = block[:block.index("] as const;")]
+    return set(re.findall(r'"([a-z][a-z-]*)"', block))
+
+
+def install_flags():
+    """install 이 받아들이는 옵션 — 미지 옵션은 거부되므로 이 집합이 곧 계약이다."""
+    with io.open(MAIN_TS, encoding="utf-8") as fh:
+        src = fh.read()
+    block = src[src.index("const INSTALL_FLAGS = new Set(["):]
+    block = block[:block.index("]);")]
+    return set("--" + f for f in re.findall(r'"([a-z][a-z-]*)"', block))
 
 
 class SkillFileTest(unittest.TestCase):
@@ -203,15 +232,23 @@ class RoutingHardeningTest(unittest.TestCase):
         self.assertRegex(self.text, r"배포 완료로 (\*\*)?오보고하지 않는다")
         self.assertIn("git push", self.text)
 
-    def test_push_is_actually_blocked_by_engine(self):
-        # 문서의 한계선 주장이 엔진 차단 규칙과 실제로 일치하는지 대조.
-        # 판정이 정규식 목록에서 토큰 기반 함수로 바뀌었으므로 호출 방식만 바꾸고
-        # 검사 의도(문서 주장 ↔ 엔진 실제 동작 일치)는 그대로 유지한다.
-        self.assertIsNotNone(eng.deny_reason("git push origin main"),
-                             "엔진이 git push 를 차단하지 않는데 문서는 차단된다고 적혀 있습니다")
-        # 문서가 "로컬 커밋은 허용"이라고 적었으므로 그것도 함께 대조한다
-        self.assertIsNone(eng.deny_reason('git commit -m "작업 완료"'),
-                          "문서는 로컬 커밋을 허용한다고 적었는데 엔진이 차단합니다")
+    # 문서 주장 ↔ **실제 차단 동작**의 대조는 그 함수가 사는 곳으로 옮겼다:
+    # daemon/test/command.test.ts 가 SKILL.md 를 읽어 denyReason 을 직접 호출한다.
+    # 파이썬에서는 TS 함수를 부를 수 없어 소스 문자열만 훑게 되는데, 그것은 "차단된다"가
+    # 아니라 "차단 규칙이 적혀 있다" 밖에 확인하지 못한다 — 약한 단정으로 바꾸느니
+    # 진짜로 부를 수 있는 자리로 옮기는 편이 맞다.
+
+
+def exit_constants():
+    """v2 종료 코드 계약의 단일 출처 — daemon/src/exit.ts.
+
+    종전에는 v1 엔진의 상수를 import 했다. 엔진이 사라졌으므로 실제 계약이 선언된
+    곳에서 읽는다. **문서가 아니라 코드에서 얻는다**는 성질은 그대로다."""
+    with io.open(os.path.join(REPO, "daemon", "src", "exit.ts"), encoding="utf-8") as fh:
+        src = fh.read()
+    block = src[src.index("export const EXIT = {"):]
+    block = block[:block.index("} as const;")]
+    return {name: int(num) for name, num in re.findall(r"(\w+):\s*(\d+)", block)}
 
 
 class ExitCodeTableTest(unittest.TestCase):
@@ -221,9 +258,9 @@ class ExitCodeTableTest(unittest.TestCase):
         self.assertTrue(section, "종료 코드 계약 절이 없습니다")
         codes = {int(m) for m in re.findall(r"^\|\s*([0-4])\s*\|", section, re.MULTILINE)}
         self.assertEqual(codes, {0, 1, 2, 3, 4}, "종료 코드 표가 불완전합니다: %s" % sorted(codes))
-        self.assertEqual(
-            (eng.EXIT_OK, eng.EXIT_FAIL, eng.EXIT_USAGE, eng.EXIT_NO_TASK, eng.EXIT_BLOCKED),
-            (0, 1, 2, 3, 4))
+        exits = exit_constants()
+        self.assertEqual(exits, {"OK": 0, "FAIL": 1, "USAGE": 2, "NO_TASK": 3, "BLOCKED": 4},
+                         "종료 코드 계약이 바뀌었습니다: %s" % exits)
 
 
 class SkillDesignModeSyncTest(unittest.TestCase):
@@ -277,90 +314,90 @@ class SkillDesignModeSyncTest(unittest.TestCase):
 
 
 class CliSurfaceSyncTest(unittest.TestCase):
-    """스킬 문서에 적힌 엔진 호출이 실제 CLI 표면과 일치하는지 — 문서 드리프트 차단."""
+    """스킬 문서에 적힌 하네스 호출이 실제 CLI 표면과 일치하는지 — 문서 드리프트 차단."""
 
     def setUp(self):
         self.text = read_skill()
-        self.subs = subparser_map()
+        self.modes = cli_modes()
 
     def documented_subcommands(self):
-        return {m for m in ENGINE_CALL_RE.findall(self.text)}
+        return set(documented_calls(self.text))
 
     def test_documented_subcommands_all_exist(self):
-        unknown = sorted(self.documented_subcommands() - set(self.subs))
-        self.assertEqual(unknown, [], "문서에 있으나 엔진에 없는 서브커맨드: %s" % unknown)
+        unknown = sorted(self.documented_subcommands() - self.modes)
+        self.assertEqual(unknown, [], "문서에 있으나 CLI 에 없는 서브커맨드: %s" % unknown)
+
+    def test_the_extraction_actually_found_something(self):
+        """정규식이 아무것도 못 잡으면 위 단정이 공허해진다 — 먼저 못 박는다."""
+        self.assertGreater(len(self.documented_subcommands()), 5)
+        self.assertIn("run", self.modes)
 
     def test_every_public_subcommand_is_documented(self):
-        public = set(self.subs) - INTERNAL_SUBCOMMANDS
-        # 보조 서브커맨드 목록 줄(next/render/brief/sync-commit/selftest)도 문서 등장으로 인정한다
+        public = self.modes - INTERNAL_SUBCOMMANDS
         documented = self.documented_subcommands()
         for name in sorted(public):
             if name in documented or re.search(r"`%s`" % re.escape(name), self.text):
                 continue
             self.fail("공개 서브커맨드가 스킬 문서에 없습니다: %s" % name)
 
-    def test_documented_flags_exist_on_their_subcommand(self):
-        """폴백 표 각 줄의 `--flag` 가 그 서브커맨드에 실제로 있는지 검사."""
+    def test_documented_install_flags_exist(self):
+        """install 은 부작용 명령이라 미지 옵션을 거부한다 — 틀린 옵션 안내는 곧 실행 불가다."""
+        valid = install_flags()
         checked = 0
         for line in self.text.splitlines():
-            m = ENGINE_CALL_RE.search(line)
+            m = re.search(
+                r"(?:\$AH|autoharness(?:\.exe)?)[" + _Q + r"]?[ \t]+install[ \t]", line)
             if not m:
                 continue
-            name = m.group(1)
-            sp = self.subs.get(name)
-            if sp is None:
-                continue
-            valid = {opt for a in sp._actions for opt in a.option_strings}
             for flag in re.findall(r"(--[a-z][a-z0-9-]*)", line[m.end():]):
-                self.assertIn(flag, valid,
-                              "%s 에 없는 옵션이 문서에 있습니다: %s" % (name, flag))
+                self.assertIn(flag, valid, "install 에 없는 옵션이 문서에 있습니다: %s" % flag)
                 checked += 1
-        self.assertGreater(checked, 10, "옵션 검사 표본이 너무 적습니다(정규식 확인 필요)")
+        self.assertGreater(checked, 0, "install 옵션 검사 표본이 없습니다(정규식 확인 필요)")
 
     def test_per_task_test_cmd_documented_in_fallback_table(self):
-        # 이번 라운드에 노출한 옵션이 폴백 표에 반영돼 있어야 한다
-        for name in ("add-task", "set-task"):
-            self.assertIn("--test-cmd", self.subs[name].format_usage())
         self.assertIn("--test-cmd", self.text)
 
 
-class TwoImplementationsFallbackTest(unittest.TestCase):
-    """폴백 명령이 **어느 구현이 깔렸는지**를 먼저 가르쳐야 한다.
+class V2OnlySurfaceTest(unittest.TestCase):
+    """스킬 문서가 **v2 표면만** 안내하는지.
 
-    실측 결함: v2(단일 실행 파일)만 깔린 기계에서 `/autoharness` 를 쓰면, 스킬 문서가
-    v1 전용 명령(`python scripts/harness_engine.py …`)만 제시해 **없는 파일을 실행하라고**
-    시켰다. v2 원라인 설치가 이 문서를 그대로 깔기 때문에 v2 사용자 전원이 대상이다.
-
-    문서에 v2 절을 넣는 것으로 끝내지 않고, 판별 방법과 대응 명령까지 있는지 고정한다.
+    전에는 반대 계약이었다 — v1 과 v2 가 공존하니 어느 쪽이 깔렸는지 먼저 판별하라는
+    것이었고, 그 판별을 빠뜨려 v2 사용자에게 없는 파일을 실행하라고 시킨 적이 있다.
+    v1 을 제거한 지금은 같은 위험이 방향만 바꿔 남는다: 문서에 v1 명령이 되살아나면
+    이번엔 **모든** 사용자가 없는 파일을 부르게 된다.
     """
 
     def setUp(self):
-        with open(SKILL_PATH, "r", encoding="utf-8") as f:
-            self.text = f.read()
+        self.text = read_skill()
 
-    def test_fallback_tells_how_to_tell_v1_from_v2(self):
-        self.assertIn("v1 인가 v2 인가", self.text,
-                      "어느 구현이 깔렸는지 판별하는 안내가 없습니다")
-        # 판별은 실제로 존재를 확인할 수 있는 경로여야 한다
-        self.assertIn(".claude/autoharness/bin/autoharness", self.text)
-        self.assertIn("harness_engine.py", self.text)
+    def test_no_v1_commands_remain(self):
+        for dead in ("harness_engine.py", "harness_mcp.py", "harness_watchdog.py",
+                     "agent_harness.sh"):
+            self.assertNotIn(dead, self.text, "제거된 v1 명령이 문서에 남아 있습니다: %s" % dead)
 
-    def test_v2_equivalents_are_given(self):
-        """v2 사용자가 실제로 칠 수 있는 명령이 있어야 한다."""
-        for sub in ("next", "run", "selftest", "status"):
-            self.assertRegex(self.text, r'"\$AH" %s' % sub,
-                             "v2 대응 명령에 %s 가 없습니다" % sub)
+    def test_no_implementation_choice_is_offered(self):
+        """구현이 하나뿐인데 고르라고 하면 없는 갈래를 찾게 된다."""
+        self.assertNotIn("v1 인가 v2 인가", self.text)
+        self.assertNotIn("두 구현이 공존", self.text)
 
-    def test_loop_steps_carry_the_v2_branch(self):
-        """루프 본문(작업 선택·검증)이 v1 명령만 말하면 v2 사용자는 거기서 막힌다."""
-        idx = self.text.index("다음 작업 선택")
-        self.assertIn("v2", self.text[idx:idx + 300])
-        idx = self.text.index("**검증**")
-        self.assertIn("v2", self.text[idx:idx + 300])
+    def test_fallback_names_the_installed_executable(self):
+        section = self.text[self.text.find("## MCP 미등록 환경 폴백"):]
+        self.assertIn(".claude/autoharness/bin/autoharness", section)
+        self.assertIn("$AH", section)
 
-    def test_v2_has_no_watchdog_claim(self):
-        """v2 는 워치독이 없다 — 있는 것처럼 안내하면 없는 스케줄러를 찾게 된다."""
-        self.assertIn("v2 에는 워치독이 없다", self.text)
+    def test_loop_steps_use_the_v2_surface(self):
+        """루프 본문(작업 선택·검증)이 실제로 실행 가능한 명령을 말해야 한다."""
+        idx = self.text.find("**다음 작업 선택**")
+        self.assertGreater(idx, 0)
+        body = self.text[idx:idx + 400]
+        self.assertIn("next --repo", body)
+        self.assertIn("run --repo", body)
+
+    def test_autostart_is_not_described_as_an_os_scheduler_job(self):
+        """v2 는 데몬이 자기 시계로 돈다 — 주기 작업을 OS 에 걸지 않는다."""
+        section = self.text[self.text.find("## MCP 미등록 환경 폴백"):]
+        self.assertNotIn("schtasks", section)
+        self.assertIn("install --autostart", section)
 
 
 if __name__ == "__main__":

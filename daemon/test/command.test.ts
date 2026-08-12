@@ -5,6 +5,7 @@
  * 미탐(파싱 실패·래퍼·줄 연속으로 게이트를 빠져나가는 경로).
  */
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   UNPARSED,
   commandSegments,
@@ -232,5 +233,34 @@ describe("보조 함수 경계", () => {
   test("walkInvocations 가 판정 불가를 명시한다", () => {
     const invs = [...walkInvocations('echo "열린')];
     expect(invs[0]?.exe).toBe(UNPARSED);
+  });
+});
+
+/**
+ * 문서 주장 ↔ **실제 차단 동작** 대조.
+ *
+ * 이 검사는 원래 파이썬 쪽(tests/test_skill_contract.py)에 있었고 v1 엔진의 deny_reason 을
+ * 직접 불렀다. v1 을 제거하면서 옮겨 왔다 — 파이썬에서는 TS 함수를 부를 수 없어 소스
+ * 문자열만 훑게 되는데, 그것은 "차단된다"가 아니라 "차단 규칙이 적혀 있다" 밖에 확인하지
+ * 못한다. 약한 단정으로 바꾸느니 진짜로 부를 수 있는 자리로 옮기는 편이 맞다.
+ */
+describe("스킬 문서의 배포 한계선이 실제 판정과 일치한다", () => {
+  const SKILL = join(import.meta.dir, "..", "..", "skill", "SKILL.md");
+
+  test("문서가 차단된다고 적은 것을 실제로 차단한다", async () => {
+    const text = await Bun.file(SKILL).text();
+    expect(text).toContain("git push");
+    expect(denyReason("git push origin main")).not.toBeNull();
+  });
+
+  test("문서가 허용한다고 적은 로컬 커밋은 통과한다", async () => {
+    const text = await Bun.file(SKILL).text();
+    expect(text).toContain("로컬 커밋");
+    expect(denyReason('git commit -m "작업 완료"')).toBeNull();
+  });
+
+  test("한계선 문구가 사라지면 이 대조도 의미를 잃는다 — 문구 존재를 함께 고정한다", async () => {
+    const text = await Bun.file(SKILL).text();
+    expect(text).toContain("배포의 한계선");
   });
 });

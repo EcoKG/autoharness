@@ -60,7 +60,7 @@ description: 자율 주행 하네스로 저장소 작업을 맡는다 — 구축
   `task_set`(pending/blocked 만 허용)으로만 한다. PROGRESS.md 는 렌더 산출물 — 직접 수정 금지.
 - MCP 도구가 보이면 MCP 를 쓰고, 안 보이면 아래 [폴백 표](#mcp-미등록-환경-폴백)의 직접 실행을 쓴다.
 
-## 종료 코드 계약 (`run` / `bash scripts/agent_harness.sh`) — 절대 기준
+## 종료 코드 계약 (`run`) — 절대 기준
 
 | 코드 | 의미 | 에이전트 행동 |
 |---|---|---|
@@ -106,8 +106,8 @@ description: 자율 주행 하네스로 저장소 작업을 맡는다 — 구축
 `mcp__autoharness__harness_init` 를 호출한다 — repo_path, project, objective, source_stack,
 target_stack, test_cmd(①에서 실측 검증된 명령), build_cmd/lint_cmd(있으면), model(②의 결정),
 `permission_mode` 는 **기본 `"bypass"`** (사용자가 명시적으로 보수 운용을 원하면 `"acceptEdits"`).
-이 호출이 장부·예시·로그 디렉토리 생성, `scripts/harness_engine.py` 사본·`scripts/agent_harness.sh`
-설치, `.claude/settings.json` 훅 4종·권한 병합(원본 `.bak-<ts>` 백업), 레지스트리 등록까지 수행한다.
+이 호출이 장부·예시·로그 디렉토리 생성, `.claude/settings.json` 훅 4종·권한 병합
+(원본 `.bak-<ts>` 백업), 레지스트리 등록까지 수행한다.
 
 **권한 분류기 차단 시(auto mode)**: 이 호출(또는 훅 병합 스크립트)이 분류기에 거부되면 —
 훅 주입·권한 우회 등록은 분류기가 막도록 설계된 패턴이라 정상 동작이다 — 다음으로 대체한다:
@@ -116,10 +116,10 @@ target_stack, test_cmd(①에서 실측 검증된 명령), build_cmd/lint_cmd(�
 조항에 해당하지 않는다). 실행 후 `harness_status` 폴백으로 완료를 확인하고 계속 진행한다.
 
 ```bash
-python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo . --permission-mode bypass
+~/.claude/autoharness/bin/autoharness install --migrate .
 ```
 
-(Windows Git Bash: `python "$HOME/.claude/skills/autoharness/bin/harness_mcp.py" finish-init --repo . --permission-mode bypass`)
+(Windows: `"$USERPROFILE/.claude/autoharness/bin/autoharness.exe" install --migrate .`)
 
 ### ④ CLAUDE.md 작성
 1. 골격은 스킬 폴더의 `templates/CLAUDE.md.tmpl`
@@ -139,8 +139,7 @@ python3 ~/.claude/skills/autoharness/bin/harness_mcp.py finish-init --repo . --p
   있는 교착 pending 은 next/brief/status 가 `deadlocked` 로 알린다 — 발견 시 의존을 정리한다.
 
 ### ⑥ 자가 검증
-대상 저장소에서 `python scripts/harness_engine.py selftest`(v2 는 `"$AH" selftest` — 아래
-[폴백 표](#mcp-미등록-환경-폴백)의 판별 참고)를 실행한다. 7종 15항목(장부
+대상 저장소에서 `"$AH" selftest` 를 실행한다. 7종 15항목(장부
 초기화/실패 경로 exit1+attempts/성공 경로 exit0+done/한도 exit4+blocked/의존성 게이팅/
 PROGRESS.md 렌더/더미 정리)이 전부 PASS 인지 확인하고 **출력 전문을 보고에 첨부**한다.
 FAIL 이 있으면 중단·보고.
@@ -172,14 +171,13 @@ FAIL 이 있으면 중단·보고.
    `mcp__autoharness__task_add` 로 장부에 넣는다(입도·id·deps·priority·test_cmd 규칙은 init ⑤절과
    동일). **적재를 건너뛰고 `next` 를 돌리면 exit 3 이 나와 "할 일 없음"으로 오보고된다.**
    (헤드리스 재개·"이어서 진행" 처럼 기존 작업을 잇는 진입이면 이 단계는 건너뛴다.)
-1. `mcp__autoharness__heartbeat` (폴백: `python scripts/harness_engine.py heartbeat`) 실행.
+1. `mcp__autoharness__heartbeat` (폴백: `"$AH" heartbeat --repo .`) 실행.
 2. 루프 — 작업 단위로 반복:
-   1. **다음 작업 선택**: `python scripts/harness_engine.py next` (v2 는 `"$AH" next --repo .`
-      — 폴백 표의 판별을 먼저 하라) (의존성 게이팅·우선순위는
-      엔진이 판정한다 — 직접 고르지 말라). exit 3 이면 루프 종료 → 요약 보고.
+   1. **다음 작업 선택**: `"$AH" next --repo .` (의존성 게이팅·우선순위는 엔진이
+      판정한다 — 직접 고르지 말라). exit 3 이면 루프 종료 → 요약 보고.
    2. **코드 수정**: 작업 title/path/`last_error` 를 근거로 구현·수정한다. `last_error` 가 있으면
       그 오류를 우선 해결한다. 긴 로그는 `last_log_file` 경로의 파일을 부분적으로만 읽는다.
-   3. **검증**: `bash scripts/agent_harness.sh --task <id>` 실행 (v2 는 `"$AH" run --repo . --task <id>`).
+   3. **검증**: `"$AH" run --repo . --task <id>` 실행.
    4. **종료 코드 분기** (위 계약 표):
       - **0** → `git add` 후 `git commit`(커밋 게이트는 훅이 자동 확인, SHA 는 훅이 장부에 자동
         기록) → 다음 작업으로.
@@ -233,48 +231,36 @@ FAIL 이 있으면 중단·보고.
 
 `mcp__autoharness__*` 도구가 보이지 않으면(등록 전/실패) 대상 저장소 루트에서 아래를 직접 실행한다.
 
-### 먼저 — 이 기계에 깔린 것이 v1 인가 v2 인가
-
-두 구현이 공존하고 **폴백 명령이 서로 다르다.** 아래 표는 v1(파이썬) 기준이므로, v2 만 깔린
-기계에서 그대로 실행하면 없는 파일을 가리킨다. 다음으로 판별한다:
+대상 저장소 루트에서 아래를 직접 실행한다. `<AH>` 는 설치된 실행 파일이다:
 
 ```bash
-ls ~/.claude/autoharness/bin/autoharness*        # 있으면 v2 (Windows 는 autoharness.exe)
-ls ~/.claude/skills/autoharness/bin/harness_engine.py   # 있으면 v1
+AH=~/.claude/autoharness/bin/autoharness   # Windows: "$USERPROFILE/.claude/autoharness/bin/autoharness.exe"
 ```
 
-**v2 라면** 아래 표의 `python scripts/harness_engine.py` 를 전부 `<설치 EXE>` 로 바꿔 읽는다 —
-서브커맨드와 인자, 종료 코드 계약은 v1 과 같다. 예:
-
-```bash
-AH=~/.claude/autoharness/bin/autoharness        # Windows: "$USERPROFILE/.claude/autoharness/bin/autoharness.exe"
-"$AH" next --repo .          # python scripts/harness_engine.py next --repo . 와 같다
-"$AH" run --repo . --task I  # 검증. bash scripts/agent_harness.sh --task I 대신 쓴다
-"$AH" selftest               # 자가 검증 15항목
-"$AH" status --repo .
-```
-
-v2 에는 워치독이 없다 — 데몬이 스스로 주기를 잡으므로 `watchdog_*` 폴백 대신
-`"$AH" install --status` 로 자동 시작 등록 상태를 본다.
-
-**v1 이라면** 아래 표 그대로다. init 전이라 `scripts/harness_engine.py` 사본이 없으면
-`python "%USERPROFILE%\.claude\skills\autoharness\bin\harness_engine.py"` 로 대체한다.
-
-| MCP 도구 | 폴백 — v1 (저장소 루트에서) |
+| MCP 도구 | 폴백 명령 |
 |---|---|
-| `mcp__autoharness__harness_detect` | `python scripts/harness_engine.py detect --repo .` |
-| `mcp__autoharness__harness_init` | `python scripts/harness_engine.py init --repo . --project N --objective O --source S --target T --test CMD [--build C] [--lint C] [--model M]` ※ 이후 사본·훅 병합·레지스트리는 `python3 <스킬폴더>/bin/harness_mcp.py finish-init --repo .` 한 줄로 마무리(분류기 차단 시 사용자 실행 요청) |
-| `mcp__autoharness__harness_status` | `python scripts/harness_engine.py status --repo .` |
-| `mcp__autoharness__harness_run` | `python scripts/harness_engine.py run --repo . [--task I] [--cmd C]` 또는 `bash scripts/agent_harness.sh --task I` |
-| `mcp__autoharness__task_add` | `python scripts/harness_engine.py add-task --repo . --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` |
-| `mcp__autoharness__task_set` | `python scripts/harness_engine.py set-task --repo . --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` |
-| `mcp__autoharness__harness_pause` | `.claude/HARNESS_PAUSED` 빈 파일 생성 (워치독·Stop 게이트가 플래그를 존중한다. 레지스트리 status 는 active 로 남으므로 완전 정지는 MCP 경로 권장) |
+| `mcp__autoharness__harness_detect` | `"$AH" detect --repo .` |
+| `mcp__autoharness__harness_init` | `"$AH" init --repo . --project N --objective O --source S --target T --test CMD [--build C] [--lint C] [--model M]` ※ 훅 배선은 `"$AH" install --migrate .` 로 마무리 |
+| `mcp__autoharness__harness_status` | `"$AH" status --repo .` |
+| `mcp__autoharness__harness_run` | `"$AH" run --repo . [--task I] [--cmd C]` |
+| `mcp__autoharness__task_add` | `"$AH" add-task --repo . --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` |
+| `mcp__autoharness__task_set` | `"$AH" set-task --repo . --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` |
+| `mcp__autoharness__harness_pause` | `.claude/HARNESS_PAUSED` 빈 파일 생성 (데몬·Stop 게이트가 플래그를 존중한다. 레지스트리 status 는 active 로 남으므로 완전 정지는 MCP 경로 권장) |
 | `mcp__autoharness__harness_resume_project` | `.claude/HARNESS_PAUSED` 파일 삭제 (레지스트리 백오프 리셋은 안 됨) |
-| `mcp__autoharness__model_recommend` | `python scripts/harness_engine.py model-recommend --repo . [--source S] [--target T] [--notes ...]` |
+| `mcp__autoharness__model_recommend` | `"$AH" model-recommend --repo . [--source S] [--target T] [--notes ...]` |
 | `mcp__autoharness__model_set` | 장부 `model` 필드를 두 허용값 중 하나로 수정(레지스트리는 수동 갱신 필요) |
-| `mcp__autoharness__heartbeat` | `python scripts/harness_engine.py heartbeat --repo .` |
-| `mcp__autoharness__watchdog_install` | `powershell -File "%USERPROFILE%\.claude\skills\autoharness\install.ps1" -Watchdog` |
-| `mcp__autoharness__watchdog_uninstall` | `schtasks /Delete /TN AutoHarnessWatchdog /F` |
-| `mcp__autoharness__watchdog_status` | `schtasks /Query /TN AutoHarnessWatchdog` + `%USERPROFILE%\.claude\autoharness\logs\watchdog.log` tail |
+| `mcp__autoharness__heartbeat` | `"$AH" heartbeat --repo .` |
+| `mcp__autoharness__watchdog_install` | `"$AH" install --autostart` — 데몬이 스스로 주기를 잡으므로 OS 스케줄러에 주기 작업을 걸지 않는다(로그온 자동 시작만 등록한다) |
+| `mcp__autoharness__watchdog_uninstall` | `"$AH" install --uninstall` |
+| `mcp__autoharness__watchdog_status` | `"$AH" install --status` |
+
+검증 명령·한도를 나중에 바꿀 때(장부를 손으로 고치지 말 것):
+
+```bash
+"$AH" set-config --repo . [--test CMD] [--build CMD] [--lint CMD] [--timeout SEC] [--max-attempts N] [--try]
+```
+
+`--try` 는 **저장 전에 새 검증 명령을 한 번 돌려 본다** — 통과 기준을 깨뜨린 채 저장하지
+않기 위해서다.
 
 보조 서브커맨드(폴백 전용): `next`(exit 0/3), `render`, `brief`, `sync-commit`, `selftest`.

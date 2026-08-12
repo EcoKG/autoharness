@@ -54,87 +54,57 @@ afterEach(async () => {
 });
 
 /**
- * v1 테스트 파일 → v2 대응 테스트 매핑.
+ * v2 테스트 파일이 조용히 사라지지 않게 한다.
  *
- * "등가" 라는 주장은 검증 가능해야 한다. 이 표가 있으면 v1 에 새 테스트 파일이 생겼을 때
- * 대응이 비어 있음을 기계가 잡는다 — 사람의 기억에 맡기면 조용히 어긋난다.
+ * 여기 있던 것은 v1↔v2 등가 매핑표였다. v1 테스트가 사라졌으니 대조할 원본이 없어져
+ * 표 자체는 의미를 잃었지만, **표가 지키던 성질**은 그대로 필요하다: 리팩터링이나 정리
+ * 도중 테스트 파일 하나가 통째로 없어져도 아무도 모르는 상태를 막는 것이다.
+ * run_checks 의 집합 대조는 이것을 못 잡는다 — 계획과 발견을 둘 다 파일 시스템에서
+ * 얻으므로 파일이 지워지면 양쪽이 함께 줄어든다.
+ *
+ * 그래서 목록을 명시한다. 추가는 자유롭고, **제거는 이 목록을 함께 고쳐야** 한다 —
+ * 그 한 줄이 "정말 지울 것인가" 를 묻는 자리다.
  */
-const PARITY_MAP: Record<string, readonly string[]> = {
-  "test_atomic_write.py": ["core.test.ts"],
-  "test_command_analysis.py": ["command.test.ts"],
-  "test_engine_hooks.py": ["hooks.test.ts"],
-  "test_engine_tasks.py": ["ledger.test.ts"],
-  "test_gate_decision.py": ["hooks.test.ts"],
-  "test_heartbeat_pump.py": ["parity.test.ts"],
-  "test_hook_matcher_coverage.py": ["wiring.test.ts", "migrate.test.ts"],
-  "test_hook_repo_pinning.py": ["wiring.test.ts", "migrate.test.ts"],
-  "test_hook_wiring.py": ["wiring.test.ts"],
-  "test_mcp_protocol.py": ["mcp.test.ts"],
-  "test_model_recommend.py": ["parity.test.ts"],
-  "test_per_task_test_cmd.py": ["runner.test.ts", "mcp.test.ts"],
-  "test_registry_integrity.py": ["mcp.test.ts"],
-  // install.sh 는 셸 스크립트라 v2 테스트가 다룰 대상이 아니다(파이썬 쪽이 계속 소유).
-  // 다만 릴리스 산출물 이름은 양쪽이 맞아야 하므로 그 대조는 파이썬 테스트가 직접 한다.
-  "test_release_install.py": [],
-  "test_registry_lock.py": ["filelock.test.ts"],
-  // scripts/run_checks.py 는 **이 저장소의 검증 파이프라인**이지 하네스 기능이 아니다.
-  // v2 는 사용자가 준 test 명령을 실행할 뿐 그 안을 모른다 — 대응물이 있을 자리가 없다.
-  "test_run_checks_deps.py": [],
-  "test_run_checks_parallel.py": [],
-  // deploy_live 도 이 저장소의 배포 스크립트다(v2 EXE 를 만들어 설치본에 넣는 쪽).
-  "test_deploy_live_v2.py": [],
-  // 문서-실제 교차 검증은 저장소 전체 문서를 대상으로 하므로 v1 쪽이 소유한다.
-  "test_docs_drift.py": [],
-  // 배포 명세는 스킬 폴더(v1 자산) 배포 규칙이라 v1 쪽 소유다.
-  "test_deploy_manifest.py": [],
-  // 설치기 대조는 셸·PowerShell 소스를 읽는다 — v2 가 다룰 대상이 아니다.
-  "test_installer_parity.py": [],
-  // 로컬 설정 경계는 이 저장소의 git 추적 상태를 본다 — v2 에 대응물이 없다.
-  "test_local_config_boundary.py": [],
-  // 처방 명령 실재 검사는 저장소 문서 전체를 훑는다 — v1 쪽이 소유한다.
-  "test_prescribed_commands.py": [],
-  "test_registry_reactivation.py": ["mcp.test.ts", "supervisor.test.ts"],
-  "test_silent_failures.py": ["core.test.ts", "ledger.test.ts", "runner.test.ts"],
-  // 스킬 문서는 v1 자산이라 v1 테스트가 계속 소유한다(v2 는 스킬을 배치만 한다)
-  "test_skill_contract.py": [],
-  "test_smoke.py": ["main.test.ts"],
-  "test_watchdog.py": ["supervisor.test.ts", "daemon.test.ts", "scheduler.test.ts"],
-  // v1 의 52건은 대부분 schtasks 출력 파싱이라 v2 에 대응물이 없다(OS 스케줄러를 안 쓴다).
-  // 남는 의도 — 실행 흔적의 나이·미기동 신호 — 만 옮겼다.
-  "test_watchdog_health.py": ["parity.test.ts"],
-};
+const REQUIRED_V2_TESTS: readonly string[] = [
+  "bootstrap.test.ts",
+  "command.test.ts",
+  "console-ws.test.ts",
+  "core.test.ts",
+  "cross-validation.test.ts",
+  "daemon.test.ts",
+  "filelock.test.ts",
+  "hooks.test.ts",
+  "install.test.ts",
+  "ledger.test.ts",
+  "log.test.ts",
+  "main.test.ts",
+  "mcp.test.ts",
+  "migrate.test.ts",
+  "packaging.test.ts",
+  "parity.test.ts",
+  "runner.test.ts",
+  "scheduler.test.ts",
+  "selftest.test.ts",
+  "session-stream.test.ts",
+  "soak.test.ts",
+  "supervisor.test.ts",
+  "ui.test.ts",
+  "web.test.ts",
+  "wiring.test.ts",
+];
 
-describe("v1 회귀 의도 매핑", () => {
-  test("v1 테스트 파일마다 대응이 지정돼 있다", async () => {
-    const { readdir } = await import("node:fs/promises");
-    const v1Dir = join(import.meta.dir, "..", "..", "tests");
-    const files = (await readdir(v1Dir)).filter((f) => f.startsWith("test_") && f.endsWith(".py"));
-    expect(files.length).toBeGreaterThan(0);
-    for (const f of files) {
-      expect(Object.hasOwn(PARITY_MAP, f), `${f} 의 v2 대응이 매핑에 없습니다`).toBe(true);
-    }
-  });
-
-  test("매핑이 가리키는 v2 테스트가 실제로 존재한다", async () => {
+describe("v2 테스트 집합", () => {
+  test("있어야 할 테스트 파일이 전부 있다", async () => {
     const { readdir } = await import("node:fs/promises");
     const present = new Set(await readdir(import.meta.dir));
-    for (const [v1File, targets] of Object.entries(PARITY_MAP)) {
-      for (const t of targets) {
-        expect(present.has(t), `${v1File} → ${t} 가 없습니다`).toBe(true);
-      }
-    }
+    const missing = REQUIRED_V2_TESTS.filter((f) => !present.has(f));
+    expect(missing, `사라진 테스트 파일: ${missing.join(", ")}`).toEqual([]);
   });
 
-  test("대응이 비어 있는 항목은 사유가 주석으로 남아 있다", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const source = await readFile(join(import.meta.dir, "parity.test.ts"), "utf8");
-    for (const [v1File, targets] of Object.entries(PARITY_MAP)) {
-      if (targets.length === 0) {
-        // 빈 대응은 '아직 안 함' 이 아니라 '옮기지 않는다'는 판단이어야 한다
-        const idx = source.indexOf(`"${v1File}"`);
-        expect(source.slice(Math.max(0, idx - 200), idx)).toContain("//");
-      }
-    }
+  test("목록이 실제 파일과 어긋나지 않는다 — 새로 만든 것도 등재한다", async () => {
+    const { readdir } = await import("node:fs/promises");
+    const actual = (await readdir(import.meta.dir)).filter((f) => f.endsWith(".test.ts")).sort();
+    expect(actual).toEqual([...REQUIRED_V2_TESTS].sort());
   });
 });
 
