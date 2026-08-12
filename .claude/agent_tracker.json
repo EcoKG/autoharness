@@ -2047,7 +2047,7 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/release-3-1-0-20260812T085102Z.log",
-      "commit": null,
+      "commit": "ecd34ff",
       "started_at": "2026-08-12T08:51:02.177Z",
       "finished_at": "2026-08-12T08:51:29.009Z",
       "test_cmd": null
