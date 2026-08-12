@@ -60,8 +60,7 @@ class CoverageGuardTest(unittest.TestCase):
         return run_checks.verify_coverage(units, plan)
 
     def test_matching_sets_pass(self):
-        units = [fake_unit("selftest", "python", "PASS"),
-                 py_unit("tests.test_a", 10), py_unit("tests.test_b", 5),
+        units = [py_unit("tests.test_a", 10), py_unit("tests.test_b", 5),
                  fake_unit("daemon:typecheck", "daemon", ""),
                  bun_unit("test/x.test.ts", 7)]
         self.assertTrue(self.check(units, plan_of(["tests.test_a", "tests.test_b"], 15,
@@ -115,10 +114,9 @@ class CoverageGuardTest(unittest.TestCase):
         units = [fake_unit("daemon:test/x.test.ts", "daemon", "그냥 조용히 끝남")]
         self.assertFalse(self.check(units, plan_of([], 0, ["test/x.test.ts"])))
 
-    def test_selftest_and_typecheck_are_not_counted_as_shards(self):
-        """이 둘은 테스트 수를 보고하지 않는다 — 대조 대상에서 빠져야 한다."""
-        units = [fake_unit("selftest", "python", "PASS 전부"),
-                 fake_unit("daemon:typecheck", "daemon", "$ tsc --noEmit")]
+    def test_typecheck_is_not_counted_as_a_shard(self):
+        """타입 검사는 테스트 수를 보고하지 않는다 — 대조 대상에서 빠져야 한다."""
+        units = [fake_unit("daemon:typecheck", "daemon", "$ tsc --noEmit")]
         self.assertTrue(self.check(units, plan_of([], 0, [])))
 
     def test_multiple_ran_lines_are_summed(self):

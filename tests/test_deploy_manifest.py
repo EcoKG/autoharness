@@ -101,10 +101,15 @@ class DeployPairsTest(unittest.TestCase):
         pairs, _ = man.deploy_pairs(REPO)
         dst = set(d for _, d in pairs)
         for expected in ("SKILL.md", "DESIGN.md", "README.md",
-                         "bin/harness_engine.py", "bin/harness_mcp.py", "bin/harness_watchdog.py",
-                         "templates/agent_harness.sh", "templates/bootstrap_prompt.txt",
-                         "templates/CLAUDE.md.tmpl"):
+                         "install.sh", "install.ps1",
+                         "templates/bootstrap_prompt.txt", "templates/CLAUDE.md.tmpl"):
             self.assertIn(expected, dst)
+
+    def test_no_python_asset_ships_anymore(self):
+        """v1 파이썬 엔진·MCP·워치독이 사라졌다 — 설치본은 문서와 템플릿뿐이다."""
+        pairs, _ = man.deploy_pairs(REPO)
+        offenders = [d for _, d in pairs if d.endswith(".py")]
+        self.assertEqual(offenders, [], "설치본에 파이썬 자산이 남아 있습니다: %s" % offenders)
 
     def test_real_repo_ships_nothing_forbidden(self):
         pairs, _ = man.deploy_pairs(REPO)
@@ -116,11 +121,20 @@ class DeployPairsTest(unittest.TestCase):
         pairs, _ = man.deploy_pairs(REPO)
         self.assertIn(("skill/SKILL.md", "SKILL.md"), pairs)
 
-    def test_pycache_is_excluded_and_said_out_loud(self):
-        """조용히 빼지 않는다 — 무엇이 왜 빠졌는지 보여야 명세가 틀렸을 때 드러난다."""
-        _, skipped = man.deploy_pairs(REPO)
+    def test_exclusions_are_said_out_loud(self):
+        """조용히 빼지 않는다 — 무엇이 왜 빠졌는지 보여야 명세가 틀렸을 때 드러난다.
+
+        종전에는 bin/__pycache__ 로 이것을 확인했다. v1 을 지우면서 bin/ 자체가 사라졌으므로
+        같은 성질을 임시 저장소로 확인한다 — 규칙이 살아 있다는 것이 요지이지 특정 폴더가
+        있다는 것이 아니었다."""
+        import tempfile as _t
+        d = _t.mkdtemp(prefix="ah-skip-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "templates", "__pycache__"))
+        touch(os.path.join(d, "templates", "ok.txt"))
+        _, skipped = man.deploy_pairs(d)
         self.assertTrue(any("__pycache__" in rel for rel, _ in skipped),
-                        "실재하는 bin/__pycache__ 가 제외 목록에 없습니다")
+                        "부산물 디렉토리가 제외 목록에 없습니다")
 
     def test_forbidden_file_dropped_into_a_deploy_dir_is_refused(self):
         os.makedirs(os.path.join(self.d, "templates"))
@@ -131,13 +145,20 @@ class DeployPairsTest(unittest.TestCase):
         self.assertNotIn("templates/settings.json", [s for s, _ in pairs])
         self.assertTrue(any(rel == "templates/settings.json" for rel, _ in skipped))
 
-    def test_bin_takes_only_python(self):
-        os.makedirs(os.path.join(self.d, "bin"))
-        touch(os.path.join(self.d, "bin", "engine.py"))
-        touch(os.path.join(self.d, "bin", "notes.txt"))
+    def test_extension_restriction_still_works_when_declared(self):
+        """확장자 제한 기능 자체는 남는다 — 지금은 쓰는 곳이 없을 뿐이다(bin/ 이 사라졌다).
+
+        기능을 지우지 않고 고정해 두는 이유: 다음에 제한이 필요한 디렉토리가 생겼을 때
+        동작을 다시 발명하지 않기 위해서다."""
+        saved = man.DEPLOY_DIRS
+        self.addCleanup(setattr, man, "DEPLOY_DIRS", saved)
+        man.DEPLOY_DIRS = (("tools", "tools", (".py",)),)
+        os.makedirs(os.path.join(self.d, "tools"))
+        touch(os.path.join(self.d, "tools", "engine.py"))
+        touch(os.path.join(self.d, "tools", "notes.txt"))
         pairs, skipped = man.deploy_pairs(self.d)
-        self.assertEqual([s for s, _ in pairs], ["bin/engine.py"])
-        self.assertTrue(any(rel == "bin/notes.txt" for rel, _ in skipped))
+        self.assertEqual([s for s, _ in pairs], ["tools/engine.py"])
+        self.assertTrue(any(rel == "tools/notes.txt" for rel, _ in skipped))
 
     def test_missing_optional_source_is_simply_absent(self):
         """install.sh 가 없는 체크아웃도 있다 — 없는 원본은 실패가 아니다."""

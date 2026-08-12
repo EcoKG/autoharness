@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-11T14:41:43.197Z",
+  "updated_at": "2026-08-12T03:05:59.748Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1863,9 +1863,127 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/release-publish-v2.1.0-20260811T144111Z.log",
-      "commit": null,
+      "commit": "6ee7f18",
       "started_at": "2026-08-11T14:41:11.973Z",
       "finished_at": "2026-08-11T14:41:43.197Z",
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-tooling-dependency",
+      "title": "저장소 도구의 v1 의존을 먼저 끊는다 — 이걸 안 하면 파일을 지우는 순간 검증 자체가 돌지 않는다. 실측 의존 3곳: ① run_checks 의 selftest 단위가 `python bin/harness_engine.py selftest` 를 실행한다 ② run_checks 의 컴파일 게이트가 bin/ 을 대상에 넣는다 ③ deploy_live 가 `import harness_engine` 으로 replace_with_retry 를 빌려 쓴다. 요구: ① selftest 단위를 걷어낼 것 — v2 의 selftest 15항목은 이미 daemon/test/selftest.test.ts 가 runSelftest 를 직접 불러 검증하므로 커버리지가 줄지 않는다(이 사실을 주석으로 남길 것) ② 컴파일 게이트 대상에서 bin/ 을 빼되 scripts/·tests/ 는 그대로 둘 것 — 저장소 도구는 계속 파이썬이다 ③ deploy_live 가 빌려 쓰던 원자적 교체 재시도(OneDrive·백신 잠금 대비 0.1→0.2→0.4→0.8초, 5회)를 자기 안에 두어 외부 의존을 없앨 것. 동작을 바꾸지 말 것 — 같은 간격·같은 횟수·같은 예외 처리다 ④ deploy_manifest 에서 bin/*.py 배포를 제거하고, 그 결과 설치본에 더는 파이썬 자산이 가지 않음을 회귀로 고정할 것 ⑤ 이 단계 후에도 전체 검증이 통과해야 한다.",
+      "path": "scripts/run_checks.py",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/v1-drop-tooling-dependency-20260812T030532Z.log",
+      "commit": null,
+      "started_at": "2026-08-12T03:05:32.210Z",
+      "finished_at": "2026-08-12T03:05:59.748Z",
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-tests",
+      "title": "v1 동작을 검증하던 테스트를 정리한다 — **무엇을 지우고 무엇을 남길지는 이미 기계가 알고 있다.** daemon/test/parity.test.ts 의 PARITY_MAP 이 v1 테스트 파일마다 v2 대응을 지정해 두었다: 대응이 있는 19개는 v2 가 같은 의도를 덮고 있으므로 v1 원본과 함께 사라져도 커버리지가 줄지 않고, 대응이 빈 배열인 것들은 저장소 도구(run_checks·deploy_manifest·installer parity·docs drift·local config·prescribed commands)와 스킬 문서 계약이라 **남아야 한다**. 요구: ① PARITY_MAP 을 근거로 삭제 대상을 정하고, 삭제 전에 각 대응 v2 테스트가 실제로 존재하는지 확인할 것(빈손으로 지우지 말 것) ② tests/test_skill_contract.py 는 남기되 v1 엔진의 build_parser 를 근거로 삼던 부분을 v2 표면(main.ts 의 MODES)으로 재배선할 것 — 스킬 폴백 표도 v1 명령을 더는 안내하지 않으므로 함께 손봐야 한다 ③ PARITY_MAP 자체의 존재 이유가 사라진다(v1 이 없으면 대조할 원본이 없다) — 표를 지우되 그 표가 지키던 것(v2 테스트가 조용히 사라지지 않을 것)을 대체할 방법을 남길지 판단하고 근거를 주석으로 적을 것 ④ 삭제 후 남은 파이썬 테스트가 전부 통과하고, v2 테스트 수가 줄지 않았음을 수치로 보고할 것.",
+      "path": "tests",
+      "deps": [
+        "v1-drop-tooling-dependency"
+      ],
+      "priority": 20,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-source",
+      "title": "v1 소스를 저장소에서 제거한다: bin/harness_engine.py, bin/harness_mcp.py, bin/harness_watchdog.py, scripts/harness_engine.py(주행용 고정 사본), scripts/agent_harness.sh(진입 래퍼), templates/agent_harness.sh(대상 저장소용 래퍼). 이 저장소는 이미 v2 EXE 로 주행하고 있어 삭제가 현재 루프를 끊지 않는다(훅 4종이 EXE 를 가리키고, 검증은 run_checks 가 직접 돈다). 요구: ① 위 파일들과 그 부산물(__pycache__)을 지울 것 ② 지운 뒤 저장소 어디에도 그 이름을 부르는 곳이 남지 않았는지 확인할 것 — 남으면 '없는 파일을 부르는' 상태가 되고, 이 프로젝트가 반복해서 당한 실패 유형이다 ③ .gitignore·deploy_manifest 등에서 이제 의미 없어진 항목을 정리할 것 ④ 전체 검증 통과.",
+      "path": "bin",
+      "deps": [
+        "v1-drop-tooling-dependency",
+        "v1-drop-tests"
+      ],
+      "priority": 30,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-branches",
+      "title": "v2 코드 안의 v1 분기를 제거한다 — 사용자 결정: **인식까지 완전 제거**. 대상(실측): ① wiring.ts 의 ENGINE_BASENAMES 에서 harness_engine.py 를 빼 autoharness 만 남길 것 ② settings.ts 의 isLegacyEngineCommand 와 MergeOptions.replaceLegacy 제거 ③ migrate.ts 의 HookSnapshot.legacy 필드, needsWork 의 legacy 항, dry-run 문구의 'v1 훅 N건', stillLegacy 보고 제거 — migrate 는 이제 v2 배선의 결함(죽은 경로·--repo 누락·cwd 종속·matcher 부족)만 고치는 도구다 ④ 주석에 남은 'v1 과 공존한다' 류 서술을 현재 사실에 맞게 고칠 것(설명을 위한 역사 서술은 남겨도 되나, 지금도 그렇다고 읽히면 안 된다). 결과로 생기는 사실을 정확히 알 것: v1 배선을 가진 저장소는 이제 하네스 훅으로 인식되지 않아 status 가 not_registered 로 보고하고 migrate 가 고쳐 주지 않는다. 그 저장소는 .claude/settings.json 을 지우고 새로 설치해야 한다 — 이 사실을 문서와 릴리스 노트에 반드시 남길 것(⑥ 문서 작업에서 처리). 회귀 테스트를 함께 정리하되 단정을 지우지 말고 새 사실을 단정하도록 고칠 것.",
+      "path": "daemon/src/install/migrate.ts",
+      "deps": [
+        "v1-drop-source"
+      ],
+      "priority": 40,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-installers",
+      "title": "설치기에서 v1 을 걷어내고, **설치·갱신 때 기존 v1 잔재를 제거하게 한다**(사용자 요구). 실측: install.sh 에 v1 참조 18곳, install.ps1 에 8곳. 요구: ① v1 설치 경로(파이썬 자산 복사, harness_mcp.py 로의 MCP 등록, 워치독 등록)를 제거할 것 ② --v2 / -V2 는 이제 유일한 동작이므로 기본으로 만들되, **기존 원라인이 깨지지 않게 플래그를 받아들이고 무시할 것**(문서·블로그·스크립트에 이미 퍼져 있다) ③ 설치·갱신 시 이전 v1 설치본을 정리할 것: 스킬 폴더의 bin/*.py, 파이썬 MCP 등록, 워치독 스케줄러 작업(AutoHarnessWatchdog)·cron 줄. **지우기 전에 무엇을 지우는지 알리고, 실패해도 설치를 중단시키지 말 것**(정리는 부가 작업이지 설치의 전제가 아니다) ④ 사용자 런타임 상태(레지스트리·로그·장부)는 절대 건드리지 말 것 ⑤ 두 설치기가 같은 집합을 다루는지 tests/test_installer_parity.py 로 계속 고정하고, tests/test_release_install.py 의 v1 관련 단정을 새 사실로 고칠 것 ⑥ 셸·PowerShell 을 실행하지 않고 소스 대조로 검증할 것 — 실제 사용자 설치본을 덮어쓰면 안 된다.",
+      "path": "install.sh",
+      "deps": [
+        "v1-drop-branches"
+      ],
+      "priority": 50,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "v1-drop-docs",
+      "title": "문서를 v2 단일 구현 기준으로 재편한다. 지금 문서는 '두 구현이 공존합니다' 를 전제로 쓰여 있어 그대로 두면 없는 것을 안내하게 된다. 요구: ① README 의 v1 설치 절·비교표·'두 구현이 공존' 서술을 걷어내고 설치 안내를 하나로 합칠 것 ② 루트 DESIGN.md 는 v1 설계 계약이고 daemon/DESIGN.md 가 v2 계약이다 — 하나로 정리할 것(루트를 v2 계약으로 삼고 daemon 쪽을 흡수하거나 포인터로 남기는 편을 권함. 설치본에 배포되는 것은 루트 DESIGN.md 다) ③ CLAUDE.md 의 셀프 호스팅 절에서 '두 엔진이 공존한다'·주행용 고정 사본·agent_harness.sh 서술을 현재 사실로 고칠 것 ④ skill/SKILL.md 의 v1 폴백 표와 v1/v2 판별 절을 제거하고 v2 표면만 남길 것 ⑤ **파괴적 변경을 눈에 띄게 남길 것**: v1 배선을 가진 저장소는 자동 복구되지 않으며 .claude/settings.json 을 지우고 새로 설치해야 한다 ⑥ tests/test_docs_drift.py·test_prescribed_commands.py 를 확장해 문서에 v1 명령(python … harness_engine.py, agent_harness.sh)이 되살아나면 실패하게 할 것.",
+      "path": "README.md",
+      "deps": [
+        "v1-drop-installers"
+      ],
+      "priority": 60,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "release-v3.0.0",
+      "title": "v3.0.0 릴리스 — v1 제거는 파괴적 변경이라 major 다. 요구: ① 버전 선언 두 곳(daemon/src/version.ts, daemon/package.json)을 3.0.0 으로 ② 전체 검증 통과 ③ 산출물 5종 + SHA256SUMS 생성. **Windows 에서는 교차 컴파일이 되지 않는다**(실측 2026-08-11: bun 의 Windows 교차 컴파일 다운로드·추출 단계가 깨져 있고 공식 설치본으로도 동일) — WSL 에서 빌드할 것 ④ 자산 이름이 install.sh 판정과 일치하는지 대조 ⑤ 발행 전 실사용 경로(releases/latest/download)로 받아 체크섬·selftest 실측 ⑥ 릴리스 노트에 파괴적 변경을 맨 앞에 둘 것: 파이썬 엔진·MCP 서버·워치독이 사라졌고, v1 으로 설치했던 사용자는 설치기가 잔재를 정리하며, v1 훅 배선을 가진 저장소는 자동 복구되지 않아 .claude/settings.json 을 지우고 새로 설치해야 한다.",
+      "path": "daemon/src/version.ts",
+      "deps": [
+        "v1-drop-docs"
+      ],
+      "priority": 70,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]

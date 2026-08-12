@@ -7,7 +7,7 @@ install.ps1 전체 재설치와 달리 파일 복사만 수행한다 — MCP 등
 즉시 반영된다.
 
 ① 스킬 자산 → `~/.claude/skills/autoharness/`. 매핑은 install.ps1/install.sh 와 동일:
-   skill/SKILL.md → SKILL.md, bin/* → bin/, templates/* → templates/,
+   skill/SKILL.md → SKILL.md, templates/* → templates/,
    DESIGN.md·README.md·install.ps1·install.sh → 루트.
 
 ② v2 EXE → `~/.claude/autoharness/bin/autoharness(.exe)`.
@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -44,10 +45,24 @@ for _s in (sys.stdout, sys.stderr):
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 엔진의 원자적 쓰기 규칙(잠금 재시도)을 그대로 쓴다 — 배포 경로만 다른 규칙을 쓰면
-# 같은 일시적 잠금에서 여기만 실패한다.
-sys.path.insert(0, os.path.join(REPO, "bin"))
-import harness_engine as eng  # noqa: E402
+# 잠금 재시도 규칙 — 종전에는 파이썬 엔진에서 빌려 왔으나 그 엔진이 사라져 여기 둔다.
+# **값과 동작을 바꾸지 않았다**: 같은 횟수·같은 간격·같은 예외 처리다.
+REPLACE_RETRIES = 5          # os.replace 총 시도 횟수
+REPLACE_BACKOFF_SEC = 0.1    # 첫 대기 — 이후 0.2→0.4→0.8초로 지수 증가
+
+
+def replace_with_retry(src, dst):
+    """os.replace — OneDrive 동기화·백신 검사가 잡은 일시적 잠금(PermissionError)을
+    지수 백오프로 재시도한다. 다른 OSError 는 즉시, 마지막 시도 실패는 그대로 던진다."""
+    for i in range(REPLACE_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == REPLACE_RETRIES - 1:
+                raise
+            time.sleep(REPLACE_BACKOFF_SEC * (2 ** i))
+
 
 # 무엇을 배포하고 무엇은 절대 배포하지 않는가 — 정의는 여기 한 곳뿐이다.
 # 두 번째 목록을 여기에 두지 않는다(그것이 세 구현이 갈라진 원인이다).
@@ -78,7 +93,7 @@ def atomic_copy(src, dst):
         # 엔진과 같은 재시도 규칙을 쓴다 — 이 저장소는 OneDrive 안에 있어 동기화·백신이
         # 잠깐 잠그는 PermissionError 가 실제로 난다. 여기만 raw os.replace 라 같은
         # 일시적 잠금에 설치본 동기화가 실패했다(적대 검증에서 확인).
-        eng.replace_with_retry(tmp, dst)
+        replace_with_retry(tmp, dst)
     finally:
         if os.path.exists(tmp):
             try:
@@ -232,7 +247,7 @@ def main():
     ap.add_argument("--force-v2", action="store_true", help="소스 변화가 없어도 v2 EXE 를 다시 만든다")
     a = ap.parse_args()
 
-    if not os.path.isfile(os.path.join(REPO, "bin", "harness_engine.py")):
+    if not os.path.isdir(os.path.join(REPO, "daemon", "src")):
         print("[deploy][ERROR] 개발 사본이 올바르지 않습니다: %s" % REPO)
         return 2
     if not os.path.isdir(DST):

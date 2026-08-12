@@ -8,8 +8,8 @@
   ⓪ 게이트 (직렬, 빠름) — py_compile 전량 + daemon devDependency 확인.
      실패하면 여기서 끝낸다. 컴파일이 깨진 채로 샤드를 돌리면 전부 같은 오류를 뱉어
      진짜 원인이 출력에 묻힌다.
-  ① 검증 단위 (병렬) — selftest / tests 모듈 하나씩 / daemon typecheck /
-     daemon 테스트 파일 하나씩. 서로 독립이므로 동시에 돈다.
+  ① 검증 단위 (병렬) — tests 모듈 하나씩 / daemon typecheck / daemon 테스트 파일
+     하나씩. 서로 독립이므로 동시에 돈다.
   ② deploy (직렬, 마지막) — 앞 단계를 전부 통과한 코드만 실행 중 설치본에 반영한다.
 
 왜 직렬이 느렸나(실측 2026-08-11, 16코어):
@@ -166,8 +166,9 @@ def discover_bun_tests(daemon_dir):
 # --------------------------------------------------------------------------- 게이트
 
 def gate_compile():
+    # bin/ 은 v1 파이썬 엔진 자리였다 — 제거됐으므로 대상은 저장소 도구뿐이다.
     targets = []
-    for sub in ("bin", "scripts", "tests"):
+    for sub in ("scripts", "tests"):
         d = os.path.join(REPO, sub)
         if not os.path.isdir(d):
             continue
@@ -246,9 +247,10 @@ def plan_units(bun):
         print("[checks][ERROR] 테스트 모듈 임포트 실패 %d건: %s" % (len(broken), ", ".join(broken)))
         return None, None
 
-    units = [Unit("selftest", "python", [sys.executable,
-                                         os.path.join(REPO, "bin", "harness_engine.py"),
-                                         "selftest"], REPO)]
+    # selftest 단위는 없앴다. v2 의 자가 검증 15항목은 daemon/test/selftest.test.ts 가
+    # runSelftest 를 직접 불러 검증하므로 커버리지가 줄지 않는다 — 여기서 또 돌리면
+    # 같은 것을 두 번 재는 셈이고, 그것도 사라진 파이썬 엔진으로 잰다.
+    units = []
     for mod in sorted(modules):
         units.append(Unit(mod, "python", [sys.executable, "-m", "unittest", mod], REPO))
 
@@ -348,7 +350,7 @@ def verify_coverage(units, plan):
     """
     problems = []
 
-    py_units = [u for u in units if u.group == "python" and u.name != "selftest"]
+    py_units = [u for u in units if u.group == "python"]
     planned_modules = set(u.name for u in py_units)
     if planned_modules != plan["modules"]:
         problems.append("파이썬 모듈 집합 불일치 — 계획에만: %s / 발견에만: %s"
