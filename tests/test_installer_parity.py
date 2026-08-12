@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
-"""설치 경로 3종이 같은 배포 명세를 따르는가.
+"""배포 명세와 실제 설치가 같은 집합을 옮기는가.
 
-같은 질문("무엇을 설치본에 넣는가")에 세 구현이 각각 답하고 있었고, 답이 달랐다
-(실측 2026-08-11):
+같은 질문("무엇을 설치본에 넣는가")에 세 구현이 각각 답하고 답이 달랐다(실측 2026-08-11):
+install.ps1 은 bin 을 재귀 복사해 __pycache__ 를 넣고, install.sh 는 install.ps1 을
+배포하면서 자기는 빼고, deploy_live 는 또 다른 규칙을 썼다.
 
-  ① install.ps1 은 `bin\\*` 를 재귀 복사해 __pycache__ 를 넣었고 install.sh 는 `bin/*.py`
-     만 복사했다.
-  ② install.sh 는 install.ps1·install.sh 를 둘 다 설치본에 넣었지만 install.ps1 은
-     install.sh 를 넣지 않았다 — Windows 로 설치한 계정에서는 설치본만 가지고 WSL
-     재설치를 할 수 없었다.
-  ③ deploy_live 는 또 다른 규칙(파일만, .pyc 제외)을 썼다.
+**v1 을 제거하면서 구현이 둘로 줄었다.** 설치 스크립트(bash·PowerShell)는 이제 바이너리만
+내려놓고 나머지는 EXE 에게 위임한다. 그래서 대조 대상은 scripts/deploy_manifest.py(개발
+배포) 와 daemon/src/install/install.ts(사용자 설치) 다.
 
-**셸·PowerShell 을 실행하지 않는다.** 설치 스크립트를 돌리면 실제 사용자 설치본을
-덮어쓰게 되고, 그것은 단위 테스트가 해서는 안 되는 일이다(CLAUDE.md 6절). 대신 소스에서
-복사 대상을 읽어 명세와 대조한다.
+그 축소 과정에서 실제로 한 번 빠질 뻔했다: 스크립트의 복사 코드를 걷어내자 EXE 는 skill/
+만 옮기고 있어 templates/ 가 통째로 사라졌다 — 데몬이 부트스트랩 템플릿을 영영 찾지 못하는
+상태다. 이 테스트가 그 자리를 지킨다.
 
-이 테스트의 목적은 **배포 대상이 늘 때 세 곳을 모두 고쳐야 한다는 사실을 실패로 드러내는
-것**이다. deploy_manifest 에 항목을 추가하고 설치기를 안 고치면 여기서 걸린다.
+**셸·PowerShell·EXE 를 실행하지 않는다.** 설치 스크립트를 돌리면 실제 사용자 설치본을
+덮어쓰게 되고, 그것은 단위 테스트가 해서는 안 되는 일이다(CLAUDE.md 6절). 소스에서 복사
+대상을 읽어 대조한다.
 """
 
 import io
@@ -38,54 +37,93 @@ def read(name):
         return fh.read()
 
 
-class InstallerCoverageTest(unittest.TestCase):
-    """명세의 배포 대상이 두 설치기 소스에 모두 나타나는가."""
-
-    def setUp(self):
-        self.ps1 = read("install.ps1")
-        self.sh = read("install.sh")
-
-    def test_every_manifest_file_is_named_by_both_installers(self):
-        for src_rel, dst_rel in man.DEPLOY_FILES:
-            for label, source in (("install.ps1", self.ps1), ("install.sh", self.sh)):
-                self.assertIn(dst_rel, source,
-                              "%s 가 배포 대상 %s 를 복사하지 않습니다" % (label, dst_rel))
-
-    def test_both_installers_ship_the_other_platforms_installer(self):
-        """설치본만 가지고 다른 플랫폼에서 재설치할 수 있어야 한다."""
-        self.assertIn("install.sh", self.ps1)
-        self.assertIn("install.ps1", self.sh)
-
-    def test_every_manifest_directory_is_named_by_both_installers(self):
-        for src_dir, dst_dir, _ in man.DEPLOY_DIRS:
-            for label, source in (("install.ps1", self.ps1), ("install.sh", self.sh)):
-                self.assertIn(dst_dir, source,
-                              "%s 가 배포 디렉토리 %s 를 다루지 않습니다" % (label, dst_dir))
+INSTALL_TS = os.path.join("daemon", "src", "install", "install.ts")
 
 
-class NoRecursiveCopyTest(unittest.TestCase):
-    """재귀 복사는 부산물을 통째로 끌고 들어간다 — 이번 라운드가 고친 자리다."""
+def ts_asset_list(name):
+    """install.ts 의 SKILL_ASSET_* 배열 — 사용자 설치가 옮기는 것의 단일 출처."""
+    src = read(INSTALL_TS)
+    block = src[src.index("export const %s" % name):]
+    block = block[:block.index(";")]
+    return set(re.findall(r'"([^"]+)"', block))
 
-    def test_ps1_does_not_recurse_into_bin_or_templates(self):
-        ps1 = read("install.ps1")
-        for pattern in (r'Copy-Item[^\n]*bin\\\*"?\s*\)?[^\n]*-Recurse',
-                        r'Copy-Item[^\n]*templates\\\*"?\s*\)?[^\n]*-Recurse'):
-            self.assertIsNone(re.search(pattern, ps1),
-                              "install.ps1 이 여전히 재귀 복사합니다: %s" % pattern)
 
-    def test_ps1_takes_only_python_from_bin(self):
-        self.assertIn(r"bin\*.py", read("install.ps1"))
+class ManifestVsInstallerTest(unittest.TestCase):
+    """개발 배포(deploy_manifest)와 사용자 설치(install.ts)가 같은 집합을 옮기는가."""
 
-    def test_sh_takes_only_python_from_bin(self):
+    def test_root_files_match(self):
+        manifest = {dst for _, dst in man.DEPLOY_FILES if dst != "SKILL.md"}
+        self.assertEqual(manifest, ts_asset_list("SKILL_ASSET_FILES"),
+                         "루트 문서·설치기 집합이 어긋납니다")
+
+    def test_skill_md_is_handled_separately(self):
+        """SKILL.md 는 이름이 바뀌며 옮겨진다(skill/SKILL.md → SKILL.md)."""
+        self.assertIn(("skill/SKILL.md", "SKILL.md"), man.DEPLOY_FILES)
+        self.assertIn("--skill", read("install.sh") + read("install.ps1"))
+
+    def test_directories_match(self):
+        manifest = {dst for _, dst, _ in man.DEPLOY_DIRS}
+        self.assertEqual(manifest, ts_asset_list("SKILL_ASSET_DIRS"))
+
+    def test_templates_is_actually_carried(self):
+        """실제로 빠질 뻔한 자리 — 데몬의 부트스트랩 템플릿이 여기 산다."""
+        self.assertIn("templates", ts_asset_list("SKILL_ASSET_DIRS"))
+
+
+class InstallerDelegatesTest(unittest.TestCase):
+    """설치 스크립트는 바이너리만 놓고 나머지를 EXE 에 맡긴다 — 규칙을 두 번 쓰지 않는다."""
+
+    def test_scripts_do_not_copy_assets_themselves(self):
+        """복사 규칙을 두 곳에 두면 갈라진다 — 스크립트는 원본 경로만 넘긴다.
+
+        정리(cleanup)에서 옛 파이썬 자산을 **지우는** 것은 복사가 아니므로 대상이 아니다."""
+        for name, copy_marker in (("install.sh", 'cp "$SRC"/bin'),
+                                  ("install.ps1", 'Copy-Item -Path (Join-Path $Src "bin')):
+            source = read(name)
+            self.assertNotIn(copy_marker, source, "%s 가 아직 자산을 직접 복사합니다" % name)
+            self.assertIn("--skill", source, "%s 가 EXE 에 스킬 원본을 넘기지 않습니다" % name)
+
+    def test_scripts_point_at_the_manifest_and_this_test(self):
+        for name in ("install.sh", "install.ps1"):
+            source = read(name)
+            self.assertIn("deploy_manifest.py", source)
+            self.assertIn("test_installer_parity.py", source)
+
+
+class V1LeftoverCleanupTest(unittest.TestCase):
+    """설치·갱신 때 이전 버전의 잔재를 정리하는가(사용자 요구).
+
+    지우기 전에 알리고, 실패해도 설치를 멈추지 않으며, 런타임 상태는 건드리지 않는다."""
+
+    def test_both_installers_have_a_cleanup_step(self):
+        self.assertIn("cleanup_v1", read("install.sh"))
+        self.assertIn("Remove-V1Leftovers", read("install.ps1"))
+
+    def test_cleanup_targets_the_python_assets_and_the_old_watchdog(self):
+        sh, ps1 = read("install.sh"), read("install.ps1")
+        self.assertIn("bin/*.py", sh)
+        self.assertIn("*.py", ps1)
+        self.assertIn("crontab", sh)
+        self.assertIn("AutoHarnessWatchdog", ps1 + read("install.ps1"))
+
+    def test_cleanup_does_not_touch_runtime_state(self):
+        """레지스트리·로그·장부는 사용자의 진행 상태다 — 설치기가 지우지 않는다."""
+        for name in ("install.sh", "install.ps1"):
+            source = read(name)
+            marker = "cleanup_v1() {" if name.endswith(".sh") else "function Remove-V1Leftovers {"
+            start = source.index(marker)
+            # 함수 본문만 본다 — 뒤쪽 코드까지 훑으면 무관한 문자열에 걸린다
+            end = source.index("\n}", start)
+            cleanup = source[start:end]
+            for keep in ("registry.json", "agent_tracker", "logs"):
+                self.assertNotIn(keep, cleanup, "%s 정리가 런타임 상태를 건드립니다: %s" % (name, keep))
+
+    def test_deprecated_flags_are_accepted_not_rejected(self):
+        """이미 퍼진 원라인이 오류로 죽으면 안 된다 — 받아들이고 안내한다."""
         sh = read("install.sh")
-        self.assertIn("/bin/*.py", sh)
-        self.assertNotIn('cp "$SRC"/bin/* "', sh)
-
-    def test_sh_takes_only_files_from_templates(self):
-        """하위 디렉토리를 통째로 복사하지 않는다."""
-        sh = read("install.sh")
-        self.assertNotIn('cp "$SRC"/templates/* "', sh)
-        self.assertIn("-maxdepth 1 -type f", sh)
+        self.assertIn("--v2)", sh)
+        self.assertIn("--watchdog)", sh)
+        self.assertIn("더 이상 없습니다", sh)
 
 
 class ManifestIsTheSingleSourceTest(unittest.TestCase):

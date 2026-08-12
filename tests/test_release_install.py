@@ -62,13 +62,17 @@ class ArgumentContractTest(unittest.TestCase):
         self.assertIn("알 수 없는 인자", self.src)
         self.assertRegex(self.src, r"알 수 없는 인자.*exit 2")
 
-    def test_v2_is_opt_in(self):
-        """기본 동작은 v1 이어야 한다 — v2 는 명시적 선택이다."""
-        self.assertRegex(self.src, r"DO_V2=0")
+    def test_v2_flag_is_accepted_but_no_longer_needed(self):
+        """구현이 하나뿐이라 기본 동작이다.
 
-    def test_python_not_required_for_v2(self):
-        """v2 는 단일 실행 파일이라 파이썬이 필요 없다."""
-        self.assertRegex(self.src, r'if \[ "\$DO_V2" != "1" \]; then\s*\n\s*PY="\$\(find_python\)"')
+        플래그는 계속 받아들이고 무시한다 — 문서·블로그·사내 스크립트에 이미 퍼져 있어
+        오류로 죽이면 멀쩡히 쓰던 원라인이 그날부터 실패한다."""
+        self.assertIn("--v2)", self.src)
+        self.assertNotIn("DO_V2", self.src)
+
+    def test_python_is_not_required_at_all(self):
+        """단일 실행 파일이라 파이썬이 필요 없다 — 탐색 코드 자체가 남아 있으면 안 된다."""
+        self.assertNotIn("find_python", self.src)
 
 
 class DownloadIntegrityTest(unittest.TestCase):
@@ -228,33 +232,6 @@ class WindowsInstallPathTest(unittest.TestCase):
         idx = self.ps1.index("-SimpleMatch")
         window = self.ps1[max(0, idx - 200):idx]
         self.assertNotIn("[Regex]::Escape", window)
-
-
-class CronWatchdogPathTest(unittest.TestCase):
-    """cron 워치독의 PATH — 등록 성공이 곧 동작은 아니다.
-
-    워치독이 하는 일은 claude 를 띄우는 것이다. cron 은 로그인 셸의 PATH 를 물려받지 않으므로,
-    박아 넣은 PATH 로 claude 가 해석되지 않으면 워치독은 매 주기 헛돈다 — 등록은 성공하고
-    로그만 쌓이므로 **조용히** 실패한다. 설치 시점에는 claude 위치를 이미 알고 있는데
-    종전에는 그 값을 버리고 고정 PATH 만 박았다.
-    """
-
-    def setUp(self):
-        self.src = read(INSTALL_SH)
-
-    def test_claude_location_is_reused(self):
-        self.assertIn("CLAUDE_BIN=", self.src, "설치 시점에 찾은 claude 경로를 쓰지 않습니다")
-        self.assertRegex(self.src, r'dirname "\$CLAUDE_BIN"')
-
-    def test_registration_is_verified_not_assumed(self):
-        # 등록 뒤 그 PATH 로 실제 해석되는지 확인해야 조용한 실패를 잡는다
-        self.assertIn('env -i PATH="$CRON_PATH"', self.src)
-        self.assertIn("claude 를 찾지 못합니다", self.src)
-
-    def test_warning_tells_how_to_fix(self):
-        idx = self.src.index("claude 를 찾지 못합니다")
-        tail = self.src[idx:idx + 400]
-        self.assertIn("crontab -e", tail, "고치는 방법이 안내되지 않았습니다")
 
 
 class UpdateBlockedGuidanceTest(unittest.TestCase):

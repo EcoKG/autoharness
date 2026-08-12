@@ -9,7 +9,7 @@
  * 심는 작업이므로, 실행 전에 확인할 수단이 있어야 한다.
  */
 import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { userPaths } from "../core/paths.ts";
 import {
@@ -139,6 +139,35 @@ async function copyTree(src: string, dst: string): Promise<number> {
 }
 
 /**
+ * 스킬 폴더로 함께 가는 것 — 저장소 루트 기준.
+ *
+ * **이 목록은 scripts/deploy_manifest.py 와 같아야 한다.** 어긋나면
+ * tests/test_installer_parity.py 가 실패한다. 종전에는 설치 스크립트(bash/PowerShell)가
+ * 직접 복사했는데, 그 경로를 걷어내면서 여기로 모였다 — 그때 templates/ 가 통째로
+ * 빠져 데몬이 부트스트랩 템플릿을 영영 찾지 못하는 상태가 될 뻔했다.
+ */
+export const SKILL_ASSET_FILES: readonly string[] = ["DESIGN.md", "README.md",
+  "install.ps1", "install.sh"];
+export const SKILL_ASSET_DIRS: readonly string[] = ["templates"];
+
+async function copyFileIfPresent(from: string, to: string): Promise<number> {
+  if (!(await Bun.file(from).exists())) return 0;
+  await copyFile(from, to);
+  return 1;
+}
+
+/** 저장소 루트에서 문서·설치기·템플릿을 설치본으로 옮긴다. 없는 원본은 건너뛴다. */
+async function copySkillAssets(root: string, dst: string): Promise<number> {
+  let n = 0;
+  for (const name of SKILL_ASSET_FILES) n += await copyFileIfPresent(join(root, name), join(dst, name));
+  for (const name of SKILL_ASSET_DIRS) {
+    const from = join(root, name);
+    if (await isDir(from)) n += await copyTree(from, join(dst, name));
+  }
+  return n;
+}
+
+/**
  * MCP 등록 성공 문구.
  *
  * "등록했습니다" 는 **눈앞의 세션에서는 아직 참이 아니다.** 등록은 설정 파일에 쓰이고
@@ -221,7 +250,7 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     }
   }
 
-  // 2. 스킬 문서 배치
+  // 2. 스킬 자산 배치
   const skillSrc = options.skillSource;
   const skillDst = userPaths(env).skillDir;
   if (!skillSrc) {
@@ -229,10 +258,11 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
   } else if (!(await isDir(skillSrc))) {
     steps.push(step("skill", "failed", `스킬 원본이 없습니다: ${skillSrc}`));
   } else if (dryRun) {
-    steps.push(step("skill", "ok", `(dry-run) ${skillSrc} → ${skillDst}`));
+    steps.push(step("skill", "ok", `(dry-run) ${skillSrc} + templates·문서 → ${skillDst}`));
   } else {
     try {
-      const n = await copyTree(skillSrc, skillDst);
+      let n = await copyTree(skillSrc, skillDst);
+      n += await copySkillAssets(dirname(skillSrc), skillDst);
       steps.push(step("skill", "ok", `${n}개 파일 → ${skillDst}`));
     } catch (err) {
       steps.push(step("skill", "failed", `복사 실패: ${String(err)}`));
