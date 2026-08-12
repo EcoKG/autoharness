@@ -247,12 +247,23 @@ class NoV1ResurrectionTest(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(REPO, rel)),
                              "%s 가 아직 있습니다" % rel)
 
-    def test_readme_states_the_breaking_change(self):
-        """v1 배선을 가진 저장소는 자동 복구되지 않는다 — 그 사실이 안내에 있어야 한다."""
+    def test_readme_states_what_happens_to_v1_wiring(self):
+        """v1 배선을 어떻게 처리하는지가 안내에 있어야 한다.
+
+        v3.0.0 에서는 "자동 복구되지 않습니다" 가 그 사실이었다. 이제는 설치기가
+        **레지스트리에 등록된 저장소를** 돌며 고친다. 등록되지 않은 저장소는 설치기가
+        알 방법이 없으므로 그쪽 처방(install --migrate)이 남아 있어야 한다 —
+        자동 복구를 광고하면서 사각지대를 감추면 그것이 더 나쁘다."""
         readme = read("README.md")
         self.assertIn("이전 버전", readme)
-        self.assertIn("자동으로 복구되지 않습니다", readme)
-        self.assertIn("rm .claude/settings.json", readme)
+        self.assertIn("자동으로 고칩니다", readme)
+        self.assertIn("등록된 저장소", readme)
+        self.assertIn("install --migrate", readme)
+
+    def test_readme_says_the_repair_spares_user_hooks(self):
+        """남의 훅까지 지우는 정리라면 사용자는 설치를 못 돌린다 — 경계를 밝힌다."""
+        readme = read("README.md")
+        self.assertIn("사용자가 직접 넣은 훅은 건드리지 않습니다", readme)
 
     def test_docs_do_not_offer_an_implementation_choice(self):
         for rel in ("README.md", os.path.join("skill", "SKILL.md")):

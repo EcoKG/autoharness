@@ -24,8 +24,8 @@ Claude Code 프롬프트로만 존재하던 "자율 주행 마이그레이션 �
 | 구분 | 경로 |
 |---|---|
 | 개발 사본(이 폴더) | `...\Claude Harnes\autoharness\` |
-| 설치 위치(스킬+코드) | `%USERPROFILE%\.claude\skills\autoharness\` (SKILL.md, bin\, templates\) |
-| 런타임 상태 | `%USERPROFILE%\.claude\autoharness\` (registry.json, logs\, watchdog.lock) |
+| 설치 위치(스킬 문서) | `%USERPROFILE%\.claude\skills\autoharness\` (SKILL.md, DESIGN.md, README.md, install.*, templates\) |
+| 런타임 상태 | `%USERPROFILE%\.claude\autoharness\` (registry.json, logs\daemon.log, daemon.lock, daemon.json, web-token, bin\) |
 | 대상 저장소 내 생성물 | `.claude/agent_tracker.json`, `.claude/agent_tracker.example.json`, `.claude/harness-logs/`, `.claude/harness-state.json`, `.claude/harness-heartbeat.json`, `.claude/harness-hooks-seen.json`(훅 발화 마커), `.claude/HARNESS_PAUSED`(플래그), `PROGRESS.md` |
 | claude CLI | `%USERPROFILE%\.local\bin\claude.exe` 또는 PATH (2.1.183 실측; `-p`, `--model`, `--permission-mode`, `--dangerously-skip-permissions` 확인됨. `--max-turns` 미확인 → 사용 금지) |
 
@@ -103,9 +103,9 @@ autoharness/
 | `model_recommend` | repo_path, source_stack, target_stack, notes | 추천+근거 (§9 휴리스틱) |
 | `model_set` | repo_path*, model* | 장부·레지스트리 모델 갱신 (두 값만 허용) |
 | `heartbeat` | repo_path* | 하트비트 갱신 |
-| `watchdog_install` | interval_minutes(기본 15) | schtasks 사용자 작업 `AutoHarnessWatchdog` 생성(/F 갱신) |
-| `watchdog_uninstall` | — | schtasks 삭제 |
-| `watchdog_status` | — | schtasks 조회 + 레지스트리 + watchdog.log tail + `health` 진단(§10) |
+| `watchdog_install` | interval_minutes(기본 15) | 데몬 로그온 자동 시작 등록(schtasks `AutoHarnessDaemon` → 시작프로그램 폴더 → systemd 사용자 유닛). tick 간격을 레지스트리에 기록 |
+| `watchdog_uninstall` | — | 자동 시작 등록 해제(등록된 수단을 그대로 되돌림) |
+| `watchdog_status` | — | 자동 시작 조회 + 레지스트리 + daemon.log tail + `health` 진단(§10) |
 
 `harness_init` 의 settings 병합: 기존 `.claude/settings.json` 을 로드해 `hooks` 4종(§7)과
 `permissions.allow` 항목(`Bash("<EXE>" run:*)`, `Bash("<EXE>" next:*)`)을 **추가 병합**한다.
@@ -249,9 +249,9 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
 
 ## 9. 자동 부활 (상주 데몬)
 
-스케줄러가 15분마다 실행하는 **1회성** 스크립트(데몬 아님). 플래그: `--dry-run`(판단만 출력,
-기동 없음), `--status`. 단일 인스턴스 잠금: `watchdog.lock`(pid 기록, 살아 있으면 즉시 종료,
-죽은 pid 면 탈취). 로그: `%USERPROFILE%\.claude\autoharness\logs\watchdog.log`(1MB 초과 시 절반 절사).
+자기 시계로 도는 **상주 데몬**(`autoharness daemon`). 기본 tick 간격 15분, `--interval` 로
+바꾼다. 단일 인스턴스 잠금: `daemon.lock`(pid 기록, 살아 있으면 즉시 종료, 죽은 pid 면
+탈취). 로그: `%USERPROFILE%\.claude\autoharness\logs\daemon.log`(1MB 초과 시 절반 절사).
 
 프로젝트별 판단(순서 고정):
 1. status ≠ active → 스킵 (paused/completed/needs_human/error).
@@ -281,10 +281,10 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
      `next_retry_at = now + limit_backoff[min(limit_hits-1, 끝)]`. 영구 포기 없음.
    - ③ 그 외 조기 비정상 종료 → **error**: `consecutive_errors++`,
      `next_retry_at = now + error_backoff[...]`. `>= max_consecutive_errors` 면 status=error
-     (사람 확인 필요 — watchdog.log 에 사유 기록).
+     (사람 확인 필요 — daemon.log 에 사유 기록).
    claude 실행 파일 해석은 `.exe` 를 우선한다(.bat/.cmd 심은 cmd 재해석으로 프롬프트 인용이
    깨진다): which 결과가 .bat/.cmd 면 claude.exe → 고정 폴백 경로 순으로 대체.
-7. 모든 판단·행동을 watchdog.log 한 줄씩 기록.
+7. 모든 판단·행동을 daemon.log 한 줄씩 기록.
 8. 주기 끝에 레지스트리 `last_tick` 을 갱신한다(기동 여부 무관, `--dry-run` 제외).
 
 **'등록만 되고 실행 안 됨' 감지** (`watchdog_status` 의 `health` — 경고 전용):
@@ -304,7 +304,7 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
   (`0x800710E0` 요청 거부, `0x8004131F` 인스턴스 중복, `0x80070002` 경로 없음 등).
   `0x41300/0x41301/0x41303`(준비됨·실행 중·미실행)은 정보성이라 실패로 세지 않는다.
   실패 코드는 `grace` 중에도 숨기지 않는다.
-- **실행 흔적의 정의**: watchdog.log 의 나이와 레지스트리 `last_tick` 의 나이 중 **더 최근인
+- **실행 흔적의 정의**: daemon.log 의 나이와 레지스트리 `last_tick` 의 나이 중 **더 최근인
   값**이다(`evidence_age_minutes`). 임계를 로그에만 걸면 로그 파일이 사라진 환경에서 마지막
   틱이 며칠 전이어도 healthy 로 보고된다 — 이 모듈이 존재하는 이유인 상태를 정확히 그
   자리에서 놓친다. 보조 신호의 서술도 tick 나이를 보고 "돌고 있습니다"와 "멈춰 있습니다"를
@@ -314,8 +314,8 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
   "워치독 미실행 의심"과 "기동 조건이 매번 스킵됨"을 구분해 서술한다 — 이 구분이 없으면
   정상 운용 중인 저장소를 죽은 것으로 오판한다(실측된 오탐).
 - 로케일 차이로 schtasks 출력 파싱이 실패하면 필드는 null 로 두고 **경고하지 않는다**.
-- **설치 스탬프**: 워치독 등록 경로는 셋이다 — MCP `watchdog_install`, `install.ps1 -Watchdog`,
-  `install.sh --watchdog`. 셋 모두 등록 **성공 직후** `settings.watchdog_installed_at` 과
+- **설치 스탬프**: 자동 시작 등록 경로는 둘이다 — MCP `watchdog_install`, 그리고 설치기의
+  `--autostart`(`install.ps1 -Autostart`). 둘 다 등록 **성공 직후** `settings.watchdog_installed_at` 과
   `watchdog_interval_minutes` 를 기록한다(설치 스크립트는
   설치 시각·주기를 레지스트리에 기록한다). 기록은
   fail-open — 실패해도 설치를 중단하지 않는다. 등록 **전에** 스탬프를 찍으면 등록 실패가
@@ -420,17 +420,21 @@ EXE 경로가 박히기 때문이다(§8 `broken_path`). 저장소에 커밋하�
 참조용으로 `.claude/settings.example.json`(자리표시자 경로)만 추적한다. 클론 후 복구는
 `autoharness install --migrate <저장소>` 한 번이다.
 
-### 12.2 install.ps1
+### 12.2 설치 스크립트 (install.ps1 / install.sh)
 
-- `-Install`(기본): 스킬 폴더로 복사(기존은 `.bak-<ts>` 백업 후 교체, **install.ps1 자신도
-  복사** — 설치본에서 -Watchdog/-Uninstall 재실행 가능해야 한다. install.sh 도 함께 둔다 —
-  Windows 로 설치한 계정에서 WSL 재설치를 설치본만으로 할 수 있어야 한다), 런타임 디렉토리 생성,
-  `claude mcp remove -s user autoharness`(실패 무시) → `claude mcp add -s user autoharness --
-  <EXE 절대경로> mcp`, 결과 검증 출력.
-- `-Watchdog`: **ScheduledTasks cmdlet(Register-ScheduledTask)** 로 등록(15분 간격, pythonw).
-  schtasks `/TR` 은 PS 5.1 네이티브 인자 전달에서 내부 따옴표가 소실되어 공백 경로가 조각나므로
-  install.ps1 에서는 금지(MCP 쪽 subprocess 리스트 전달은 안전하므로 schtasks 허용).
-- `-Uninstall`: schtask 삭제 + mcp remove + 스킬 폴더 제거(런타임 상태는 보존).
+- **기본**: 릴리스에서 플랫폼 바이너리를 받아 SHA256SUMS 대조와 `version` 실행 확인을 통과한
+  것만 `~/.claude/autoharness/bin/` 에 놓는다. 그다음은 전부 EXE 에 위임한다 — 스킬 자산
+  배치·MCP 등록·자동 시작·정리. **복사 규칙을 두 언어로 두 번 쓰지 않는다**(실측: 같은
+  질문에 세 곳이 각각 답하고 답이 달랐다).
+- **`--keep` / `--reset`(`-Keep` / `-Reset`)**: 기존 v2 런타임 상태를 보존할지 초기화할지.
+  주지 않으면 지울 이력이 있을 때 한 번 묻고, **답을 받지 못하면 보존한다**(비대화형·EOF·
+  프롬프트 불가). 묻는 경로는 stdin 이 아니라 터미널이다 — 원라인 설치에서 stdin 은 설치
+  스크립트 자신이라, 거기서 읽으면 스크립트의 다음 줄을 답으로 먹고 그 줄은 실행되지 않는다.
+  bash 는 `/dev/tty`, PowerShell 은 `[Console]::IsInputRedirected` 로 같은 자리를 막는다.
+- **v1 잔재 정리는 선택 사항이 아니다**: 부를 코드가 없는 파일이라 물어볼 여지가 없다.
+  EXE 의 `install/cleanup.ts` 가 설치·제거 양쪽에서 언제나 수행한다.
+- **`--uninstall`(`-Uninstall`)**: EXE 의 `install --uninstall` 에 위임(자동 시작 해제 + MCP
+  등록 제거 + v1 잔재 정리) 후 스킬 폴더를 지운다. 런타임 상태는 보존한다.
 - PowerShell 5.1 호환(`&&` 금지, 삼항 금지).
 
 ## 12. 검증 계약 (적대적 검증 에이전트용)

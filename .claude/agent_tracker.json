@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-12T08:41:04.264Z",
+  "updated_at": "2026-08-12T08:48:23.753Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -2013,7 +2013,7 @@
       "attempts": 1,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/v2-reset-choice-20260812T084037Z.log",
-      "commit": null,
+      "commit": "49d6948",
       "started_at": "2026-08-12T08:39:36.457Z",
       "finished_at": "2026-08-12T08:41:04.264Z",
       "test_cmd": null
@@ -2026,13 +2026,13 @@
         "v2-reset-choice"
       ],
       "priority": 30,
-      "status": "pending",
+      "status": "done",
       "attempts": 0,
       "last_error": null,
-      "last_log_file": null,
+      "last_log_file": ".claude/harness-logs/readme-rewrite-20260812T084756Z.log",
       "commit": null,
-      "started_at": null,
-      "finished_at": null,
+      "started_at": "2026-08-12T08:47:56.944Z",
+      "finished_at": "2026-08-12T08:48:23.753Z",
       "test_cmd": null
     }
   ]

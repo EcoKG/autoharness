@@ -44,7 +44,7 @@
 | 스킬 문서 | `~/.claude/skills/autoharness/` |
 | 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
 | MCP 등록 | 사용자 스코프 (`claude mcp add --scope user`) |
-| 런타임 상태 | `~/.claude/autoharness/` — 제거해도 **보존**됩니다 |
+| 런타임 상태 | `~/.claude/autoharness/` — 제거해도 **보존**됩니다. 다시 설치할 때 지울지 고를 수 있습니다 |
 
 > **표기 규약**: 이 문서의 `autoharness` 는 설치된 실행 파일
 > `~/.claude/autoharness/bin/autoharness` — Windows 에서는 `%USERPROFILE%\.claude\autoharness\bin\autoharness.exe` —
@@ -91,6 +91,44 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 통과한 것만 설치 위치에 놓습니다.
 
 사내 미러나 오프라인 배포는 `AUTOHARNESS_RELEASE_BASE` 로 기점을 바꾸십시오(두 경로 모두).
+
+### 설치할 때 기존 것은 어떻게 되나
+
+지우는 대상이 둘로 갈리고, **둘의 처리 방식이 다릅니다.**
+
+| 무엇 | 어떻게 |
+|---|---|
+| 이전 버전(파이썬 구현)의 잔재 | **묻지 않고 정리합니다.** 부를 코드가 없는 파일이라 물어볼 여지가 없습니다 |
+| 지금 쓰던 런타임 상태 | **묻습니다.** 등록된 프로젝트·주행 이력이라 지우면 되돌릴 수 없습니다 |
+
+지울 이력이 있으면 설치기가 한 번 묻습니다.
+
+```
+[autoharness] 기존 AutoHarness 상태가 있습니다: /home/me/.claude/autoharness
+[autoharness]   [K] 보존   — 등록된 프로젝트와 주행 이력을 그대로 이어서 씁니다 (기본)
+[autoharness]   [R] 초기화 — 레지스트리·로그·토큰을 지우고 새로 시작합니다 (되돌릴 수 없습니다)
+[autoharness] 선택 [K/r]:
+```
+
+미리 정해 두려면 플래그로 주십시오 — 그러면 묻지 않습니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --reset
+```
+
+| 방법 | 보존 | 초기화 |
+|---|---|---|
+| `install.sh` | `--keep` | `--reset` |
+| `install.ps1` | `-Keep` | `-Reset` |
+| `autoharness install` | `--keep` | `--reset` |
+
+**답을 받지 못하면 보존합니다.** 비대화형 실행, EOF, 프롬프트를 띄울 수 없는 호스트 —
+전부 보존으로 떨어집니다. 물어보지 않은 파괴는 하지 않습니다.
+
+초기화가 지우는 것은 **계정 런타임 상태**뿐입니다: `registry.json`, `logs/`, 웹 토큰,
+데몬 잠금·접속 정보. **저장소 안의 장부(`.claude/agent_tracker.json`)는 지우지 않습니다** —
+그것은 계정이 아니라 저장소에 속한 작업 이력입니다. 초기화 후에도 저장소에서 다시
+`/autoharness` 로 시작하면 그 장부를 그대로 이어받습니다.
 
 ### 소스에서 빌드하기
 
@@ -168,6 +206,9 @@ Git Bash 라면 `taskkill /F /IM autoharness.exe` 입니다 — 설치기도 이
 자동 시작을 등록해 뒀다면 다시 띄울 필요 없이 다음 로그온에 새 버전으로 올라옵니다.
 잠금 때문에 실패하면 설치기가 멈출 대상과 명령을 함께 알려 줍니다.
 
+갱신도 설치와 같은 경로라 **보존/초기화를 묻습니다.** 이어서 쓰는 것이 갱신의 목적이므로
+보통은 그냥 Enter(보존)입니다. 묻는 것 자체가 성가시면 `--keep` 을 붙이십시오.
+
 ---
 
 # 사용법
@@ -236,20 +277,31 @@ Git Bash 라면 `taskkill /F /IM autoharness.exe` 입니다 — 설치기도 이
 
 ## 이전 버전(파이썬 구현)을 쓰던 경우
 
-**파이썬 엔진·MCP 서버·워치독은 제거됐습니다.** 설치기가 그 잔재(스킬 폴더의 `bin/*.py`,
-워치독 cron 항목·스케줄러 작업)를 정리합니다 — 무엇을 지우는지 알리고 지우며, 실패해도
-설치를 멈추지 않습니다. 런타임 상태(레지스트리·로그·장부)는 건드리지 않습니다.
+**파이썬 엔진·MCP 서버·워치독은 제거됐습니다.** 설치·제거할 때 그 잔재를 **묻지 않고**
+정리합니다. 무엇을 지웠는지는 결과의 `cleanup-v1` 단계에 그대로 나옵니다.
 
-**저장소의 훅 배선은 자동으로 복구되지 않습니다.** `python … harness_engine.py` 를 부르는
-훅은 이제 하네스 훅으로 인식되지 않아 `status` 가 `not_registered` 로 보고하고
-`install --migrate` 도 손대지 않습니다. 그 저장소에서는 이렇게 하십시오:
+| 지우는 것 | 왜 남아 있으면 안 되나 |
+|---|---|
+| 스킬 폴더의 `bin/*.py` 와 `__pycache__` | 부를 코드가 없는 죽은 파일 |
+| `templates/agent_harness.sh` | v3 가 배포하지 않는데 옛 설치본에 남습니다 — 설치는 덮어쓸 뿐 지우지 않기 때문입니다 |
+| 워치독 cron 항목 / 스케줄러 작업 `AutoHarnessWatchdog` | 매 15분 실패하는 등록만 남습니다 |
+| `watchdog.lock`, `watchdog.log`, `cron.log` | 워치독이 남긴 잠금·로그 |
+| 등록된 저장소의 **죽은 v1 훅 배선** | 아래 |
+
+**v1 훅 배선도 이제 자동으로 고칩니다.** `python … harness_engine.py` 를 부르는 훅은
+하네스 훅으로 인식되지 않아, 남겨 두면 게이트 4종이 무효인 채로 주행합니다 — 훅이 없는
+것이 아니라 **있는데 죽은** 상태라 진단조차 `not_registered` 로 나옵니다. 설치기가
+레지스트리에 등록된 저장소를 돌며 그 항목만 지우고 v2 배선을 심습니다.
+
+- **사용자가 직접 넣은 훅은 건드리지 않습니다** — v1 파일 이름을 부르는 항목만 지웁니다.
+- 바꾸기 전에 `.claude/settings.json` 을 백업하고 그 경로를 결과에 실어 줍니다.
+- **장부는 읽지도 쓰지도 않습니다.**
+
+레지스트리에 등록되지 않은 저장소는 설치기가 알 방법이 없습니다. 그쪽은 직접 한 번:
 
 ```bash
-rm .claude/settings.json && autoharness install --migrate <저장소>
+autoharness install --migrate <저장소>
 ```
-
-기존 설정에 하네스 외의 훅을 직접 넣어 두셨다면 지우기 전에 확인하십시오 — 그 항목은
-그대로 두고 `python … harness_engine.py` 를 부르는 4줄만 지우셔도 됩니다.
 
 ## 배포 경계 — 무엇이 나가고 무엇은 나가지 않는가
 
@@ -399,10 +451,10 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 | 항목 | 값 |
 |---|---|
 | 훅 콜드 스타트 p95 | 유휴 시 81~82ms (예산 150ms) — 아래 주석 참고 |
-| EXE 크기 / 빌드 | 94.1 MiB / 0.7~0.9초 |
+| EXE 크기 / 빌드 | 94.2 MiB / 0.7~0.9초 |
 | 데몬 드리프트 | 가속 500 tick 편차 0, 실시간 60 tick 평균 간격 정확 |
-| 테스트 | 데몬 675건 + 저장소 도구 (2026-08-12) |
-| 자체 검증 파이프라인 | 직렬 131초 → 병렬 24초 (16코어, 같은 집합·같은 판정) |
+| 테스트 | 데몬 713건(25파일) + 저장소 도구 241건(11모듈) (2026-08-12) |
+| 자체 검증 파이프라인 | 직렬 131초 → 병렬 26초 (16코어/워커 12, 단위 37개, 같은 집합·같은 판정) |
 
 재현: `bun run bench:startup`, `bun run verify:exe`, `bun test`
 
@@ -422,7 +474,7 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 
 | 실행 | 시간 | 결과 |
 |---|---|---|
-| 병렬 ×3 | 24초 | exit 0, 집합 대조 동일 |
+| 병렬 | 26초 | exit 0, 집합 대조 동일 |
 | `--serial` | 131초 | exit 0, 집합 대조 동일 |
 
 `--jobs N` 으로 워커 수를 정하고, `--serial` 로 하나씩 돌려 대조할 수 있습니다.
@@ -437,12 +489,20 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 ## 제거
 
 ```bash
-autoharness install --uninstall     # 자동 시작·MCP 등록 해제
+autoharness install --uninstall     # 자동 시작·MCP 등록 해제 + v1 잔재 정리
 ```
 
-**장부·레지스트리·로그는 남습니다** — 진행 상태를 지우지 않습니다. 완전히 지우려면
-`~/.claude/skills/autoharness/`, `~/.claude/autoharness/bin/` 을 직접 삭제하십시오.
-대상 저장소의 훅을 되돌리려면 `autoharness install --rollback <저장소> --backup <파일>` 을 쓰십시오.
+**장부·레지스트리·로그는 남습니다** — 진행 상태를 지우지 않습니다. 남은 것을 마저
+지우려면:
+
+| 지우고 싶은 것 | 방법 |
+|---|---|
+| 계정 런타임 상태(레지스트리·로그·토큰) | `autoharness install --reset` — 다음 설치 때 초기화를 고르는 것과 같습니다 |
+| 스킬 문서·실행 파일 | `~/.claude/skills/autoharness/`, `~/.claude/autoharness/bin/` 을 직접 삭제 |
+| 대상 저장소의 훅 | `autoharness install --rollback <저장소> --backup <파일>` |
+
+저장소 안의 장부(`.claude/agent_tracker.json`)는 어느 명령으로도 지우지 않습니다 —
+지우시려면 직접 삭제하십시오.
 
 ---
 
