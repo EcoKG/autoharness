@@ -442,6 +442,50 @@ describe("설치", () => {
     return p;
   }
 
+  describe("보존과 초기화", () => {
+    /** 이전 설치가 남긴 상태 — 이것이 살아남는지 사라지는지가 선택의 전부다. */
+    async function seedState(): Promise<string> {
+      const registry = userPaths(env).registry;
+      await mkdir(join(registry, ".."), { recursive: true });
+      await writeFile(registry, JSON.stringify({ schema_version: 1, settings: {}, projects: [] }), "utf8");
+      return registry;
+    }
+
+    test("기본은 보존이다 — 묻지 않은 파괴는 하지 않는다", async () => {
+      const registry = await seedState();
+      const r = await install({ sourceExe: await fakeExe(), env, runner: okRunner(), platform: "win32" });
+      expect(await Bun.file(registry).exists()).toBe(true);
+      expect(r.steps.find((s) => s.name === "reset")!.state).toBe("skipped");
+    });
+
+    test("보존할 때는 지우는 방법을 알려 준다 — 선택지를 숨기지 않는다", async () => {
+      await seedState();
+      const r = await install({ sourceExe: await fakeExe(), env, runner: okRunner(), platform: "win32" });
+      expect(r.steps.find((s) => s.name === "reset")!.detail).toContain("--reset");
+    });
+
+    test("--reset 을 주면 지운다", async () => {
+      const registry = await seedState();
+      const r = await install({
+        sourceExe: await fakeExe(), env, runner: okRunner(), platform: "win32", reset: true,
+      });
+      expect(await Bun.file(registry).exists()).toBe(false);
+      expect(r.steps.find((s) => s.name === "reset")!.state).toBe("ok");
+      // 초기화는 설치를 방해하지 않는다 — 실행 파일은 제자리에 놓인다
+      expect(await Bun.file(installedExePath(env)).exists()).toBe(true);
+      expect(r.ok).toBe(true);
+    });
+
+    test("v1 정리는 선택과 무관하게 언제나 돈다", async () => {
+      const dead = join(userPaths(env).skillDir, "bin", "harness_engine.py");
+      await mkdir(join(dead, ".."), { recursive: true });
+      await writeFile(dead, "# v1", "utf8");
+      const r = await install({ sourceExe: await fakeExe(), env, runner: okRunner(), platform: "win32" });
+      expect(await Bun.file(dead).exists()).toBe(false);
+      expect(r.steps.find((s) => s.name === "cleanup-v1")!.state).toBe("ok");
+    });
+  });
+
   test("EXE 를 설치 위치로 복사한다", async () => {
     const src = await fakeExe();
     const r = await install({ sourceExe: src, env, runner: okRunner(), platform: "win32" });

@@ -20,6 +20,11 @@
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
+
+.EXAMPLE
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Reset
+  기존 런타임 상태(레지스트리·로그·토큰)를 지우고 새로 시작합니다. -Keep 은 그대로
+  둡니다. 둘 다 주지 않으면 지울 상태가 있을 때 묻습니다.
 #>
 [CmdletBinding()]
 param(
@@ -29,6 +34,10 @@ param(
     [switch]$Watchdog,
     [switch]$Autostart,
     [switch]$Uninstall,
+    # 기존 v2 런타임 상태를 지울 것인가. 아무것도 주지 않으면 물어보고, 대화형이
+    # 아니면 보존합니다 — 물어보지 않은 파괴는 하지 않습니다.
+    [switch]$Reset,
+    [switch]$Keep,
     [int]$IntervalMinutes = 15
 )
 
@@ -70,6 +79,46 @@ function Invoke-Native {
     finally {
         $ErrorActionPreference = $prev
     }
+}
+
+# ------------------------------------------------------------------ 보존 / 초기화 선택
+#
+# **묻는 것은 v2 상태뿐입니다.** v1 잔재는 부를 코드가 없으므로 선택지가 아니며 EXE 가
+# 언제나 정리합니다. 여기서 정하는 것은 사용자의 진행 이력을 이어서 쓸지 버릴지입니다.
+#
+# 입력이 리디렉션돼 있으면(파이프·파일·-NonInteractive) 묻지 않고 보존합니다 — 무인
+# 설치가 프롬프트에서 멈추는 것도, 답을 못 받았다고 지우는 것도 둘 다 사고입니다.
+function Resolve-ResetChoice {
+    if ($Reset -and $Keep) {
+        Write-Step "-Reset 과 -Keep 을 함께 줄 수 없습니다 — 하나만 고르십시오."
+        exit 2
+    }
+    if ($Reset) { return "reset" }
+    if ($Keep)  { return "keep" }
+
+    # 지울 이력이 없으면 물을 것도 없습니다. registry.json 이 "등록된 프로젝트가 있다" 의
+    # 유일한 표식이고, 아래 안내가 약속하는 것도 그것입니다.
+    if (-not (Test-Path (Join-Path $RuntimeDir "registry.json"))) { return "keep" }
+
+    if ([Console]::IsInputRedirected) {
+        Write-Step "기존 상태를 보존합니다 (대화형이 아니라 묻지 않았습니다 — 초기화하려면 -Reset)"
+        return "keep"
+    }
+
+    Write-Step ""
+    Write-Step ("기존 AutoHarness 상태가 있습니다: " + $RuntimeDir)
+    Write-Step "  [K] 보존   — 등록된 프로젝트와 주행 이력을 그대로 이어서 씁니다 (기본)"
+    Write-Step "  [R] 초기화 — 레지스트리·로그·토큰을 지우고 새로 시작합니다 (되돌릴 수 없습니다)"
+    Write-Step "               저장소 안의 장부(.claude\agent_tracker.json)는 지우지 않습니다."
+    $answer = ""
+    try { $answer = Read-Host "[autoharness] 선택 [K/r]" }
+    catch { return "keep" }   # 프롬프트를 띄울 수 없는 호스트 — 보존이 안전한 쪽이다
+    if ($answer -match "^[Rr]") {
+        Write-Step "선택: 초기화"
+        return "reset"
+    }
+    Write-Step "선택: 보존"
+    return "keep"
 }
 
 # ------------------------------------------------------------------ 제거
@@ -213,6 +262,8 @@ function Install-AutoHarnessV2 {
         $skillSrc = Join-Path $Src "skill"
         if (Test-Path $skillSrc) { $args += @("--skill", $skillSrc) }
         if ($Autostart) { $args += "--autostart" }
+        # 선택은 언제나 명시해서 넘긴다 — EXE 가 자기 판단으로 묻거나 지우지 않게 한다
+        $args += ("--" + $ResetChoice)
         $r = Invoke-Native $exe $args
         Write-Host $r.Output
         if ($r.ExitCode -ne 0) {
@@ -244,6 +295,8 @@ if ($Uninstall) {
 }
 else {
     # 구현이 하나뿐이라 -V2 는 기본 동작이다. 문서·스크립트에 이미 퍼져 있어 계속 받아들인다.
+    # 선택은 내려받기 전에 받는다 — 사용자를 기다리게 한 뒤에 묻지 않는다.
+    $ResetChoice = Resolve-ResetChoice
     Install-AutoHarnessV2
 }
 

@@ -7,7 +7,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash
 #   (로그온 자동 시작까지: ... | bash -s -- --autostart)
 # 체크아웃에서 실행:
-#   bash install.sh [--autostart] [--uninstall]
+#   bash install.sh [--autostart] [--keep|--reset] [--uninstall]
+#
+# 기존 상태가 있으면 보존할지 초기화할지 묻습니다(--keep/--reset 을 주면 묻지 않습니다).
+# 대화형이 아니면 묻지 않고 **보존**합니다 — 물어보지 않은 파괴는 하지 않습니다.
 #
 # 배포 목록은 scripts/deploy_manifest.py 가 정합니다 — install.ps1 과 같은 집합을 다뤄야
 # 하며, 어긋나면 tests/test_installer_parity.py 가 실패합니다.
@@ -30,8 +33,18 @@ RUNTIME="$HOME/.claude/autoharness"
 MODE="install"
 DEPRECATED_WATCHDOG=0
 DO_AUTOSTART=0
+# "" = 아직 정하지 않음(물어본다) / keep / reset
+RESET_CHOICE=""
 for a in "$@"; do
     case "$a" in
+        # 기존 v2 런타임 상태를 지울 것인가. 되돌릴 수 없는 선택이라 모순된 지시는
+        # 짐작하지 않고 거부한다.
+        --reset)
+            [ "$RESET_CHOICE" = "keep" ] && { echo "[autoharness] --reset 과 --keep 을 함께 줄 수 없습니다." >&2; exit 2; }
+            RESET_CHOICE="reset" ;;
+        --keep)
+            [ "$RESET_CHOICE" = "reset" ] && { echo "[autoharness] --reset 과 --keep 을 함께 줄 수 없습니다." >&2; exit 2; }
+            RESET_CHOICE="keep" ;;
         # v1 워치독은 사라졌다(데몬이 자기 시계로 돈다). 옛 명령을 그대로 친 사용자를
         # 오류로 세우지 않고, 무엇으로 바뀌었는지 알려 준다.
         --watchdog)  DEPRECATED_WATCHDOG=1 ;;
@@ -39,7 +52,7 @@ for a in "$@"; do
         # 구현이 하나뿐이라 기본 동작이다. 문서·스크립트에 이미 퍼져 있어 계속 받아들인다.
         --v2)        : ;;
         --autostart) DO_AUTOSTART=1 ;;
-        *) echo "[autoharness] 알 수 없는 인자: $a (사용: --autostart | --uninstall)" >&2; exit 2 ;;
+        *) echo "[autoharness] 알 수 없는 인자: $a (사용: --autostart | --keep | --reset | --uninstall)" >&2; exit 2 ;;
     esac
 done
 
@@ -52,6 +65,42 @@ installed_exe_name() {
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*) echo "autoharness.exe" ;;
         *) echo "autoharness" ;;
+    esac
+}
+
+# ---------------------------------------------------------------- 보존 / 초기화 선택
+#
+# **묻는 것은 v2 상태뿐이다.** v1 잔재는 부를 코드가 없으므로 선택지가 아니며 EXE 가
+# 언제나 정리한다. 여기서 정하는 것은 사용자의 진행 이력을 이어서 쓸지 버릴지다.
+#
+# `/dev/tty` 로만 묻는다. 원라인 설치(`curl … | bash`)에서 stdin 은 **이 스크립트 자신**이라
+# 거기서 read 하면 설치 스크립트의 남은 줄을 답으로 먹고 그 줄은 실행되지 않는다.
+# tty 가 없으면 묻지 않고 보존한다 — 답을 못 받았다고 지우는 일은 없다.
+ask_reset_choice() {
+    [ -n "$RESET_CHOICE" ] && return 0
+    # 지울 이력이 없으면 물을 것도 없다. registry.json 이 "등록된 프로젝트가 있다" 의
+    # 유일한 표식이고, 아래 안내 문구가 약속하는 것도 그것이다.
+    if [ ! -f "$RUNTIME/registry.json" ]; then
+        RESET_CHOICE="keep"
+        return 0
+    fi
+    if [ ! -r /dev/tty ]; then
+        RESET_CHOICE="keep"
+        step "기존 상태를 보존합니다 (대화형이 아니라 묻지 않았습니다 — 초기화하려면 --reset)"
+        return 0
+    fi
+
+    step ""
+    step "기존 AutoHarness 상태가 있습니다: $RUNTIME"
+    step "  [K] 보존   — 등록된 프로젝트와 주행 이력을 그대로 이어서 씁니다 (기본)"
+    step "  [R] 초기화 — 레지스트리·로그·토큰을 지우고 새로 시작합니다 (되돌릴 수 없습니다)"
+    step "               저장소 안의 장부(.claude/agent_tracker.json)는 지우지 않습니다."
+    printf "[autoharness] 선택 [K/r]: " > /dev/tty
+    answer=""
+    read -r answer < /dev/tty || answer=""
+    case "$answer" in
+        [Rr]*) RESET_CHOICE="reset"; step "선택: 초기화" ;;
+        *)     RESET_CHOICE="keep";  step "선택: 보존" ;;
     esac
 }
 
@@ -242,6 +291,8 @@ install_v2() {
     local args=(install --exe "$exe")
     [ -d "$SRC/skill" ] && args+=(--skill "$SRC/skill")
     [ "$DO_AUTOSTART" = "1" ] && args+=(--autostart)
+    # 선택은 언제나 명시해서 넘긴다 — EXE 가 자기 판단으로 묻거나 지우지 않게 한다
+    args+=("--${RESET_CHOICE:-keep}")
     "$exe" "${args[@]}" || {
         step "설치 단계에서 문제가 있었습니다 — 위 출력의 steps 를 확인하십시오."
         # 실패해도 무엇이 됐는지 볼 수 있어야 한다 — 이 한 줄까지 잃으면 손에 아무것도 없다
@@ -309,4 +360,5 @@ else
     [ -f "$SRC/skill/SKILL.md" ] || { step "다운로드 결과가 불완전합니다: $SRC"; exit 1; }
 fi
 
+ask_reset_choice
 install_v2

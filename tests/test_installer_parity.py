@@ -160,15 +160,28 @@ class ManifestIsTheSingleSourceTest(unittest.TestCase):
             self.assertIn("test_installer_parity.py", read(name))
 
 
-class ForbiddenNeverAppearsAsATargetTest(unittest.TestCase):
-    """설치기가 금지 항목을 대놓고 복사하고 있지는 않은가."""
+MOVING_VERBS = ("cp ", "mv ", "rm ", "rm -", "tar ", "robocopy",
+                "Copy-Item", "Move-Item", "Remove-Item", "New-Item")
 
-    def test_installers_do_not_copy_repo_state(self):
+
+class ForbiddenNeverAppearsAsATargetTest(unittest.TestCase):
+    """설치기가 저장소 상태를 **다루고** 있지는 않은가.
+
+    종전에는 이름이 등장하기만 해도 실패시켰다. 그러다 정반대 이유로 이름을 대야 하는
+    자리가 생겼다 — 초기화 안내가 "저장소 안의 장부는 지우지 않습니다" 라고 약속한다.
+    약속을 지우는 대신 검사를 좁혔다: 이름이 **옮기거나 지우는 명령과 같은 줄에**
+    나오면 실패다. 복사만 막던 것에서 삭제까지 막는 쪽으로 강해졌다.
+    """
+
+    def test_installers_do_not_handle_repo_state(self):
         for name in ("install.ps1", "install.sh"):
-            source = read(name)
-            for forbidden in ("agent_tracker.json", "PROGRESS.md", "checks-timing.json"):
-                self.assertNotIn(forbidden, source,
-                                 "%s 가 %s 를 다룹니다" % (name, forbidden))
+            for line in read(name).splitlines():
+                for forbidden in ("agent_tracker.json", "PROGRESS.md", "checks-timing.json"):
+                    if forbidden not in line:
+                        continue
+                    for verb in MOVING_VERBS:
+                        self.assertFalse(verb in line,
+                                         "%s 가 %s 를 다룹니다: %s" % (name, forbidden, line.strip()))
 
     def test_installers_do_not_copy_the_repos_own_claude_md(self):
         """배포되는 것은 templates/CLAUDE.md.tmpl 이지 이 저장소의 CLAUDE.md 가 아니다."""
