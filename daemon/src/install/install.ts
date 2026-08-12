@@ -12,6 +12,7 @@ import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { userPaths } from "../core/paths.ts";
+import { hasV2State, purgeV1, resetV2, summarize } from "./cleanup.ts";
 import {
   autostartStatus,
   registerAutostart,
@@ -60,6 +61,15 @@ export interface InstallOptions {
   dryRun?: boolean;
   /** 로그온 자동 시작까지 걸 것인가. 시스템에 영구 설정을 심으므로 기본은 끈다. */
   autostart?: boolean;
+  /**
+   * v2 런타임 상태(레지스트리·로그·토큰)를 지우고 새로 시작할 것인가.
+   *
+   * **기본은 보존이다.** 지우면 등록된 프로젝트와 주행 이력이 사라지는데 되돌릴 방법이
+   * 없다. 물어보지 않은 파괴는 하지 않는다 — 설치기가 사람에게 묻고 그 답을 여기로
+   * 넘긴다. v1 잔재 정리는 이 선택과 무관하게 언제나 실행된다(지울지 말지를 물을
+   * 여지가 없는, 부를 코드가 없는 파일들이다).
+   */
+  reset?: boolean;
 }
 
 function step(name: string, state: StepState, detail: string): Step {
@@ -250,7 +260,44 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     }
   }
 
-  // 2. 스킬 자산 배치
+  // 2. v1 잔재 정리 — **묻지 않는다.** 부를 코드가 없는 파일과 매 15분 실패하는 등록만
+  //    남기는 것들이다. EXE 를 놓은 **뒤에** 하는 이유는 저장소 배선을 그 경로로 다시
+  //    쓰기 때문이다 — 아직 없는 파일을 가리키는 훅을 심지 않는다.
+  const purge = await purgeV1({
+    env, runner: options.runner, platform, dryRun, exePath: target,
+  });
+  steps.push(
+    step(
+      "cleanup-v1",
+      purge.failed > 0 ? "failed" : purge.removed > 0 || dryRun ? "ok" : "skipped",
+      summarize(purge, "v1 잔재 없음"),
+    ),
+  );
+
+  // 3. v2 런타임 상태 — 고른 경우에만 지운다. 기본은 보존이며, 지울 것이 있는데
+  //    보존하기로 했다면 **어떻게 지우는지**를 알려 준다(선택지를 숨기지 않는다).
+  if (options.reset) {
+    const reset = await resetV2({ env, dryRun });
+    steps.push(
+      step(
+        "reset",
+        reset.failed > 0 ? "failed" : "ok",
+        summarize(reset, "지울 런타임 상태가 없었습니다"),
+      ),
+    );
+  } else {
+    steps.push(
+      step(
+        "reset",
+        "skipped",
+        (await hasV2State(env))
+          ? "런타임 상태를 보존합니다(등록 프로젝트·주행 이력 유지) — 초기화하려면 --reset 을 주십시오."
+          : "지울 런타임 상태가 없습니다.",
+      ),
+    );
+  }
+
+  // 4. 스킬 자산 배치
   const skillSrc = options.skillSource;
   const skillDst = userPaths(env).skillDir;
   if (!skillSrc) {
@@ -269,7 +316,7 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     }
   }
 
-  // 3. MCP 등록 — claude CLI 가 있을 때만. 없으면 수동 등록 안내로 넘어간다.
+  // 5. MCP 등록 — claude CLI 가 있을 때만. 없으면 수동 등록 안내로 넘어간다.
   const runner = options.runner;
   const claude = Bun.which("claude");
   const mcpArgs = ["claude", "mcp", "add", "--scope", "user", "autoharness", "--", target, "mcp"];
@@ -295,7 +342,7 @@ export async function install(options: InstallOptions = {}): Promise<InstallResu
     }
   }
 
-  // 4. 로그온 자동 시작 — **기본은 걸지 않는다.** 시스템에 영구 설정을 심는 일이라
+  // 6. 로그온 자동 시작 — **기본은 걸지 않는다.** 시스템에 영구 설정을 심는 일이라
   //    명시적으로 요청받았을 때만 한다.
   if (!options.autostart) {
     steps.push(step("autostart", "skipped", "--autostart 를 주면 로그온 자동 시작을 등록합니다."));
@@ -350,6 +397,17 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Install
       steps.push(step("mcp", "skipped", String(err)));
     }
   }
+
+  // v1 잔재는 제거할 때도 함께 걷어낸다 — 남겨 두면 하네스를 지운 뒤에도 계정에 죽은
+  // 파일과 등록이 남는다. **저장소 배선은 손대지 않는다**(exePath 를 넘기지 않는다):
+  // 제거하는 마당에 훅을 새로 심는 것은 앞뒤가 맞지 않는다.
+  const purge = await purgeV1({
+    env, runner: options.runner, platform: options.platform ?? process.platform, dryRun,
+  });
+  steps.push(
+    step("cleanup-v1", purge.failed > 0 ? "failed" : purge.removed > 0 || dryRun ? "ok" : "skipped",
+      summarize(purge, "v1 잔재 없음")),
+  );
 
   steps.push(
     step("data", "skipped", "장부·레지스트리·로그는 남깁니다 — 진행 상태를 지우지 않습니다."),

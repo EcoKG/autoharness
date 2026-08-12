@@ -67,10 +67,13 @@ function installUsage(): string {
     "  --exe <경로>         설치할 실행 파일(개발 실행에서는 반드시 지정)",
     "  --skill <경로>       스킬 문서 원본 디렉토리",
     "  --autostart          로그온 자동 시작까지 등록한다(기본은 등록하지 않음)",
+    "  --keep               기존 런타임 상태를 보존한다(기본값)",
+    "  --reset              기존 런타임 상태(레지스트리·로그·토큰)를 지우고 새로 시작한다",
     "  --uninstall          자동 시작·MCP 등록을 되돌린다(장부는 건드리지 않음)",
     "  --migrate <저장소>   그 저장소의 훅 배선을 v1 에서 v2 로 교체한다",
     "  --rollback <저장소> --backup <파일>   교체를 되돌린다",
     "",
+    "이전 버전(v1) 의 잔재는 선택과 무관하게 언제나 정리한다 — 부를 코드가 없는 파일이다.",
     "설치는 부작용이 있는 명령이다 — 알 수 없는 옵션은 실행하지 않고 거부한다.",
   ].join("\n");
 }
@@ -177,7 +180,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     // EXE 복사·스킬 복사·MCP 재등록을 수행했다(실측). 오타 플래그도 같은 경로를 탔다.
     const INSTALL_FLAGS = new Set([
       "help", "h", "dry-run", "status", "uninstall", "autostart", "skill", "exe",
-      "migrate", "rollback", "backup",
+      "migrate", "rollback", "backup", "reset", "keep",
     ]);
     if (flags["help"] === true || flags["h"] === true) {
       console.log(installUsage());
@@ -187,6 +190,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     if (unknown.length > 0) {
       console.error(`[autoharness] 알 수 없는 install 옵션입니다: ${unknown.join(", ")}`);
       console.error(installUsage());
+      return EXIT.USAGE;
+    }
+
+    // 보존과 초기화를 **동시에** 시킬 수는 없다. 하나를 골라 실행하면 다른 하나는
+    // 되돌릴 수 없으므로, 모순된 지시는 짐작하지 않고 거부한다.
+    if (flags["reset"] === true && flags["keep"] === true) {
+      console.error("[autoharness] --reset 과 --keep 을 함께 줄 수 없습니다 — 하나만 고르십시오.");
       return EXIT.USAGE;
     }
 
@@ -214,6 +224,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         : await install({
             dryRun,
             autostart: flags["autostart"] === true,
+            // 기본은 보존이다 — `--reset` 을 명시했을 때만 지운다
+            reset: flags["reset"] === true,
             skillSource: typeof flags["skill"] === "string" ? flags["skill"] : undefined,
             // `bun run` 으로 실행하면 process.execPath 가 bun.exe 다 — 개발 실행에서는
             // 빌드된 EXE 를 명시해야 런타임을 복사하는 사고가 나지 않는다

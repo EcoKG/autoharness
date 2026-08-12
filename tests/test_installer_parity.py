@@ -90,33 +90,55 @@ class InstallerDelegatesTest(unittest.TestCase):
             self.assertIn("test_installer_parity.py", source)
 
 
+CLEANUP_TS = os.path.join("daemon", "src", "install", "cleanup.ts")
+
+
 class V1LeftoverCleanupTest(unittest.TestCase):
     """설치·갱신 때 이전 버전의 잔재를 정리하는가(사용자 요구).
 
-    지우기 전에 알리고, 실패해도 설치를 멈추지 않으며, 런타임 상태는 건드리지 않는다."""
+    **정리 규칙은 EXE 하나가 갖는다.** 종전에는 bash 와 PowerShell 에 같은 규칙이 각각
+    쓰여 있었고, 그 둘은 이미 갈라져 있었다: install.ps1 은 v1 작업 이름만 지우고 v2 가
+    실제로 등록하는 AutoHarnessDaemon 과 시작프로그램 항목은 그대로 남겼다. 이 저장소가
+    같은 종류의 분기(배포 목록·설치 자산·문서 명령)로 세 번 데인 자리다.
+    """
 
-    def test_both_installers_have_a_cleanup_step(self):
-        self.assertIn("cleanup_v1", read("install.sh"))
-        self.assertIn("Remove-V1Leftovers", read("install.ps1"))
+    def test_the_rule_lives_in_one_place(self):
+        source = read(CLEANUP_TS)
+        for marker in ("purgeV1", "V1_TASK_NAME", "V1_CRON_MARK", "v1Leftovers"):
+            self.assertIn(marker, source, "정리 규칙에 %s 가 없습니다" % marker)
 
-    def test_cleanup_targets_the_python_assets_and_the_old_watchdog(self):
-        sh, ps1 = read("install.sh"), read("install.ps1")
-        self.assertIn("bin/*.py", sh)
-        self.assertIn("*.py", ps1)
-        self.assertIn("crontab", sh)
-        self.assertIn("AutoHarnessWatchdog", ps1 + read("install.ps1"))
+    def test_install_runs_the_cleanup_unconditionally(self):
+        """묻지 않는다 — 부를 코드가 없는 파일이라 물어볼 여지가 없다."""
+        source = read(os.path.join("daemon", "src", "install", "install.ts"))
+        self.assertIn("purgeV1", source)
+        self.assertIn('step("cleanup-v1"', source)
+
+    def test_scripts_do_not_reimplement_the_cleanup(self):
+        """셸 쪽에 규칙이 다시 생기면 갈라진다 — 지우는 코드는 EXE 에만 있어야 한다."""
+        for name, forbidden in (
+            ("install.sh", ("crontab -l", "rm -rf \"$DST/bin\"")),
+            ("install.ps1", ("schtasks /Delete", "AutoHarnessWatchdog")),
+        ):
+            source = read(name)
+            for marker in forbidden:
+                # assertNotIn 은 실패 시 원본 전체를 쏟아낸다 — 사유만 남긴다
+                self.assertFalse(marker in source,
+                                 "%s 가 정리를 다시 구현합니다: %s" % (name, marker))
 
     def test_cleanup_does_not_touch_runtime_state(self):
-        """레지스트리·로그·장부는 사용자의 진행 상태다 — 설치기가 지우지 않는다."""
+        """레지스트리·로그·장부는 사용자의 진행 상태다 — v1 정리가 지우지 않는다."""
+        source = read(CLEANUP_TS)
+        start = source.index("export function v1Leftovers")
+        end = source.index("\n}", start)
+        targets = source[start:end]
+        for keep in ("registry", "agent_tracker", "daemonLog", "webToken"):
+            self.assertNotIn(keep, targets, "v1 정리가 런타임 상태를 건드립니다: %s" % keep)
+
+    def test_uninstall_delegates_to_the_exe(self):
+        """제거 경로도 같은 규칙을 쓴다 — 두 번 쓰면 또 갈라진다."""
         for name in ("install.sh", "install.ps1"):
-            source = read(name)
-            marker = "cleanup_v1() {" if name.endswith(".sh") else "function Remove-V1Leftovers {"
-            start = source.index(marker)
-            # 함수 본문만 본다 — 뒤쪽 코드까지 훑으면 무관한 문자열에 걸린다
-            end = source.index("\n}", start)
-            cleanup = source[start:end]
-            for keep in ("registry.json", "agent_tracker", "logs"):
-                self.assertNotIn(keep, cleanup, "%s 정리가 런타임 상태를 건드립니다: %s" % (name, keep))
+            self.assertIn("install --uninstall", read(name).replace('@("install", "--uninstall")',
+                                                                    "install --uninstall"))
 
     def test_deprecated_flags_are_accepted_not_rejected(self):
         """이미 퍼진 원라인이 오류로 죽으면 안 된다 — 받아들이고 안내한다."""

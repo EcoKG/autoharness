@@ -12,6 +12,9 @@
 # 배포 목록은 scripts/deploy_manifest.py 가 정합니다 — install.ps1 과 같은 집합을 다뤄야
 # 하며, 어긋나면 tests/test_installer_parity.py 가 실패합니다.
 #
+# 이전 버전(파이썬 엔진·MCP·워치독)의 잔재 정리는 **EXE 가 합니다**(install/cleanup.ts).
+# 묻지 않고 언제나 실행됩니다 — 부를 코드가 없는 파일이라 물어볼 여지가 없습니다.
+#
 # 환경변수: AUTOHARNESS_BRANCH(기본 main), AUTOHARNESS_VERSION(릴리스 태그, 기본 latest),
 #           AUTOHARNESS_RELEASE_BASE(산출물 기점 URL — 미러·오프라인 배포용)
 
@@ -23,7 +26,6 @@ BRANCH="${AUTOHARNESS_BRANCH:-main}"
 INTERVAL="${AUTOHARNESS_INTERVAL:-15}"
 DST="$HOME/.claude/skills/autoharness"
 RUNTIME="$HOME/.claude/autoharness"
-CRON_MARK="harness_watchdog.py"
 
 MODE="install"
 DEPRECATED_WATCHDOG=0
@@ -43,40 +45,36 @@ done
 
 step() { echo "[autoharness] $*"; }
 
+# 설치될 실행 파일 이름 — Windows 만 확장자가 붙는다.
+# 데몬·MCP·훅이 이 경로를 그대로 쓰므로 플랫폼 규약(paths.ts 의 installedExePath)과
+# 어긋나면 설치는 되는데 아무것도 그것을 찾지 못한다.
+installed_exe_name() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) echo "autoharness.exe" ;;
+        *) echo "autoharness" ;;
+    esac
+}
+
 if [ "$DEPRECATED_WATCHDOG" = "1" ]; then
     step "--watchdog 은 더 이상 없습니다 — 데몬이 자기 시계로 돌기 때문입니다."
     step "  로그온 자동 시작을 원하시면 --autostart 를 쓰십시오."
 fi
 
-# ---------------------------------------------------------------- v1 잔재 정리
-#
-# 이전 버전은 파이썬 엔진·MCP 서버·워치독을 계정에 깔았다. 그것들은 이제 부를 코드가
-# 없으므로 남겨 두면 죽은 파일과 매 15분 실패하는 cron 항목만 된다.
-#
-# **무엇을 지우는지 알리고 지운다.** 실패해도 설치를 중단시키지 않는다 — 정리는 부가
-# 작업이지 설치의 전제가 아니다. 런타임 상태(레지스트리·로그·장부)는 건드리지 않는다.
-cleanup_v1() {
-    if crontab -l 2>/dev/null | grep -q "$CRON_MARK"; then
-        step "이전 워치독 cron 항목을 제거합니다 (데몬이 자기 시계로 돕니다)"
-        crontab -l 2>/dev/null | grep -v "$CRON_MARK" | crontab - 2>/dev/null             || step "  제거 실패 — 'crontab -e' 로 직접 지우십시오 ($CRON_MARK 줄)"
-    fi
-    if ls "$DST"/bin/*.py >/dev/null 2>&1; then
-        step "이전 파이썬 자산을 제거합니다: $DST/bin"
-        rm -rf "$DST/bin" 2>/dev/null || step "  제거 실패 — 직접 지우십시오: $DST/bin"
-    fi
-}
-
 # ---------------------------------------------------------------- 제거
+#
+# 자동 시작 해제·MCP 등록 제거·v1 잔재 정리는 **EXE 가 안다**. 여기서 다시 구현하면
+# 같은 규칙이 두 언어로 갈라진다 — 실제로 그렇게 갈라져 있었다: 이 스크립트는 v1 의
+# 워치독 cron 만 지우고 v2 의 systemd 유닛·시작프로그램 등록은 그대로 남겼다.
 if [ "$MODE" = "uninstall" ]; then
-    if crontab -l 2>/dev/null | grep -q "$CRON_MARK"; then
-        crontab -l 2>/dev/null | grep -v "$CRON_MARK" | crontab - || true
-        step "cron 워치독 항목 제거 완료"
+    UNINSTALL_EXE="$RUNTIME/bin/$(installed_exe_name)"
+    if [ -x "$UNINSTALL_EXE" ]; then
+        "$UNINSTALL_EXE" install --uninstall || step "제거 단계에서 문제가 있었습니다 — 위 출력을 확인하십시오."
     else
-        step "cron 워치독 항목 없음 (건너뜀)"
-    fi
-    if command -v claude >/dev/null 2>&1; then
-        claude mcp remove --scope user autoharness >/dev/null 2>&1 || true
-        step "MCP 등록 제거 시도: autoharness (없으면 무시)"
+        step "설치본 실행 파일이 없습니다($UNINSTALL_EXE) — 스킬 폴더만 정리합니다."
+        if command -v claude >/dev/null 2>&1; then
+            claude mcp remove --scope user autoharness >/dev/null 2>&1 || true
+            step "MCP 등록 제거 시도: autoharness (없으면 무시)"
+        fi
     fi
     if [ -d "$DST" ]; then
         rm -rf "$DST"
@@ -112,9 +110,6 @@ v2_asset_name() {
     esac
 }
 
-# 설치될 실행 파일 이름 — Windows 만 확장자가 붙는다.
-# 데몬·MCP·훅이 이 경로를 그대로 쓰므로 플랫폼 규약(paths.ts 의 installedExePath)과
-# 어긋나면 설치는 되는데 아무것도 그것을 찾지 못한다.
 # 실행 중인 설치본을 멈춘다 — 플랫폼마다 수단이 다르다.
 # pkill 은 Windows 프로세스를 보지 못하므로 Git Bash 에서는 아무것도 멈추지 않고
 # "멈췄다" 는 착각만 남긴다. 그 상태로 cp 를 하면 잠금으로 실패한다.
@@ -134,13 +129,6 @@ stop_command_hint() {
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*) echo "taskkill /F /IM autoharness.exe" ;;
         *) echo "pkill -f 'autoharness daemon'" ;;
-    esac
-}
-
-installed_exe_name() {
-    case "$(uname -s)" in
-        MINGW*|MSYS*|CYGWIN*) echo "autoharness.exe" ;;
-        *) echo "autoharness" ;;
     esac
 }
 
@@ -321,5 +309,4 @@ else
     [ -f "$SRC/skill/SKILL.md" ] || { step "다운로드 결과가 불완전합니다: $SRC"; exit 1; }
 fi
 
-cleanup_v1
 install_v2

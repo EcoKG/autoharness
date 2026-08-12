@@ -13,7 +13,7 @@
   },
   "max_attempts": 5,
   "created_at": "2026-08-06T06:29:46.439356+00:00",
-  "updated_at": "2026-08-12T03:42:07.427Z",
+  "updated_at": "2026-08-12T08:34:13.609Z",
   "tasks": [
     {
       "id": "tests-engine-hooks",
@@ -1981,9 +1981,58 @@
       "attempts": 0,
       "last_error": null,
       "last_log_file": ".claude/harness-logs/release-v3.0.0-20260812T034140Z.log",
-      "commit": null,
+      "commit": "750de17",
       "started_at": "2026-08-12T03:41:40.622Z",
       "finished_at": "2026-08-12T03:42:07.427Z",
+      "test_cmd": null
+    },
+    {
+      "id": "v1-purge",
+      "title": "설치 때 v1 잔재를 묻지 않고 정리한다 — EXE 단일 구현",
+      "path": "daemon/src/install",
+      "deps": [],
+      "priority": 10,
+      "status": "done",
+      "attempts": 1,
+      "last_error": null,
+      "last_log_file": ".claude/harness-logs/v1-purge-20260812T083346Z.log",
+      "commit": null,
+      "started_at": "2026-08-12T08:32:55.409Z",
+      "finished_at": "2026-08-12T08:34:13.609Z",
+      "test_cmd": null
+    },
+    {
+      "id": "v2-reset-choice",
+      "title": "설치 때 v2 런타임 상태를 초기화할지 보존할지 고른다",
+      "path": "daemon/src/install",
+      "deps": [
+        "v1-purge"
+      ],
+      "priority": 20,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
+      "test_cmd": null
+    },
+    {
+      "id": "readme-rewrite",
+      "title": "README 를 v3 설치·정리·초기화 기준으로 다시 쓴다",
+      "path": "README.md",
+      "deps": [
+        "v2-reset-choice"
+      ],
+      "priority": 30,
+      "status": "pending",
+      "attempts": 0,
+      "last_error": null,
+      "last_log_file": null,
+      "commit": null,
+      "started_at": null,
+      "finished_at": null,
       "test_cmd": null
     }
   ]

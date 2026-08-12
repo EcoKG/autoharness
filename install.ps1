@@ -9,7 +9,8 @@
   -Autostart : 로그온 자동 시작까지 등록합니다.
   -Uninstall : 자동 시작·MCP 등록·스킬 폴더를 제거합니다(런타임 상태는 보존).
 
-  이전 버전(파이썬 엔진·MCP 서버·워치독)의 잔재는 설치할 때 함께 정리합니다.
+  이전 버전(파이썬 엔진·MCP 서버·워치독)의 잔재는 설치·제거할 때 EXE 가 함께 정리합니다
+  (묻지 않습니다 — 부를 코드가 없는 파일이라 물어볼 여지가 없습니다).
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
@@ -40,8 +41,7 @@ $ErrorActionPreference = "Stop"
 $Src         = $PSScriptRoot
 $Dst         = Join-Path $env:USERPROFILE ".claude\skills\autoharness"
 $RuntimeDir  = Join-Path $env:USERPROFILE ".claude\autoharness"
-$RuntimeLogs = Join-Path $RuntimeDir "logs"
-$TaskName    = "AutoHarnessWatchdog"
+$InstalledExe = Join-Path $RuntimeDir "bin\autoharness.exe"
 
 function Write-Step {
     param([string]$Message)
@@ -72,56 +72,37 @@ function Invoke-Native {
     }
 }
 
-# ------------------------------------------------------------------ v1 잔재 정리
-#
-# 이전 버전은 파이썬 엔진·MCP 서버·워치독을 계정에 깔았습니다. 부를 코드가 사라졌으므로
-# 남겨 두면 죽은 파일과 매 15분 반려되는 스케줄러 작업만 남습니다.
-#
-# **무엇을 지우는지 알리고 지웁니다.** 실패해도 설치를 중단하지 않습니다 — 정리는 부가
-# 작업이지 설치의 전제가 아닙니다. 런타임 상태(레지스트리·로그·장부)는 건드리지 않습니다.
-function Remove-V1Leftovers {
-    $task = schtasks /Query /TN $TaskName 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Step ("이전 워치독 작업을 제거합니다: " + $TaskName + " (데몬이 자기 시계로 돕니다)")
-        schtasks /Delete /TN $TaskName /F 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Step ("  제거 실패 — 직접 지우십시오: schtasks /Delete /TN " + $TaskName + " /F")
-        }
-    }
-    $binDir = Join-Path $Dst "bin"
-    if (Test-Path $binDir) {
-        $py = Get-ChildItem -Path $binDir -Filter *.py -File -ErrorAction SilentlyContinue
-        if ($py) {
-            Write-Step ("이전 파이썬 자산을 제거합니다: " + $binDir)
-            try { Remove-Item -Path $binDir -Recurse -Force -ErrorAction Stop }
-            catch { Write-Step ("  제거 실패 — 직접 지우십시오: " + $binDir) }
-        }
-    }
-}
-
 # ------------------------------------------------------------------ 제거
+#
+# 자동 시작 해제·MCP 등록 제거·v1 잔재 정리는 **EXE 가 압니다**(install/cleanup.ts).
+# 여기서 다시 구현하면 같은 규칙이 두 언어로 갈라집니다 — 실제로 갈라져 있었습니다:
+# 이 스크립트는 옛 워치독 작업 이름만 지우고, v2 가 실제로 등록하는 데몬 작업과
+# 시작프로그램 폴더 항목은 그대로 남겼습니다(즉 제거해도 자동 시작이 살아 있었습니다).
 function Uninstall-AutoHarness {
-    # 1) 스케줄러 작업 삭제 (없으면 무시)
-    try {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
-    }
-    catch { }
-    Write-Step ("작업 스케줄러 작업 삭제 시도: " + $TaskName + " (없으면 무시)")
-
-    # 2) MCP 등록 제거 (없으면 무시)
-    $claude = Resolve-ClaudeCli
-    if ($null -ne $claude) {
-        try {
-            Invoke-Native $claude @("mcp", "remove", "--scope", "user", "autoharness") | Out-Null
+    # 1) 자동 시작·MCP·v1 잔재 — EXE 에 맡깁니다
+    if (Test-Path $InstalledExe) {
+        $r = Invoke-Native $InstalledExe @("install", "--uninstall")
+        Write-Host $r.Output
+        if ($r.ExitCode -ne 0) {
+            Write-Step "제거 단계에서 문제가 있었습니다 — 위 출력의 steps 를 확인하십시오."
         }
-        catch { }
-        Write-Step "MCP 등록 제거 시도: autoharness (없으면 무시)"
     }
     else {
-        Write-Step "claude CLI 를 찾지 못해 MCP 제거를 건너뜁니다."
+        Write-Step ("설치본 실행 파일이 없습니다(" + $InstalledExe + ") — 스킬 폴더만 정리합니다.")
+        $claude = Resolve-ClaudeCli
+        if ($null -ne $claude) {
+            try {
+                Invoke-Native $claude @("mcp", "remove", "--scope", "user", "autoharness") | Out-Null
+            }
+            catch { }
+            Write-Step "MCP 등록 제거 시도: autoharness (없으면 무시)"
+        }
+        else {
+            Write-Step "claude CLI 를 찾지 못해 MCP 제거를 건너뜁니다."
+        }
     }
 
-    # 3) 스킬 폴더 제거
+    # 2) 스킬 폴더 제거
     if (Test-Path $Dst) {
         Remove-Item -Path $Dst -Recurse -Force
         Write-Step ("스킬 폴더 제거 완료: " + $Dst)
@@ -130,7 +111,7 @@ function Uninstall-AutoHarness {
         Write-Step ("스킬 폴더가 이미 없습니다: " + $Dst)
     }
 
-    # 4) 런타임 상태는 보존
+    # 3) 런타임 상태는 보존
     Write-Step ("런타임 상태는 보존됩니다: " + $RuntimeDir)
     Write-Step "  (registry.json 과 로그가 남아 있어, 재설치하면 프로젝트 상태가 그대로 이어집니다)"
 }
@@ -263,7 +244,6 @@ if ($Uninstall) {
 }
 else {
     # 구현이 하나뿐이라 -V2 는 기본 동작이다. 문서·스크립트에 이미 퍼져 있어 계속 받아들인다.
-    Remove-V1Leftovers
     Install-AutoHarnessV2
 }
 

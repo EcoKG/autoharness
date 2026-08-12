@@ -468,7 +468,10 @@ describe("설치", () => {
     const run = okRunner();
     const r = await install({ sourceExe: src, env, runner: run, platform: "win32" });
     expect(r.steps.find((s) => s.name === "autostart")!.state).toBe("skipped");
-    expect(run.calls.some((c) => c[0] === "schtasks")).toBe(false);
+    // 등록을 **만들지** 않았는가를 본다. v1 잔재 정리가 옛 워치독 작업을 조회·삭제하므로
+    // "schtasks 를 한 번도 부르지 않는다" 는 더 이상 이 주장의 척도가 아니다 —
+    // 여기서 막아야 하는 것은 /Create 다.
+    expect(run.calls.some((c) => c[0] === "schtasks" && c.includes("/Create"))).toBe(false);
   });
 
   test("--autostart 를 주면 등록한다", async () => {
@@ -507,13 +510,17 @@ describe("설치", () => {
       sourceExe: src, env, runner: run, platform: "win32", autostart: true, dryRun: true,
     });
     expect(r.dryRun).toBe(true);
-    // 부작용 명령은 하나도 없어야 한다. 원본을 확인하는 `version` 은 읽기 전용 탐침이고,
-    // dry-run 이 "이 설치가 될지" 를 알려주려면 오히려 실행해야 한다.
+    // 부작용 명령은 하나도 없어야 한다. 원본을 확인하는 `version` 과 v1 잔재를 세는
+    // `schtasks /Query` 는 읽기 전용 탐침이고, dry-run 이 "무엇이 될지" 를 알려주려면
+    // 오히려 실행해야 한다 — 파일 쪽도 같은 이유로 존재를 확인한다(없는 것을 지운다고
+    // 보고하지 않기 위해).
     const mutating = run.calls.filter(
-      (c) => c[0] === "schtasks" || (c[1] === "mcp" && (c.includes("add") || c.includes("remove"))),
+      (c) =>
+        (c[0] === "schtasks" && (c.includes("/Create") || c.includes("/Delete"))) ||
+        (c[1] === "mcp" && (c.includes("add") || c.includes("remove"))),
     );
     expect(mutating.length).toBe(0);
-    expect(run.calls.every((c) => c.at(-1) === "version")).toBe(true);
+    expect(run.calls.every((c) => c.at(-1) === "version" || c.includes("/Query"))).toBe(true);
     expect(await Bun.file(installedExePath(env)).exists()).toBe(false);
     expect(r.steps.every((s) => s.state !== "failed")).toBe(true);
   });
@@ -530,10 +537,12 @@ describe("제거", () => {
     expect(data.detail).toContain("장부");
   });
 
-  test("dry-run 제거도 아무 명령을 실행하지 않는다", async () => {
+  test("dry-run 제거는 읽기 전용 조회만 한다", async () => {
     const run = recorder();
     await uninstall({ env, runner: run, platform: "win32", dryRun: true });
-    expect(run.calls.length).toBe(0);
+    // v1 잔재가 있는지 세려면 조회는 해야 한다. 바꾸는 명령은 한 건도 없어야 한다.
+    expect(run.calls.every((c) => c.includes("/Query"))).toBe(true);
+    expect(run.calls.some((c) => c.includes("/Delete") || c.includes("/Create"))).toBe(false);
   });
 });
 

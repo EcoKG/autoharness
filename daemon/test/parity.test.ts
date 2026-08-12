@@ -67,6 +67,7 @@ afterEach(async () => {
  */
 const REQUIRED_V2_TESTS: readonly string[] = [
   "bootstrap.test.ts",
+  "cleanup.test.ts",
   "command.test.ts",
   "console-ws.test.ts",
   "core.test.ts",
