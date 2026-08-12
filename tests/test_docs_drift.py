@@ -96,10 +96,11 @@ class BootstrapDocsTest(unittest.TestCase):
         self.prompt = read("templates", "bootstrap_prompt.txt")
         self.design = read("daemon", "DESIGN.md")
 
-    def test_prompt_no_longer_names_only_the_v1_path(self):
-        """v2 설치본에는 scripts/harness_engine.py 가 없다 — 그것만 지시하면 첫 명령부터 실패한다."""
+    def test_prompt_names_the_installed_executable(self):
+        """프롬프트가 없는 파일을 부르면 자동 부활한 세션이 첫 명령부터 실패한다 —
+        헤드리스라 그 실패는 세션 로그에만 남는다."""
         self.assertIn("autoharness", self.prompt)
-        self.assertIn("harness_engine.py", self.prompt)
+        self.assertIn(".claude/autoharness/bin", self.prompt)
 
     def test_design_documents_the_two_bootstrap_sources(self):
         self.assertIn("BUILTIN_BOOTSTRAP", self.design)
@@ -115,7 +116,7 @@ class DeployDocsTest(unittest.TestCase):
     def test_claude_md_names_the_v2_install_target(self):
         """실행 중 설치본이 두 곳이라는 사실이 안내층에 없으면, 고쳐도 반영이 안 된 줄 모른다."""
         claude = read("CLAUDE.md")
-        self.assertIn("autoharness.exe", claude)
+        self.assertIn("autoharness/bin/autoharness", claude)
         self.assertIn("deploy_live", claude)
 
 
@@ -202,3 +203,58 @@ class DeployBoundaryDocsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoV1ResurrectionTest(unittest.TestCase):
+    """제거한 v1 이 문서로 되살아나지 않게 한다.
+
+    코드에서 지운 것을 문서가 계속 안내하면, 사용자는 없는 파일을 실행하라는 지시를 받는다 —
+    이 프로젝트가 부트스트랩 프롬프트에서 실제로 겪은 실패다. 소스는 이미 사라졌으므로
+    남은 위험은 전부 문서 쪽에 있다."""
+
+    DEAD_NAMES = ("harness_engine.py", "harness_mcp.py", "harness_watchdog.py",
+                  "agent_harness.sh")
+    DOCS = ("README.md", "DESIGN.md", "CLAUDE.md",
+            os.path.join("skill", "SKILL.md"),
+            os.path.join("templates", "bootstrap_prompt.txt"),
+            os.path.join("templates", "CLAUDE.md.tmpl"))
+
+    #: 실행하라고 내미는 형태. 이름을 **언급**하는 것과는 다르다 — 이전 배선이 어떤
+    #: 모양이었는지 설명하려면 이름을 적을 수밖에 없고, 그것까지 막으면 이행 안내를
+    #: 쓸 수 없다. 금지하는 것은 "이걸 실행하라" 다.
+    INVOCATION_RE = re.compile(
+        r"""(?:python3?|bash)\s+["']?[^\s`"']*(?:harness_engine\.py|agent_harness\.sh)["']?\s+[a-z-]""")
+
+    def test_no_document_prescribes_a_removed_command(self):
+        for rel in self.DOCS:
+            if not os.path.isfile(os.path.join(REPO, rel)):
+                continue
+            m = self.INVOCATION_RE.search(read(rel))
+            self.assertIsNone(m, "%s 가 제거된 명령을 실행하라고 안내합니다: %s"
+                              % (rel, m.group(0) if m else ""))
+
+    def test_the_guard_would_catch_a_real_resurrection(self):
+        """정규식이 아무것도 못 잡으면 위 단정이 공허해진다 — 대표 사례로 확인한다."""
+        for sample in ('python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" next',
+                       "bash scripts/agent_harness.sh --task t1"):
+            self.assertIsNotNone(self.INVOCATION_RE.search(sample), sample)
+
+    def test_the_files_really_are_gone(self):
+        """문서만 고치고 파일이 남아 있으면 이 검사는 거짓 안심이다."""
+        for rel in ("bin", os.path.join("scripts", "harness_engine.py"),
+                    os.path.join("scripts", "agent_harness.sh"),
+                    os.path.join("templates", "agent_harness.sh")):
+            self.assertFalse(os.path.exists(os.path.join(REPO, rel)),
+                             "%s 가 아직 있습니다" % rel)
+
+    def test_readme_states_the_breaking_change(self):
+        """v1 배선을 가진 저장소는 자동 복구되지 않는다 — 그 사실이 안내에 있어야 한다."""
+        readme = read("README.md")
+        self.assertIn("이전 버전", readme)
+        self.assertIn("자동으로 복구되지 않습니다", readme)
+        self.assertIn("rm .claude/settings.json", readme)
+
+    def test_docs_do_not_offer_an_implementation_choice(self):
+        for rel in ("README.md", os.path.join("skill", "SKILL.md")):
+            text = read(rel)
+            self.assertNotIn("두 구현이 공존", text)

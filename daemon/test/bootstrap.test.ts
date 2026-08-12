@@ -43,11 +43,13 @@ describe("지시하는 CLI 표면이 실재한다", () => {
     }
   });
 
-  test("v1 경로만 지시하지 않는다 — 두 세대를 모두 알려 준다", async () => {
-    // 이것이 이번 결함의 핵심이다: v2 설치본에는 scripts/harness_engine.py 가 없다.
+  test("제거된 파이썬 경로를 지시하지 않는다", async () => {
+    // 이것이 이 테스트의 원래 결함이었다: 프롬프트가 없는 파일을 부르라고 시켰다.
+    // 구현이 하나뿐인 지금은 그 이름이 등장할 이유가 없다.
     for (const text of [await templateText(), BUILTIN_BOOTSTRAP]) {
       expect(text).toContain("autoharness");
-      expect(text).toContain("harness_engine.py");
+      expect(text).not.toContain("harness_engine.py");
+      expect(text).not.toContain("agent_harness.sh");
     }
   });
 

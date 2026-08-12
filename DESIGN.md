@@ -1,4 +1,4 @@
-# AutoHarness 설계 계약 (v1)
+# AutoHarness 설계 계약
 
 > 이 문서는 빌더·검증 에이전트가 공유하는 **단일 계약**이다. 여기 정의된 파일 경로, CLI 표면,
 > 스키마, 종료 코드, 도구 이름은 임의로 바꾸지 않는다. 변경이 필요하면 이 문서를 먼저 고친다.
@@ -9,15 +9,15 @@ Claude Code 프롬프트로만 존재하던 "자율 주행 마이그레이션 �
 **어느 저장소에서든 재사용 가능한 패키지**로 만든다. 구성은 셋이 결합된 하나의 패키지다.
 
 1. **개인 스킬** `autoharness` — 절차(실측→구축→모델 선택→검증→자율 주행)를 코드화한 지휘 문서
-2. **사용자 스코프 MCP 서버** `autoharness` — 상태 장부·러너·레지스트리·워치독 관리를 결정적으로 수행
-3. **워치독** — Windows 작업 스케줄러 등록 스크립트. 세션이 죽어도(사용량 초과 포함) 자동 부활
+2. **사용자 스코프 MCP 서버** `autoharness` — 상태 장부·러너·레지스트리 관리를 결정적으로 수행
+3. **상주 데몬** — 자기 시계로 주기를 돌며, 세션이 죽어도(사용량 초과 포함) 자동 부활시킨다
 
 필수 요구사항:
 - **무개입**: 주행 중 사용자 질문 금지. Stop 훅 게이트 + 헤드리스 재기동으로 루프 유지
 - **사용량 초과 방어**: 빠른 실패를 사용량 초과로 분류하면 지수 백오프(30→60→120→240→360분)로
   재시도. 절대 영구 포기하지 않는다(자동 부활). 설정 오류성 실패는 5회 연속 시 `error`로 정지(방어)
 - **모델 선택**: `claude-opus-5` vs `claude-fable-5`. 추천은 휴리스틱이 내고 **결정은 사용자**가
-  init 시 AskUserQuestion 으로 내린다. 워치독은 레지스트리에 기록된 모델로 재기동한다
+  init 시 AskUserQuestion 으로 내린다. 데몬은 레지스트리에 기록된 모델로 재기동한다
 
 ## 2. 경로 계약
 
@@ -26,118 +26,33 @@ Claude Code 프롬프트로만 존재하던 "자율 주행 마이그레이션 �
 | 개발 사본(이 폴더) | `...\Claude Harnes\autoharness\` |
 | 설치 위치(스킬+코드) | `%USERPROFILE%\.claude\skills\autoharness\` (SKILL.md, bin\, templates\) |
 | 런타임 상태 | `%USERPROFILE%\.claude\autoharness\` (registry.json, logs\, watchdog.lock) |
-| 대상 저장소 내 생성물 | `.claude/agent_tracker.json`, `.claude/agent_tracker.example.json`, `.claude/harness-logs/`, `.claude/harness-state.json`, `.claude/harness-heartbeat.json`, `.claude/harness-hooks-seen.json`(훅 발화 마커), `.claude/HARNESS_PAUSED`(플래그), `scripts/harness_engine.py`(엔진 사본), `scripts/agent_harness.sh`, `PROGRESS.md` |
-| Python | 3.8+ (stdlib만 사용; Windows 는 `python`, Linux/WSL 은 `python3`) |
+| 대상 저장소 내 생성물 | `.claude/agent_tracker.json`, `.claude/agent_tracker.example.json`, `.claude/harness-logs/`, `.claude/harness-state.json`, `.claude/harness-heartbeat.json`, `.claude/harness-hooks-seen.json`(훅 발화 마커), `.claude/HARNESS_PAUSED`(플래그), `PROGRESS.md` |
 | claude CLI | `%USERPROFILE%\.local\bin\claude.exe` 또는 PATH (2.1.183 실측; `-p`, `--model`, `--permission-mode`, `--dangerously-skip-permissions` 확인됨. `--max-turns` 미확인 → 사용 금지) |
 
 개발 사본 파일 목록:
 
 ```
 autoharness/
-  DESIGN.md                      ← 이 문서
-  README.md                      ← 사용자용 안내 (설치/사용/제거/구조)
-  install.ps1                    ← 설치·등록·제거 스크립트
-  bin/harness_engine.py          ← 엔진 (상태 장부·러너·훅·자가검증) — 완성됨, 계약의 기준
-  bin/harness_mcp.py             ← MCP stdio 서버 (엔진 import)
-  bin/harness_watchdog.py        ← 워치독 (스케줄러가 15분마다 1회 실행)
+  DESIGN.md                      ← 이 문서 (구현 무관 계약)
+  README.md                      ← 사용자용 안내
+  install.ps1 / install.sh       ← 설치기 (바이너리만 내려놓고 나머지는 EXE 에 위임)
+  daemon/                        ← 구현 (TypeScript, 단일 EXE 로 컴파일)
+    DESIGN.md                    ← 구현 계약
   skill/SKILL.md                 ← 개인 스킬 본문
-  templates/agent_harness.sh     ← 대상 저장소용 진입 래퍼
-  templates/CLAUDE.md.tmpl       ← 대상 저장소 CLAUDE.md 골격 (<확인 필요> 플레이스홀더 포함)
-  templates/bootstrap_prompt.txt ← 워치독이 claude -p 에 넘기는 재개 프롬프트
+  scripts/                       ← 이 저장소 전용 도구(검증 파이프라인·배포 명세)
+  templates/CLAUDE.md.tmpl       ← 대상 저장소 CLAUDE.md 골격
+  templates/bootstrap_prompt.txt ← 데몬이 claude -p 에 넘기는 재개 프롬프트
 ```
 
-## 3. 공통 구현 규칙 (모든 Python 파일)
+## 3. 구현 계약
 
-- Python 3.9 호환, **stdlib 만** 사용. 파일 첫 부분에서 `sys.stdout/stderr` 를
-  `reconfigure(encoding="utf-8", errors="replace")` 하고 **`sys.stdin` 도 반드시 포함**한다
-  (훅 stdin 이 cp949 로 디코드되면 한글 명령이 surrogate 로 오염되어 차단 로직이 fail-open
-  으로 뒤집힌다 — 적대 검증에서 실측된 critical). 모든 `open()` 에 `encoding="utf-8"`.
-  자식 프로세스 출력 디코드는 utf-8 → 로케일 코드페이지 → utf-8 replace 순 폴백.
-- JSON 쓰기는 전부 **원자적**: 같은 디렉토리에 `.tmp` 작성 → `os.replace`. replace 가
-  일시적 `PermissionError`(OneDrive 동기화·백신 잠금)를 맞으면 지수 백오프
-  0.1→0.2→0.4→0.8초, 총 5회 시도 후 실패 처리한다(다른 OSError 는 즉시 전파).
-- 훅 서브커맨드는 **fail-open**: 내부 예외 시 exit 0 (일반 작업을 깨지 않는다). 러너·MCP는 fail-loud.
-- 타임스탬프는 `datetime.now(timezone.utc).isoformat()`.
+구현은 TypeScript 단일 실행 파일 하나다. 실행 모드·종료 코드·원자적 쓰기·훅 시작 시간
+예산 같은 구현 계약은 **`daemon/DESIGN.md`** 가 정한다 — 이 문서와 충돌하면 그쪽이 우선한다.
 
-## 4. 엔진 CLI 표면 (`python scripts/harness_engine.py <cmd>`) — 구현 완료 기준
+이 문서가 정하는 것은 구현과 무관한 계약이다: 경로, 장부·레지스트리 스키마, 훅 규약,
+모델 추천 휴리스틱, 스킬 절차, 설치·배포 경계, 검증 기준.
 
-`bin/harness_engine.py` 가 이미 작성되어 있으며 **이 파일이 계약의 실체다**. 다른 컴포넌트는
-이 CLI/함수 표면에 맞춘다.
-
-| 커맨드 | 역할 | 종료 코드 |
-|---|---|---|
-| `detect [--repo P]` | 스택 실측 JSON 출력 | 0/2 |
-| `init --repo P --project N --objective O --source S --target T --test CMD [--build CMD] [--lint CMD] [--model M] [--max-attempts 5]` | 장부·예시·로그 디렉토리 생성 | 0/2 |
-| `add-task --id I --title T [--path P] [--deps a,b] [--priority 100] [--test-cmd CMD]` | 작업 추가 (자기/순환/미존재 의존 거부) | 0/2 |
-| `set-task --id I [--status pending\|blocked] [--note ...] [--test-cmd CMD]` | 제한적 상태 조작 (`done` 설정 불가). `--test-cmd ""` 는 작업 전용 test 해제 | 0/2 |
-| `next` | 의존성 게이팅 통과한 다음 작업 JSON(교착 pending 은 `deadlocked` 로 병기) | 0/3 |
-| `run [--task I] [--cmd C]` | build→test→lint 실행, 로그·요약·장부 갱신, PROGRESS.md 재렌더. 스테이지 실행 중 5분 주기 하트비트 자동 갱신 | 0/1/2/3/4 |
-| `sync-commit` | commit 없는 최신 done 작업에 HEAD SHA 기록 | 0 |
-| `render` | PROGRESS.md 재렌더 | 0 |
-| `brief` | 15줄 이하 상태 요약(SessionStart 훅용) — 교착 pending·훅 배선 비활성이면 경고 줄 추가 | 0 |
-| `status` | 장부 요약 JSON(`deadlocked` 목록, `hooks` 배선 상태 포함) | 0/2 |
-| `heartbeat` | 하트비트 갱신 | 0 |
-| `model-recommend [--source S] [--target T] [--notes ...]` | 모델 추천 JSON | 0 |
-| `hook-prebash` | stdin=훅 JSON. 금지 명령 게이트·커밋 게이트·하트비트. 게이트 처리는 컨텍스트가 정한다(§8): 헤드리스=exit 2+stderr, 대화형·일시정지=exit 0+`permissionDecision:"ask"` | 0/2 |
-| `hook-postbash` | stdin=훅 JSON. `git commit` 후 sync-commit, 하트비트 | 0 |
-| `hook-stop` | stdin=훅 JSON. 자율 주행 게이트(아래 §8) | 0 |
-| `selftest` | 7종 15항목 자가 검증을 임시 샌드박스에서 실행, PASS/FAIL 출력 | 0/1 |
-
-**run 의 종료 코드 계약** (상위 에이전트 분기 신호 — 절대 변경 금지):
-
-| 코드 | 의미 | 에이전트 행동 |
-|---|---|---|
-| 0 | 검증 통과 (task→done) | 커밋 후 다음 작업 |
-| 1 | 검증 실패 (attempts+1, last_error 기록) | 자가 치유 계속 |
-| 2 | 사용법/설정 오류 | 중단·보고 |
-| 3 | 진행 가능한 작업 없음 | 중단·보고 |
-| 4 | max_attempts 도달 (task→blocked) | 해당 작업 봉인 — 남은 작업 있으면 계속, 없으면 중단·보고 |
-
-※ `run` 은 ①이미 blocked 인 작업 지정 ②blocked 만 남고 진행 가능 작업이 없는 상태에서도 4 를
-반환한다(같은 상태에서 `next` 는 3). 세 문서(SKILL/tmpl/README)도 동일 문구를 유지한다.
-
-로그: 전체 출력은 `.claude/harness-logs/<task>-<UTC ts>.log`(같은 초 재실행 시 `-N` 접미로
-이전 로그 보존). stdout 요약은 에러 패턴 라인 최대 60줄 × 400자(패턴 없으면 tail 30줄).
-`last_error` 는 4000자 상한.
-
-**명령 판정은 토큰 기반이다**(`deny_reason` / `invokes_git_commit`). 명령 문자열 전체를
-정규식으로 훑으면 인용부호 안 단어까지 명령으로 오인한다 — 실측 오탐: `git log --grep=push`,
-`grep -r "git push" docs/`, `echo "git push 하지 마세요"`, 그리고 **허용해야 할**
-`git commit -m "push 준비 완료"`. 판정 절차:
-
-1. 셸 구분자(`&&` `||` `;` `|` 개행)로 세그먼트 분해
-2. `shlex.split` 으로 토큰화 — 인용을 존중하므로 문자열 안 단어는 명령 위치에 오지 않는다
-3. 선행 환경변수 대입(`FOO=1 git …`)·중립 수식어(`env` `nohup` …) 제거 후 첫 토큰의
-   basename(확장자 제거)이 `git` 인지 판정
-4. 값을 먹는 git 전역 옵션(`-C` `-c` `--git-dir` `--work-tree` `--exec-path` …)을 건너뛰고
-   **실제 서브커맨드** 식별
-5. 서브커맨드 기준 차단 — **막는 것은 명령 이름이 아니라 결과 둘**이다:
-   - **원격 상태 변경**: `git push`·`git subtree push`, 그리고 **`gh` 쓰기 동사**
-     (`pr create/merge/close/…`, `release create/delete/…`, `repo delete/…`, `workflow run`,
-     `secret set`, `issue create/…`, `gist create/…`). `gh api` 는 `-X`/`--method` 가
-     POST·PUT·PATCH·DELETE 일 때만. **`git push` 없이도 원격은 바뀐다** — 이 축이 빠져
-     있으면 "로컬 커밋만 허용" 이 무력하다.
-   - **되돌릴 수 없는 로컬 파괴**: `reset --hard`, `clean` +force, `branch·checkout·switch`
-     +force, `branch -D`, `checkout --`(작업물 폐기), `restore`(단 `--staged` 는 허용),
-     `stash drop/clear`, `reflog expire/delete`, `worktree remove`, `filter-branch`,
-     `update-ref -d`.
-   force 는 `--force`·`--force-with-lease`·결합 플래그(`-fd`)·재배치(`-d -f`)를 인식한다.
-   `restore` 는 `--force` 옵션 자체가 없어 force 목록에서 제외한다(발동 불가 규칙 제거).
-   `rebase` 는 의도적으로 제외한다 — 흔하고, `reflog expire` 를 막아 두었으므로 reflog 로
-   복구 가능하다.
-6. 래퍼(`bash -c` `sh -c` `powershell -Command`)의 페이로드는 **재귀 분석**한다 — 정규식이
-   놓치던 우회 경로다(최대 3단, 초과 시 판정 포기)
-7. `shlex` 파싱 실패(따옴표 불균형 등)는 **fail-open** — 훅이 주행을 막지 않는다
-
-커밋 게이트의 트리거도 같은 판정을 쓴다 — `echo "git commit"` 같은 언급으로 게이트가 켜지지
-않는다. 다만 **커밋을 만드는 것은 `commit` 만이 아니다**: `revert`·`cherry-pick`·`merge`·`am`
-도 트리거한다(각 서브커맨드의 `--no-commit`/`-n`/`--abort`/`--skip`/`--quit` 는 제외). 이
-축이 빠져 있으면 검증 통과 기록 없이 이력이 늘고, PostToolUse 의 `sync_commit` 도 돌지 않아
-커밋 SHA 가 장부에 남지 않는다. `rebase` 는 **의도적으로 제외**한다 — 기존 커밋을 재생하는
-것이라 "검증 안 된 새 작업"이 아니고, 충돌 해소 중 `--continue` 가 잦아 게이트가 주행을
-방해한다.
-
-## 5. 장부 스키마 (`.claude/agent_tracker.json`)
+## 4. 장부 스키마 (`.claude/agent_tracker.json`)
 
 ```json
 {
@@ -166,16 +81,14 @@ autoharness/
   `status` 가 `deadlocked` 로 구분해 알린다 — 종료 코드 계약은 그대로다(next 는 여전히 0/3).
 - `PROGRESS.md` 는 장부에서 렌더되는 산출물이다. 손 편집 금지 문구를 머리에 박는다.
 
-## 6. MCP 서버 (`bin/harness_mcp.py`)
+## 5. MCP 서버 (`<EXE> mcp`)
 
 - **개행 구분 JSON-RPC 2.0 stdio**. 외부 SDK 금지(stdlib). 잘못된 줄에도 크래시 금지(stderr 로그).
 - `initialize` → `{"protocolVersion": <요청 값 그대로>, "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "autoharness", "version": "1.0.0"}}`
 - `notifications/initialized`·기타 notification(id 없음) → 무응답. `ping` → `{}`.
 - `tools/list` → 아래 14개. `tools/call` → 결과를 `{"content":[{"type":"text","text":"<JSON pretty>"}]}` 로,
   실패는 `"isError": true` + 메시지. 미지 메서드 → JSON-RPC error -32601.
-- 엔진은 `bin/harness_engine.py` 를 import 해서 함수로 호출한다(서브프로세스 아님).
-  단 `harness_run` 만은 대상 저장소의 `scripts/harness_engine.py` 사본을 **서브프로세스로** 실행해
-  종료 코드를 그대로 받는다(사본과 원본의 드리프트 허용).
+- 데몬이 떠 있으면 웹 API 로 위임하고, 없으면 인프로세스로 처리한다(daemon/DESIGN.md 2절).
 
 | 도구 | 입력(required*) | 동작 |
 |---|---|---|
@@ -194,11 +107,11 @@ autoharness/
 | `watchdog_uninstall` | — | schtasks 삭제 |
 | `watchdog_status` | — | schtasks 조회 + 레지스트리 + watchdog.log tail + `health` 진단(§10) |
 
-`harness_init` 의 settings 병합: 기존 `.claude/settings.json` 을 로드해 `hooks` 4종(§8)과
-`permissions.allow` 항목(`Bash(bash scripts/agent_harness.sh:*)`, `Bash(python scripts/harness_engine.py:*)`)을
-**추가 병합**한다. 이미 `harness_engine.py` 를 담은 훅 항목이 있으면 중복 추가하지 않는다.
+`harness_init` 의 settings 병합: 기존 `.claude/settings.json` 을 로드해 `hooks` 4종(§7)과
+`permissions.allow` 항목(`Bash("<EXE>" run:*)`, `Bash("<EXE>" next:*)`)을 **추가 병합**한다.
+이미 같은 훅이 있으면 중복 추가하지 않고, 낡은 것은 항목 단위로 고쳐 쓴다(§11).
 
-## 7. 레지스트리 (`%USERPROFILE%\.claude\autoharness\registry.json`)
+## 6. 레지스트리 (`%USERPROFILE%\.claude\autoharness\registry.json`)
 
 ```json
 {
@@ -243,11 +156,11 @@ active 로 복귀하고 백오프 카운터(consecutive_errors·limit_hits·next
 `paused`(사용자 의사)·`needs_human`(사람 판단 대기)·`error`(진단 필요)는 작업 추가만으로
 자동 재개하지 않는다 — `harness_resume_project` 가 명시적 복귀 수단이다.
 
-## 8. 훅 계약 (대상 저장소 `.claude/settings.json` 에 병합)
+## 7. 훅 계약 (대상 저장소 `.claude/settings.json` 에 병합)
 
 CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙은 전부 훅으로 구현한다.
 훅 명령은 엔진을 **`${CLAUDE_PROJECT_DIR}` 로 뿌리내려** 쓴다
-(`python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" ...`). 훅 핸들러는 프로젝트 루트가
+(`"<설치된 EXE>" <op> --repo "${CLAUDE_PROJECT_DIR}"`). 훅 핸들러는 프로젝트 루트가
 아니라 **현재 작업 디렉토리에서 실행**되므로(공식 훅 문서), 상대 경로로 쓰면 하위 디렉토리로
 이동하는 순간 게이트 4종이 전부 죽는다 — 실측으로 확인된 결함이다. `merge_settings` 는 기존
 저장소의 상대 경로 훅을 감지해 마이그레이션하고, 배선 진단은 `cwd_dependent_hooks` 로 알린다.
@@ -324,7 +237,7 @@ CLAUDE.md 는 강제층이 아니므로 "특정 시점 무조건 실행" 규칙�
 - **복구**: `autoharness install --migrate <저장소>` 가 죽은 절대 경로를 현재 실행 파일로 다시
   쓴다(기존 설정은 백업).
 
-## 9. 모델 추천 휴리스틱 (추천은 도구가, 결정은 사용자가)
+## 8. 모델 추천 휴리스틱 (추천은 도구가, 결정은 사용자가)
 
 점수 합산: 언어 간 이식(+3) / 테스트 부재·빈약(+2) / 모듈 5개 초과(+1) / LOC>10만(+1) /
 LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, 미만 → `claude-opus-5`**.
@@ -334,7 +247,7 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
 "claude-opus-5": "패턴형 대량 루프에 비용·속도 유리, /fast 지원"}}`.
 스킬은 이 결과를 AskUserQuestion 으로 제시한다(추천안을 첫 옵션 + "(Recommended)").
 
-## 10. 워치독 (`bin/harness_watchdog.py`)
+## 9. 자동 부활 (상주 데몬)
 
 스케줄러가 15분마다 실행하는 **1회성** 스크립트(데몬 아님). 플래그: `--dry-run`(판단만 출력,
 기동 없음), `--status`. 단일 인스턴스 잠금: `watchdog.lock`(pid 기록, 살아 있으면 즉시 종료,
@@ -404,14 +317,14 @@ LOC>30만(+1) / 요구 모호성 메모(+2). **합 ≥ 4 → `claude-fable-5`, �
 - **설치 스탬프**: 워치독 등록 경로는 셋이다 — MCP `watchdog_install`, `install.ps1 -Watchdog`,
   `install.sh --watchdog`. 셋 모두 등록 **성공 직후** `settings.watchdog_installed_at` 과
   `watchdog_interval_minutes` 를 기록한다(설치 스크립트는
-  `python harness_mcp.py stamp-watchdog-install --interval-minutes N` 을 호출). 기록은
+  설치 시각·주기를 레지스트리에 기록한다). 기록은
   fail-open — 실패해도 설치를 중단하지 않는다. 등록 **전에** 스탬프를 찍으면 등록 실패가
   유예에 가려지므로 순서를 뒤집지 않는다(테스트로 고정).
 - **스탬프 없는 기존 설치**는 `0x41303` 유예로 구제한다. 다만 트리거 오설정 등으로 그 상태가
   영구화되면 결과 코드가 미실행이 아닌 실패 코드로 바뀌므로 결과 코드 경고가 결함을 잡는다 —
   실제 반려(`0x800710E0`)는 스탬프 유무와 무관하게 언제나 경고한다.
 
-## 11. 스킬 (`skill/SKILL.md`)
+## 10. 스킬 (`skill/SKILL.md`)
 
 frontmatter `name: autoharness`, description 은 트리거 문구 포함(하네스, autoharness, 자율
 마이그레이션 구축/재개/상태/일시정지, headless bootstrap) — **여기에 결과 서술형 트리거
@@ -462,7 +375,7 @@ frontmatter `name: autoharness`, description 은 트리거 문구 포함(하네�
   ⑧ 보고(실측 표/생성 파일 표/훅 이관 목록/검증 로그/사람 판단 필요 항목/다음 세션 시작 명령)
 - **resume**: 대상 저장소 확정 → **0단계: 신규 결과 요청이면 `task_add` 로 적재**(생략하면 첫
   `next` 가 exit 3 을 내 "할 일 없음"으로 오보고된다) → 장부 읽기 → heartbeat → 루프(다음 작업
-  구현 → `bash scripts/agent_harness.sh --task <id>` → 종료 코드 분기표 → 커밋 → 반복).
+  구현 → `<EXE> run --repo . --task <id>` → 종료 코드 분기표 → 커밋 → 반복).
   검증 무결성 조항(테스트 약화 금지 등), 사람 경계 조항을 본문에 명시. 질문 금지.
 - **status**: `harness_status` + `watchdog_status` 요약. 진단성 질의도 여기로 온다(읽기 전용).
 - **pause**: `HARNESS_PAUSED` 플래그 생성 + 레지스트리 paused.
@@ -471,9 +384,9 @@ frontmatter `name: autoharness`, description 은 트리거 문구 포함(하네�
   작업 상태 전환 요청이 폴백을 타고 resume 으로 뒤집히는 정반대 오분기를 막는 행이다.
 
 스킬 본문에 MCP 도구 전체 이름(`mcp__autoharness__harness_detect` 등)을 명시한다.
-MCP 서버가 안 잡히는 환경(등록 전)을 위한 폴백: `python scripts/harness_engine.py ...` 직접 실행.
+MCP 서버가 안 잡히는 환경(등록 전)을 위한 폴백: 설치된 실행 파일을 직접 호출.
 
-## 12. 설치·배포 경계
+## 11. 설치·배포 경계
 
 ### 12.0 배포 명세는 한 곳이다 (`scripts/deploy_manifest.py`)
 
@@ -490,7 +403,7 @@ install.sh / deploy_live.py)이 각각 답했고 답이 달랐다 — install.ps
   재귀하지 않는다 — 전부 부산물이다.
 - **금지 대상**: 장부·`PROGRESS.md`·`settings.json`·검증 캐시·`CLAUDE.md`·빌드 산출물
   (`dist`·`node_modules`·`__pycache__`·`*.pyc`·`*.bun-build`)·로그·백업.
-- **오탐 금지**: `templates/agent_harness.sh`·`templates/CLAUDE.md.tmpl` 처럼 확장자만 보고
+- **오탐 금지**: `templates/CLAUDE.md.tmpl`·`templates/bootstrap_prompt.txt` 처럼 확장자만 보고
   거르면 안 되는 것이 있다. 금지 판정은 명시 목록만으로 한다.
 - 제외한 항목은 사유와 함께 출력한다(조용히 빼지 않는다). 설치본에 **이미 들어가 있는**
   금지 항목도 검출해 보고하되 **지우지는 않는다** — 사용자 계정의 파일을 배포 스크립트가
@@ -513,14 +426,14 @@ EXE 경로가 박히기 때문이다(§8 `broken_path`). 저장소에 커밋하�
   복사** — 설치본에서 -Watchdog/-Uninstall 재실행 가능해야 한다. install.sh 도 함께 둔다 —
   Windows 로 설치한 계정에서 WSL 재설치를 설치본만으로 할 수 있어야 한다), 런타임 디렉토리 생성,
   `claude mcp remove -s user autoharness`(실패 무시) → `claude mcp add -s user autoharness --
-  <python절대경로> <bin\harness_mcp.py 절대경로>`, 결과 검증 출력.
+  <EXE 절대경로> mcp`, 결과 검증 출력.
 - `-Watchdog`: **ScheduledTasks cmdlet(Register-ScheduledTask)** 로 등록(15분 간격, pythonw).
   schtasks `/TR` 은 PS 5.1 네이티브 인자 전달에서 내부 따옴표가 소실되어 공백 경로가 조각나므로
   install.ps1 에서는 금지(MCP 쪽 subprocess 리스트 전달은 안전하므로 schtasks 허용).
 - `-Uninstall`: schtask 삭제 + mcp remove + 스킬 폴더 제거(런타임 상태는 보존).
 - PowerShell 5.1 호환(`&&` 금지, 삼항 금지).
 
-## 13. 검증 계약 (적대적 검증 에이전트용)
+## 12. 검증 계약 (적대적 검증 에이전트용)
 
 전부 **실행으로 증명**한다. 샌드박스는 스크래치패드 아래에 만들고 실제 레지스트리/스케줄러를
 건드리는 검증은 dry-run 또는 임시 이름을 쓴다.

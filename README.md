@@ -14,43 +14,20 @@
 - **모델 선택** — 추천은 도구가 내고 **결정은 사용자**가 합니다.
 - **웹 콘솔** — 주행 중인 Claude Code 세션의 출력을 실시간으로 봅니다.
 
-## 두 구현이 공존합니다
-
-| | v1 (Python) | v2 (TypeScript) |
-|---|---|---|
-| 배포 | `~/.claude/skills/autoharness/bin/*.py` | 단일 EXE 하나 |
-| 스케줄링 | OS 스케줄러(작업 스케줄러 / cron) | **상주 데몬이 자기 시계로** |
-| 웹 UI | 없음 | 있음(콘솔·제어) |
-| 상태 | 안정, 레퍼런스 구현 | 이식 완료, 실사용 검증 중 |
-
-v2 를 만든 이유는 하나입니다. **v1 의 자동 부활이 OS 스케줄러에 의존하는데 그 의존이
-깨질 수 있습니다.** 개발 PC 에서 시간 트리거 작업 전체가 `0x800710E0` 으로 큐에만 쌓이고
-실행되지 않아, 워치독이 설치 이후 한 번도 돌지 않은 채 상태 조회는 "등록됨(Ready)"만
-보고한 일이 있었습니다. 그래서 v2 는 스케줄링을 프로세스 안으로 가져왔습니다.
-
-두 구현은 **같은 장부 스키마·같은 원자적 쓰기·같은 레지스트리 잠금 규약**을 씁니다. 그래서
-저장소마다 따로 이행해도 되고, 이행 도중 섞여 있어도 안전합니다.
+## 구조
 
 ```
 사용자 ── /autoharness ──▶ 스킬 (~/.claude/skills/autoharness/SKILL.md)
                               │  절차 지휘: init / resume / status / pause
                               ▼
                            MCP 서버 "autoharness" (사용자 스코프, 도구 14종)
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-   v1: harness_mcp.py                v2: <EXE> mcp
-        (엔진 import)                  (데몬 위임 + 인프로세스 폴백)
-              │                               │
-              └───────────────┬───────────────┘
+                              │  <EXE> mcp — 데몬 위임 + 인프로세스 폴백
                               ▼
      대상 저장소  .claude/agent_tracker.json (장부) · 훅 4종 (settings.json)
         │
         └── 하트비트 ──▶ 레지스트리 (~/.claude/autoharness/registry.json)
                               ▲
-              ┌───────────────┴───────────────┐
-   v1: 워치독(스케줄러가 15분마다 호출)   v2: 상주 데몬(자기 시계로 tick, 웹 UI 내장)
-              └───────────────┬───────────────┘
+                     상주 데몬 (자기 시계로 tick, 웹 UI 내장)
                               ▼
               죽은 세션을 claude -p 헤드리스로 재기동 (CLAUDE_AUTOHARNESS=1)
 ```
@@ -65,7 +42,7 @@ v2 를 만든 이유는 하나입니다. **v1 의 자동 부활이 OS 스케줄�
 | 무엇 | 어디에 |
 |---|---|
 | 스킬 문서 | `~/.claude/skills/autoharness/` |
-| v2 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
+| 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
 | MCP 등록 | 사용자 스코프 (`claude mcp add --scope user`) |
 | 런타임 상태 | `~/.claude/autoharness/` — 제거해도 **보존**됩니다 |
 
@@ -87,39 +64,17 @@ zsh 는 `~/.zshrc`, fish 는 `fish_add_path ~/.claude/autoharness/bin` 입니다
 | 항목 | 요구 | 확인 |
 |---|---|---|
 | claude CLI | MCP 등록·세션 재기동에 필요 | `claude --version` |
-| Python | v1 을 쓰거나 v2 를 빌드하지 않을 때 3.8+ (stdlib 만) | `python --version` |
-| Bun | v2 를 직접 빌드하거나 검증할 때만 | `bun --version` |
+| Bun | 직접 빌드하거나 검증할 때만 | `bun --version` |
 
-## v1 설치 (Python — 가장 간단)
+## 설치
 
-WSL / 리눅스 / macOS:
+### 원라인 (권장)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash
 ```
 
-Windows PowerShell — 체크아웃이 필요합니다(`install.ps1` 이 자기 폴더 기준으로 동작합니다):
-
-```powershell
-git clone https://github.com/EcoKG/autoharness.git; cd autoharness; .\install.ps1
-```
-
-워치독까지 등록하려면 `-Watchdog`(PowerShell) 또는 `--watchdog`(bash)를 붙이십시오.
-**curl 파이프에는 인자를 그냥 붙일 수 없습니다** — `bash` 가 먼저 먹습니다:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --watchdog
-```
-
-## v2 설치 (단일 실행 파일)
-
-### 원라인 — 릴리스에서 받기 (권장)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --v2
-```
-
-자동 시작까지 걸려면 `--v2 --autostart` 를 주십시오. Bun 도 파이썬도 필요 없습니다 —
+자동 시작까지 걸려면 `-s -- --autostart` 를 주십시오. Bun 도 파이썬도 필요 없습니다 —
 플랫폼에 맞는 바이너리를 받아 **SHA256 으로 검증한 뒤에만** 설치합니다. 체크섬이 어긋나거나
 산출물을 받지 못하면 **아무것도 설치하지 않고 중단**합니다.
 
@@ -129,7 +84,7 @@ Windows 에서 이 명령은 Git Bash 에서 실행하십시오.
 ### Windows — PowerShell (Git Bash 없이)
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -V2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 저장소를 받은 뒤 실행합니다. bash 경로와 같은 계약입니다 — 체크섬 대조와 실행 확인을
@@ -188,23 +143,17 @@ autoharness install --status       # exe/스킬/자동 시작 실제 상태
 autoharness selftest               # selftest 통과 (15/15)
 ```
 
-v1 만 설치했다면 세 번째는 이렇게 확인합니다:
-
-```bash
-python ~/.claude/skills/autoharness/bin/harness_engine.py selftest
-```
-
 `install --status` 는 **파일 존재가 아니라 동작**으로 판정합니다. 파일이 있는데 우리 것이
 아닌 상태(`exe_present: true, exe_installed: false`)를 구분해 보여 줍니다.
 
-## 새 버전으로 갱신 (v2)
+## 새 버전으로 갱신
 
 설치 명령을 그대로 다시 실행하면 됩니다. 다만 **데몬이 그 파일을 잡고 있으면 덮어쓸 수
 없습니다**(Windows `EBUSY`, 리눅스 `ETXTBSY`). 멈추고 갱신한 뒤 다시 띄웁니다:
 
 ```bash
 pkill -f 'autoharness daemon'
-curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash -s -- --v2
+curl -fsSL https://raw.githubusercontent.com/EcoKG/autoharness/main/install.sh | bash
 autoharness daemon &
 ```
 
@@ -258,7 +207,7 @@ Git Bash 라면 `taskkill /F /IM autoharness.exe` 입니다 — 설치기도 이
 /autoharness 다시 돌려        재개
 ```
 
-## 웹 콘솔 (v2)
+## 웹 콘솔
 
 데몬이 로컬 웹 UI 를 함께 띄웁니다. 주소는 `~/.claude/autoharness/daemon.json` 의 `port`,
 토큰은 같은 파일 또는 `~/.claude/autoharness/web-token` 에 있습니다.
@@ -285,23 +234,22 @@ Git Bash 라면 `taskkill /F /IM autoharness.exe` 입니다 — 설치기도 이
   401 이면 "토큰 불일치"(데몬이 다시 뜨면 토큰도 새로 생깁니다). 조치가 정반대이므로
   같은 말로 뭉뚱그리지 않습니다.
 
-## v1 → v2 이행
+## 이전 버전(파이썬 구현)을 쓰던 경우
 
-훅 배선만 바꾸고 **장부는 건드리지 않습니다.** 전후 바이트를 비교해 다르면 실패로 보고합니다.
+**파이썬 엔진·MCP 서버·워치독은 제거됐습니다.** 설치기가 그 잔재(스킬 폴더의 `bin/*.py`,
+워치독 cron 항목·스케줄러 작업)를 정리합니다 — 무엇을 지우는지 알리고 지우며, 실패해도
+설치를 멈추지 않습니다. 런타임 상태(레지스트리·로그·장부)는 건드리지 않습니다.
+
+**저장소의 훅 배선은 자동으로 복구되지 않습니다.** `python … harness_engine.py` 를 부르는
+훅은 이제 하네스 훅으로 인식되지 않아 `status` 가 `not_registered` 로 보고하고
+`install --migrate` 도 손대지 않습니다. 그 저장소에서는 이렇게 하십시오:
 
 ```bash
-autoharness install --migrate <저장소> --dry-run   # 계획 먼저
-autoharness install --migrate <저장소>             # 실행 (설정은 백업 후 교체)
+rm .claude/settings.json && autoharness install --migrate <저장소>
 ```
 
-되돌리기는 백업 파일 하나를 복원하는 것으로 끝납니다:
-
-```bash
-autoharness install --rollback <저장소> --backup <settings.json.bak-…>
-```
-
-**한 번에 끝내지 않아도 됩니다.** 두 구현이 같은 스키마와 같은 잠금 규약을 쓰므로 섞여
-있어도 장부가 깨지지 않습니다.
+기존 설정에 하네스 외의 훅을 직접 넣어 두셨다면 지우기 전에 확인하십시오 — 그 항목은
+그대로 두고 `python … harness_engine.py` 를 부르는 4줄만 지우셔도 됩니다.
 
 ## 배포 경계 — 무엇이 나가고 무엇은 나가지 않는가
 
@@ -310,15 +258,15 @@ autoharness install --rollback <저장소> --backup <settings.json.bak-…>
 ### ① 설치본으로 가는 것 (파일)
 
 명세는 **한 곳**입니다: [`scripts/deploy_manifest.py`](scripts/deploy_manifest.py).
-설치 경로 3종(`install.ps1` · `install.sh` · `scripts/deploy_live.py`)이 모두 이 집합을
-따르며, 어긋나면 `tests/test_installer_parity.py` 가 실패합니다.
+사용자 설치는 실행 파일이 수행하므로(`daemon/src/install/install.ts`) 두 곳이 같은 집합을
+옮겨야 하며, 어긋나면 `tests/test_installer_parity.py` 가 실패합니다. 설치 스크립트는
+바이너리만 내려놓고 나머지를 실행 파일에 위임합니다.
 
 | 대상 | 어디로 |
 |---|---|
 | `skill/SKILL.md` → `SKILL.md`, `DESIGN.md`, `README.md`, `install.ps1`, `install.sh` | `~/.claude/skills/autoharness/` |
-| `bin/*.py` (파이썬 엔진·MCP·워치독) | `~/.claude/skills/autoharness/bin/` |
 | `templates/*` (파일만 — 하위 디렉토리는 부산물) | `~/.claude/skills/autoharness/templates/` |
-| v2 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
+| 실행 파일 | `~/.claude/autoharness/bin/autoharness(.exe)` |
 
 ### ② 절대 나가지 않는 것 (파일)
 
@@ -332,6 +280,7 @@ autoharness install --rollback <저장소> --backup <settings.json.bak-…>
 | `.claude/settings.json`, `settings.local.json` | **기계 고유 절대경로** (아래 ③) |
 | `.claude/checks-timing.json` | 검증 파이프라인 캐시 |
 | `CLAUDE.md` | 이 저장소 전용 주행 지침 (배포본은 `templates/CLAUDE.md.tmpl`) |
+| `scripts/`, `tests/` | 이 저장소 전용 도구(검증 파이프라인·배포 명세·문서 대조) |
 | `daemon/dist/`, `daemon/node_modules/`, `__pycache__`, `*.pyc`, `*.bun-build` | 빌드 부산물 |
 | `*.log`, `*.bak-*`, `.DS_Store` 류 | 로그·백업·잡동사니 |
 
@@ -407,8 +356,7 @@ CLAUDE.md 는 안내층이고, **강제는 훅 소관**입니다. 문서를 고�
 | `.claude/harness-{state,heartbeat,hooks-seen}.json` | 런타임 상태 | 무시 |
 | `CLAUDE.md` | 프로젝트 지침 (기존 내용 보존하며 병합) | 추적 |
 
-v1 은 여기에 `scripts/harness_engine.py` 사본과 `scripts/agent_harness.sh` 를 더 둡니다.
-v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않습니다.
+저장소에 실행 코드를 두지 않습니다 — 전역 실행 파일 하나를 참조합니다.
 
 > **`.claude/settings.json` 은 커밋하지 마십시오.** 훅 명령에는 설치 시점의 **절대** EXE
 > 경로가 박힙니다 — Claude Code 는 훅 명령의 `~`·`%USERPROFILE%` 을 풀어 주지 않고, 상대
@@ -432,7 +380,7 @@ v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않�
 설정 오류성 실패(`error`)는 다르게 다룹니다 — 15 → 30 → 60분 백오프에 **5회 연속이면 정지**
 하고 사람을 부릅니다.
 
-## 보안 (v2 웹)
+## 보안 (웹 콘솔)
 
 데몬은 프로젝트를 멈추고 세션을 기동할 수 있습니다. 명령을 받을 수 있다는 것은 곧 로컬
 공격 표면이므로 다음은 타협하지 않습니다.
@@ -452,12 +400,11 @@ v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않�
 |---|---|
 | 훅 콜드 스타트 p95 | 유휴 시 81~82ms (예산 150ms) — 아래 주석 참고 |
 | EXE 크기 / 빌드 | 94.1 MiB / 0.7~0.9초 |
-| v1↔v2 교차 검증 | 365건 대조, 불일치 0건 |
 | 데몬 드리프트 | 가속 500 tick 편차 0, 실시간 60 tick 평균 간격 정확 |
-| 테스트 | v2 662건, v1 545건 (2026-08-11) |
+| 테스트 | 데몬 675건 + 저장소 도구 (2026-08-12) |
 | 자체 검증 파이프라인 | 직렬 131초 → 병렬 24초 (16코어, 같은 집합·같은 판정) |
 
-재현: `bun run bench:startup`, `bun run parity`, `bun run verify:exe`, `bun test`
+재현: `bun run bench:startup`, `bun run verify:exe`, `bun test`
 
 ### 자체 검증 파이프라인 (이 저장소를 직접 개발할 때)
 
@@ -465,8 +412,8 @@ v2 는 전역 EXE 를 참조하므로 저장소에 실행 코드를 두지 않�
 
 1. **게이트**(직렬, 빠름) — `py_compile` 전량 + daemon devDependency 확인. 컴파일이 깨진 채로
    샤드를 돌리면 수십 개가 같은 오류를 뱉어 진짜 원인이 묻힙니다.
-2. **검증 단위**(병렬) — 엔진 selftest / `tests/` 모듈마다 / daemon 타입 검사 /
-   daemon 테스트 파일마다. 서로 독립이므로 동시에 돕니다.
+2. **검증 단위**(병렬) — `tests/` 모듈마다 / daemon 타입 검사 / daemon 테스트 파일마다.
+   서로 독립이므로 동시에 돕니다.
 3. **deploy**(직렬, 마지막) — 앞 단계를 전부 통과한 코드만 실행 중 설치본에 반영합니다.
 
 **테스트를 줄인 것이 아니라 배치를 바꾼 것입니다.** 실행 집합도 통과 기준도 그대로이며,
@@ -495,7 +442,7 @@ autoharness install --uninstall     # 자동 시작·MCP 등록 해제
 
 **장부·레지스트리·로그는 남습니다** — 진행 상태를 지우지 않습니다. 완전히 지우려면
 `~/.claude/skills/autoharness/`, `~/.claude/autoharness/bin/` 을 직접 삭제하십시오.
-대상 저장소의 훅을 되돌리려면 위의 `--rollback` 을 쓰십시오.
+대상 저장소의 훅을 되돌리려면 `autoharness install --rollback <저장소> --backup <파일>` 을 쓰십시오.
 
 ---
 
@@ -531,15 +478,7 @@ autoharness install --migrate <저장소>
 `settings.json` 이 깨진 경우도 같은 증상인데, 진단이 이 둘을 구분해 알려 줍니다.
 
 **데몬이 도는지 모르겠습니다** — `daemon.log` 의 `tick` 줄과 `/api/status` 의 `pid`·
-`uptime_sec` 을 보십시오. 레지스트리의 `last_tick` 은 v1 워치독도 갱신하므로 v2 데몬의
-생존 증거로는 약합니다.
-
-**두 감독자가 동시에 돕니다** — v1 워치독과 v2 데몬을 함께 두면 같은 저장소에 세션이 두 번
-뜰 수 있습니다. 이행이 끝나면 v1 워치독을 내리십시오:
-
-```bash
-schtasks /Delete /TN AutoHarnessWatchdog /F
-```
+`uptime_sec` 을 보십시오.
 
 **작업이 blocked 됐습니다** — 시도 5회를 넘겼거나 사람 판단이 필요한 경계에 닿은 것입니다.
 `PROGRESS.md` 와 장부의 `last_error` 에 사유가 있습니다. 해결한 뒤 `pending` 으로 되돌리면

@@ -15,9 +15,9 @@
 
 작업 단위 루프 — 항상 이 순서를 지킨다:
 
-1. `python scripts/harness_engine.py next` 로 다음 작업을 받는다(의존성·우선순위는 엔진 판정).
+1. `autoharness next --repo .` 로 다음 작업을 받는다(의존성·우선순위는 엔진 판정).
 2. 작업 title/path/last_error 를 근거로 코드를 수정한다.
-3. `bash scripts/agent_harness.sh --task <id>` 로 검증한다.
+3. `autoharness run --repo . --task <id>` 로 검증한다.
 4. 종료 코드 분기: **0**=커밋 후 다음 작업 / **1**=오류 요약을 읽고 수정 후 3번 재실행 /
    **2**=설정 오류, 중단·보고 / **3**=진행 가능 작업 없음, 요약 보고 / **4**=해당 작업 blocked —
    남은 작업이 있으면 1번으로 돌아가 계속, 없으면 보고.
@@ -35,7 +35,7 @@
 
 ## 4. 완료 기준
 
-- 작업 done = `bash scripts/agent_harness.sh --task <id>` **exit 0**(빌드+테스트+린트 전부
+- 작업 done = `autoharness run --repo . --task <id>` **exit 0**(빌드+테스트+린트 전부
   통과) 후 **git commit** 까지. 둘 중 하나만으로는 미완이다.
 - done 마킹은 엔진(run 성공)만 한다. 손으로 장부를 done 으로 바꾸지 않는다.
 - 커밋 SHA 는 PostToolUse 훅이 장부에 자동 기록한다.
@@ -53,7 +53,7 @@
 
 ## 6. 사람 경계
 
-아래는 자율 결정 금지. `python scripts/harness_engine.py set-task --id <id> --status blocked
+아래는 자율 결정 금지. `autoharness set-task --repo . --id <id> --status blocked
 --note "<사유>"` 로 기록하고 다음 작업으로 넘어간다. 사용자에게 질문하지 않는다.
 
 - 시도 5회 한도 도달(엔진 자동 blocked)

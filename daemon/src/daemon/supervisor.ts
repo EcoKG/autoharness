@@ -320,9 +320,8 @@ export function capLine(line: string, cap = SESSION_LINE_CAP): string {
  */
 export const BUILTIN_BOOTSTRAP = [
   "당신은 AutoHarness 자율 주행 세션입니다(무개입 헤드리스 모드). 사용자에게 어떤 질문도 하지 마십시오.",
-  "[0] 하네스 CLI 를 먼저 정합니다. v2 는 ~/.claude/autoharness/bin/autoharness(.exe) 이고 모든 호출에",
-  "    --repo <저장소 절대경로> 를 붙입니다. 없으면 v1 의 scripts/harness_engine.py 를 python 으로 부릅니다.",
-  "    아래에서 <AH> 는 이렇게 고른 명령입니다 — 있지도 않은 파일을 부르지 마십시오.",
+  "[0] 하네스 CLI 는 ~/.claude/autoharness/bin/autoharness(.exe) 입니다. 아래에서 <AH> 는 이 실행",
+  "    파일이며, 모든 호출에 --repo <저장소 절대경로> 를 붙입니다. 먼저 존재를 확인하십시오.",
   "[1] .claude/agent_tracker.json 장부를 읽고 <AH> heartbeat 를 실행합니다.",
   "[2] <AH> next 로 다음 작업을 받습니다(의존성·우선순위는 엔진이 판정합니다). title·path·last_error 를",
   "    근거로 수정하며, last_error 가 있으면 그 오류부터 해결합니다.",

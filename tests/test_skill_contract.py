@@ -288,7 +288,7 @@ class SkillDesignModeSyncTest(unittest.TestCase):
     def design_modes(self):
         with open(self.DESIGN_PATH, "r", encoding="utf-8") as f:
             text = f.read().replace("\r\n", "\n")
-        start = text.find("## 11. 스킬")
+        start = text.find("## 10. 스킬")
         self.assertGreater(start, 0, "DESIGN 에 스킬 절이 없습니다")
         section = text[start:text.find("## 12.", start)]
         anchor = section.find("본문 모드")
