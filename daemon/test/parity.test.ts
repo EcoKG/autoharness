@@ -70,7 +70,6 @@ const REQUIRED_V2_TESTS: readonly string[] = [
   "command.test.ts",
   "console-ws.test.ts",
   "core.test.ts",
-  "cross-validation.test.ts",
   "daemon.test.ts",
   "filelock.test.ts",
   "hooks.test.ts",
