@@ -7,9 +7,9 @@
  *   ② **대상 저장소** — `--repo` 를 생략하면 엔진이 cwd 를 저장소로 삼아, 하위 디렉토리에서
  *      커밋 게이트·Stop 게이트가 조용히 통과한다(실측: 루트 exit 2 대 하위 exit 0).
  *
- * 기존 저장소는 **마이그레이션한다**: v1 훅(python + harness_engine.py)을 v2 훅으로 바꾸고,
- * 낡은 matcher 를 넓히고, 빠진 `--repo` 를 채우고, **죽은 절대 경로를 다시 쓴다**. 항목
- * 단위로 판정하므로 matcher 만 낡은 설치가 '이미 있음'으로 영영 건너뛰어지지 않는다.
+ * 기존 저장소는 **고쳐 쓴다**: 낡은 matcher 를 넓히고, 빠진 `--repo` 를 채우고,
+ * **죽은 절대 경로를 다시 쓴다**. 항목 단위로 판정하므로 matcher 만 낡은 설치가
+ * '이미 있음'으로 영영 건너뛰어지지 않는다.
  *
  * 죽은 절대 경로가 세 번째 축이다. 훅 명령에는 설치 시점의 EXE 절대 경로가 박히는데
  * `.claude/settings.json` 은 저장소를 따라 다니므로, 다른 계정·다른 기계로 옮기면 그 경로가
@@ -72,12 +72,6 @@ export function isHarnessHookItem(item: unknown, op: string): boolean {
   );
 }
 
-/** v1(파이썬 스크립트) 훅인가 — v2 EXE 훅으로 갈아끼워야 할 대상. */
-export function isLegacyEngineCommand(command: string): boolean {
-  const token = engineTokenIn(command);
-  return token !== null && token.toLowerCase().endsWith(".py");
-}
-
 /**
  * 이 훅 명령이 **실존하지 않는** 실행 파일을 가리키는가 — 갈아끼워야 할 대상.
  *
@@ -104,8 +98,6 @@ export interface MergeResult {
 
 export interface MergeOptions {
   exePath?: string;
-  /** v1 훅을 v2 EXE 훅으로 바꿀 것인가. 기존 저장소 마이그레이션에서 켠다. */
-  replaceLegacy?: boolean;
 }
 
 function permissionAllowRules(exePath: string): string[] {
@@ -159,16 +151,12 @@ export async function mergeSettings(repo: string, opts: MergeOptions = {}): Prom
         for (const h of (item["hooks"] as unknown[]) ?? []) {
           if (!isRecord(h) || typeof h["command"] !== "string") continue;
           let command = h["command"];
-          if (opts.replaceLegacy && isLegacyEngineCommand(command)) {
+          const token = engineTokenIn(command);
+          // 두 조건이 다르다: 경로가 cwd 에 흔들리는가(rooted) / 그 파일이 실제로 있는가.
+          if (token && (!pathIsRooted(token) || (await hookCommandPathIsDead(command, repo)))) {
             command = hookCommandFor(op, exePath);
-          } else {
-            const token = engineTokenIn(command);
-            // 두 조건이 다르다: 경로가 cwd 에 흔들리는가(rooted) / 그 파일이 실제로 있는가.
-            if (token && (!pathIsRooted(token) || (await hookCommandPathIsDead(command, repo)))) {
-              command = hookCommandFor(op, exePath);
-            }
-            if (hookCommandIsRepoUnpinned(command)) command = `${command.trimEnd()} ${REPO_PIN_FLAG}`;
           }
+          if (hookCommandIsRepoUnpinned(command)) command = `${command.trimEnd()} ${REPO_PIN_FLAG}`;
           if (command !== h["command"]) {
             h["command"] = command;
             changed = true;

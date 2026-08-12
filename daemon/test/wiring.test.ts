@@ -36,18 +36,20 @@ let dir = "";
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ah-wiring-"));
   await mkdir(repoPaths(dir).claudeDir, { recursive: true });
-  // V1_ENGINE 이 가리키는 스크립트를 실제로 만든다 — 없으면 배선 진단이 (정당하게)
+  // 기본 엔진이 가리키는 실행 파일을 실제로 만든다 — 없으면 배선 진단이 (정당하게)
   // broken_path 로 판정하므로, inactive/active 를 확인하려는 단정들이 엉뚱한 것을 본다.
   // 실제 설치는 이 파일이 있는 상태이므로 이쪽이 올바른 픽스처다.
-  await mkdir(join(dir, "scripts"), { recursive: true });
-  await writeFile(join(dir, "scripts", "harness_engine.py"), "# fixture\n", "utf8");
+  await mkdir(join(dir, "bin"), { recursive: true });
+  await writeFile(join(dir, "bin", "autoharness.exe"), "", "utf8");
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const V1_ENGINE = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py"';
-const V2_ENGINE = "autoharness";
+/** 기본 픽스처 — 설치기가 실제로 심는 모양(저장소 루트로 치환되는 절대 경로). */
+const ENGINE = '"${CLAUDE_PROJECT_DIR}/bin/autoharness.exe"';
+/** PATH 로 해석되는 이름 — 존재 확인 대상이 아니다. */
+const PATH_ENGINE = "autoharness";
 
 /**
  * 하네스 훅 3종을 settings.json 에 심는다. ops 를 줄이면 부분 등록이 된다.
@@ -66,7 +68,7 @@ async function writeSettings(opts: {
     await writeFile(path, opts.raw, "utf8");
     return;
   }
-  const engine = opts.engine ?? V1_ENGINE;
+  const engine = opts.engine ?? ENGINE;
   const matcher = opts.matcher ?? "Bash|PowerShell";
   const ops = opts.ops ?? MARKER_HOOK_OPS;
   const pin = opts.repoPin === false ? "" : ` ${REPO_PIN_FLAG}`;
@@ -225,7 +227,7 @@ describe("matcher 커버리지", () => {
 
 describe("cwd 종속 훅 감지", () => {
   test("상대 경로 엔진은 취약으로 잡는다", async () => {
-    await writeSettings({ engine: "python scripts/harness_engine.py" });
+    await writeSettings({ engine: "./bin/autoharness.exe" });
     await markFired();
     const info = await hookWiringStatus(dir);
     expect(info.cwd_dependent_hooks.length).toBe(3);
@@ -236,12 +238,12 @@ describe("cwd 종속 훅 감지", () => {
     await writeSettings({});
     await markFired();
     expect((await hookWiringStatus(dir)).cwd_dependent_hooks).toEqual([]);
-    await writeSettings({ engine: 'python "C:/tools/scripts/harness_engine.py"' });
+    await writeSettings({ engine: '"C:/tools/bin/autoharness.exe"' });
     expect((await hookWiringStatus(dir)).cwd_dependent_hooks).toEqual([]);
   });
 
   test("PATH 로 해석되는 전역 EXE 이름은 cwd 와 무관하다", async () => {
-    await writeSettings({ engine: V2_ENGINE });
+    await writeSettings({ engine: PATH_ENGINE });
     await markFired();
     expect((await hookWiringStatus(dir)).cwd_dependent_hooks).toEqual([]);
   });
@@ -288,7 +290,7 @@ describe("대상 저장소 고정", () => {
   });
 
   test("경로 고정과 저장소 고정은 서로 다른 축이다", () => {
-    const rootedButUnpinned = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" hook-prebash';
+    const rootedButUnpinned = '"${CLAUDE_PROJECT_DIR}/bin/autoharness.exe" hook-prebash';
     expect(pathIsRooted(engineTokenIn(rootedButUnpinned)!)).toBe(true);
     expect(hookCommandIsRepoUnpinned(rootedButUnpinned)).toBe(true);
     expect(hookCommandIsRepoUnpinned(`${rootedButUnpinned} ${REPO_PIN_FLAG}`)).toBe(false);
@@ -356,11 +358,11 @@ describe("죽은 실행 경로(broken_path)", () => {
   });
 
   test("${CLAUDE_PROJECT_DIR} 는 저장소 루트로 치환해 확인한다", async () => {
-    // beforeEach 가 만든 scripts/harness_engine.py 가 있으므로 살아 있다
+    // beforeEach 가 만든 bin/autoharness.exe 가 있으므로 살아 있다
     await writeSettings({});
     expect((await hookWiringStatus(dir)).dead_engine_hooks).toEqual([]);
     // 그 파일을 지우면 같은 명령이 죽은 경로가 된다 (v1→v2 이행에서 실제로 일어나는 일)
-    await rm(join(dir, "scripts", "harness_engine.py"), { force: true });
+    await rm(join(dir, "bin", "autoharness.exe"), { force: true });
     const after = await hookWiringStatus(dir);
     expect(after.state).toBe(WIRING_BROKEN_PATH);
     expect(after.dead_engine_hooks.length).toBe(MARKER_HOOK_OPS.length);
@@ -380,7 +382,7 @@ describe("죽은 실행 경로(broken_path)", () => {
   });
 });
 
-describe("v1·v2 엔진 공존 인식", () => {
+describe("엔진 토큰 인식", () => {
   test("v2 EXE 훅도 등록으로 인식한다 (마이그레이션 중 공존)", async () => {
     // 실존하는 EXE 를 가리켜야 이 테스트가 보려는 것(등록 인식)만 남는다 —
     // 없는 경로를 쓰면 broken_path 판정이 겹쳐 무엇을 확인한 것인지 흐려진다.
@@ -392,15 +394,16 @@ describe("v1·v2 엔진 공존 인식", () => {
     expect(info.dead_engine_hooks).toEqual([]);
   });
 
-  test("engineTokenIn 은 두 엔진을 모두 찾고 무관한 명령은 넘긴다", () => {
-    expect(engineTokenIn('python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" hook-stop')).toBe(
-      "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py",
-    );
+  test("engineTokenIn 은 하네스 실행 파일만 찾고 무관한 명령은 넘긴다", () => {
     expect(engineTokenIn("autoharness hook-stop")).toBe("autoharness");
     expect(engineTokenIn('"C:/Program Files/ah/autoharness.exe" hook-stop')).toBe(
       "C:/Program Files/ah/autoharness.exe",
     );
     expect(engineTokenIn("git status")).toBeNull();
+    // 제거된 v1 엔진은 더 이상 하네스 훅으로 인식되지 않는다 — 그 배선을 가진 저장소는
+    // not_registered 로 보이고 자동 복구 대상이 아니다(설정을 지우고 새로 설치해야 한다).
+    expect(engineTokenIn('python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py" hook-stop'))
+      .toBeNull();
   });
 
   test("엔진을 가리키지 않는 훅은 하네스 훅이 아니다", async () => {

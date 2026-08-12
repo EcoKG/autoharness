@@ -1,12 +1,13 @@
 /**
- * 기존 저장소 마이그레이션 — **훅 배선만 바꾸고 진행 상태는 건드리지 않는다.**
+ * 저장소 배선 교정 — **훅 배선만 바꾸고 진행 상태는 건드리지 않는다.**
  *
  * 이미 주행 중인 저장소가 대상이다. 장부에는 수십 건의 완료 이력과 커밋 SHA 가 들어 있고,
  * 그것을 잃으면 되돌릴 방법이 없다. 그래서 이 모듈의 제1 원칙은 **장부 불변**이다:
  * 마이그레이션 전후로 장부 바이트가 같아야 하고, 다르면 실패로 보고한다.
  *
- * v1 훅과 v2 훅이 잠시 공존해도 안전하다 — 둘은 같은 스키마를 읽고 같은 원자적 쓰기를 하며,
- * 레지스트리는 같은 잠금 규약을 공유한다. 그래서 이행을 한 번에 끝낼 필요가 없다.
+ * 하는 일은 **배선 교정**이다: 죽은 실행 경로를 현재 실행 파일로 다시 쓰고, matcher 를 넓히고,
+ * 빠진 `--repo` 를 채운다. 옛 파이썬 배선은 더 이상 하네스 훅으로 인식되지 않으므로 이 도구가
+ * 손대지 않는다 — 그런 저장소는 `.claude/settings.json` 을 지우고 새로 설치해야 한다.
  *
  * 되돌리기가 항상 가능해야 한다. 설정은 백업한 뒤에만 바꾸고, 백업 경로를 결과에 실어
  * 롤백 절차가 문서가 아니라 값으로 전달되게 한다.
@@ -18,19 +19,13 @@ import { loadTracker } from "../core/ledger.ts";
 import { isRecord, loadJson } from "../core/load.ts";
 import { repoPaths } from "../core/paths.ts";
 import { engineTokenIn, hookCommandIsRepoUnpinned, hookWiringStatus, pathIsRooted } from "../hooks/wiring.ts";
-import {
-  COMMAND_TOOL_MATCHER,
-  hookCommandPathIsDead,
-  isLegacyEngineCommand,
-  mergeSettings,
-} from "./settings.ts";
+import { COMMAND_TOOL_MATCHER, hookCommandPathIsDead, mergeSettings } from "./settings.ts";
 import { installedExePath } from "./install.ts";
 
 export interface HookSnapshot {
   event: string;
   command: string;
   matcher: string;
-  legacy: boolean;
   repoUnpinned: boolean;
   cwdDependent: boolean;
   /**
@@ -74,7 +69,6 @@ async function snapshotOf(settings: unknown, repo: string): Promise<HookSnapshot
           event,
           command,
           matcher,
-          legacy: isLegacyEngineCommand(command),
           repoUnpinned: hookCommandIsRepoUnpinned(command),
           cwdDependent: token !== null && !pathIsRooted(token),
           deadPath: await hookCommandPathIsDead(command, repo),
@@ -119,13 +113,11 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
   if (before.length === 0) {
     notes.push("훅이 등록돼 있지 않습니다 — 마이그레이션할 배선이 없습니다.");
   }
-  // 죽은 경로도 교체 사유다 — 이것을 빠뜨려 "이미 v2 배선입니다" 라고 답하면서 게이트
+  // 죽은 경로도 교체 사유다 — 이것을 빠뜨려 "바꿀 것이 없습니다" 라고 답하면서 게이트
   // 4종이 무효인 상태를 그대로 두었다(실측 2026-08-11).
-  const needsWork = before.filter(
-    (h) => h.legacy || h.repoUnpinned || h.cwdDependent || h.deadPath,
-  );
+  const needsWork = before.filter((h) => h.repoUnpinned || h.cwdDependent || h.deadPath);
   if (before.length > 0 && needsWork.length === 0) {
-    notes.push("이미 v2 배선입니다 — 바꿀 것이 없습니다.");
+    notes.push("배선이 이미 올바릅니다 — 바꿀 것이 없습니다.");
   }
 
   if (dryRun) {
@@ -136,14 +128,14 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
       migrated: needsWork.map((h) => h.event),
       notes: [
         ...notes,
-        `(dry-run) v1 훅 ${before.filter((h) => h.legacy).length}건과 ` +
-          `실행 파일이 없는 훅 ${before.filter((h) => h.deadPath).length}건을 ${exePath} 로 교체하고, ` +
-          `matcher 를 ${COMMAND_TOOL_MATCHER} 로 넓히고, --repo 를 못 박습니다.`,
+        `(dry-run) 실행 파일이 없는 훅 ${before.filter((h) => h.deadPath).length}건을 ` +
+          `${exePath} 로 교체하고, matcher 를 ${COMMAND_TOOL_MATCHER} 로 넓히고, ` +
+          "--repo 를 못 박습니다.",
       ],
     };
   }
 
-  const merge = await mergeSettings(repo, { exePath, replaceLegacy: true });
+  const merge = await mergeSettings(repo, { exePath });
   const after = await snapshotOf(await readSettingsRaw(repo), repo);
   const ledgerAfter = await ledgerBytes(repo);
 
@@ -156,10 +148,6 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
     );
   }
 
-  const stillLegacy = after.filter((h) => h.legacy);
-  if (stillLegacy.length > 0) {
-    notes.push(`v1 훅이 ${stillLegacy.length}건 남았습니다: ${stillLegacy.map((h) => h.event).join(", ")}`);
-  }
   const stillUnpinned = after.filter((h) => h.repoUnpinned);
   if (stillUnpinned.length > 0) {
     notes.push(`--repo 가 없는 훅이 ${stillUnpinned.length}건 남았습니다.`);
@@ -178,8 +166,7 @@ export async function migrateRepo(repo: string, options: MigrateOptions = {}): P
 
   return {
     repo,
-    ok: ledgerIntact && stillLegacy.length === 0 && stillUnpinned.length === 0 &&
-      stillDead.length === 0,
+    ok: ledgerIntact && stillUnpinned.length === 0 && stillDead.length === 0,
     dryRun: false,
     ledgerIntact,
     ledgerTasks: taskCount,
@@ -215,7 +202,6 @@ export function rollbackInstructions(report: MigrateReport): string[] {
   return [
     `1. 설정 복원: ${report.backup} 를 ${join(repoPaths(report.repo).claudeDir, "settings.json")} 로 덮어씁니다.`,
     "2. 장부는 건드리지 않았으므로 복원할 것이 없습니다(진행 상태 그대로).",
-    "3. 복원 후 하네스 상태 확인: v1 은 `python scripts/harness_engine.py status --repo .`,",
-    "   v2 는 `autoharness status --repo .` — hooks.state 가 active 인지 봅니다.",
+    "3. 복원 후 하네스 상태 확인: `autoharness status --repo .` — hooks.state 가 active 인지 봅니다.",
   ];
 }

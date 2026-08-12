@@ -52,12 +52,13 @@ export const COMMAND_TOOLS: readonly string[] = ["Bash", "PowerShell"];
 export const SETTINGS_FILES: readonly string[] = ["settings.json", "settings.local.json"];
 
 /**
- * 훅 명령이 가리키는 하네스 엔진의 basename.
+ * 훅 명령이 가리키는 하네스 실행 파일의 basename.
  *
- * v1(`harness_engine.py`)과 v2(EXE)는 마이그레이션 중 **공존한다**(daemon/DESIGN.md 5절).
- * 한쪽만 알아보면 이행 도중의 저장소를 '미등록'으로 오판해 경고가 사라진다.
+ * 목록으로 두는 이유는 이름이 여럿이어서가 아니라, 판정 기준이 한 곳에 있어야 하기
+ * 때문이다. 여기 없는 이름은 하네스 훅으로 인식되지 않는다 — 그래서 v1 파이썬 엔진을
+ * 부르는 옛 배선은 이제 `not_registered` 로 보이고, 자동 복구 대상이 아니다.
  */
-export const ENGINE_BASENAMES: readonly string[] = ["harness_engine.py", "autoharness"];
+export const ENGINE_BASENAMES: readonly string[] = ["autoharness"];
 
 /**
  * 훅 명령이 대상 저장소를 못 박는 방법 — 설치 경로가 훅 명령 끝에 붙여야 하는 인자.

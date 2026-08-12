@@ -47,7 +47,10 @@ afterEach(async () => {
 
 const V1_ENGINE = 'python "${CLAUDE_PROJECT_DIR}/scripts/harness_engine.py"';
 
-/** 실제 주행 중인 저장소의 모습 — v1 훅 4종 + 진행 이력이 든 장부. */
+/**
+ * 옛 파이썬 배선이 남아 있는 저장소 — v1 제거 이후에도 사용자 디스크에는 이 모양이 남는다.
+ * 하네스는 이 항목들을 인식하지 않으므로 손대지 않고, 자기 훅 4종을 새로 심는다.
+ */
 async function seedV1Repo(opts: { matcher?: string; pinned?: boolean } = {}): Promise<string> {
   const matcher = opts.matcher ?? "Bash";
   const pin = opts.pinned ? ` ${REPO_PIN_FLAG}` : "";
@@ -106,13 +109,17 @@ describe("장부 불변", () => {
 });
 
 describe("훅 배선 교체", () => {
-  test("v1 훅이 전부 v2 EXE 로 바뀐다", async () => {
+  test("옛 파이썬 배선은 하네스 훅으로 인식되지 않고, 새 배선이 심어진다", async () => {
+    // v1 제거의 직접적 결과다. 그 명령들은 이제 남의 훅과 같은 취급이라 건드리지 않고,
+    // 하네스는 자기 훅 4종을 새로 심는다. 옛 항목은 그대로 남으므로 사용자가 지워야
+    // 한다 — 릴리스 노트의 파괴적 변경 항목이 이것을 알린다.
     await seedV1Repo();
     const report = await migrateRepo(repo, { exePath: EXE, env });
     expect(report.ok).toBe(true);
-    expect(report.before.every((h) => h.legacy)).toBe(true);
-    expect(report.after.some((h) => h.legacy)).toBe(false);
-    expect(report.after.every((h) => h.command.includes(EXE))).toBe(true);
+    expect(report.before.every((h) => h.command.includes("harness_engine.py"))).toBe(true);
+    const ours = report.after.filter((h) => h.command.includes(EXE));
+    expect(ours.length).toBe(4);
+    expect(ours.every((h) => !h.deadPath && !h.repoUnpinned)).toBe(true);
   });
 
   test("matcher 커버리지도 함께 최신화된다", async () => {
@@ -125,8 +132,12 @@ describe("훅 배선 교체", () => {
   test("--repo 를 못 박는다 — 하위 디렉토리에서 게이트가 사라지지 않게", async () => {
     await seedV1Repo();
     const report = await migrateRepo(repo, { exePath: EXE, env });
-    expect(report.after.every((h) => !h.repoUnpinned)).toBe(true);
-    expect(report.after.every((h) => h.command.includes("--repo"))).toBe(true);
+    // 우리 훅만 본다. 옛 파이썬 항목은 이제 남의 훅과 같은 취급이라 손대지 않으므로
+    // --repo 없이 그대로 남는다 — 그것까지 세면 우리가 심은 배선을 확인할 수 없다.
+    const ours = report.after.filter((h) => h.command.includes(EXE));
+    expect(ours.length).toBe(4);
+    expect(ours.every((h) => !h.repoUnpinned)).toBe(true);
+    expect(ours.every((h) => h.command.includes("--repo"))).toBe(true);
   });
 
   test("훅 4종이 모두 남는다 — 부분 등록으로 후퇴하지 않는다", async () => {
@@ -145,12 +156,12 @@ describe("훅 배선 교체", () => {
     expect(settings.permissions.allow).toContain("Bash(기존 규칙:*)");
   });
 
-  test("이미 v2 면 할 일이 없다고 알린다", async () => {
+  test("두 번째 실행은 할 일이 없다고 알린다", async () => {
     await seedV1Repo();
     await migrateRepo(repo, { exePath: EXE, env });
     const again = await migrateRepo(repo, { exePath: EXE, env });
     expect(again.ok).toBe(true);
-    expect(again.notes.join(" ")).toContain("이미 v2");
+    expect(again.notes.join(" ")).toContain("이미 올바릅니다");
   });
 
   test("훅이 없는 저장소는 조용히 넘기지 않고 사유를 남긴다", async () => {
@@ -250,8 +261,7 @@ describe("v1·v2 공존", () => {
       "utf8",
     );
     const report = await migrateRepo(repo, { exePath: EXE, env });
-    expect(report.after.every((h) => !h.legacy)).toBe(true);
-    expect(report.after.every((h) => h.command.includes(EXE))).toBe(true);
+    expect(report.after.filter((h) => h.command.includes(EXE)).length).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -396,7 +406,7 @@ describe("죽은 경로 마이그레이션", () => {
     const report = await migrateRepo(repo, { exePath: EXE, env, dryRun: true });
     expect(report.before.every((h) => h.deadPath)).toBe(true);
     // 다른 축과 구분된다 — 경로는 고정돼 있고(cwd 무관) --repo 도 붙어 있다
-    expect(report.before.every((h) => !h.cwdDependent && !h.repoUnpinned && !h.legacy)).toBe(true);
+    expect(report.before.every((h) => !h.cwdDependent && !h.repoUnpinned)).toBe(true);
   });
 
   test("dry-run 이 '바꿀 것이 없다' 고 말하지 않는다", async () => {
@@ -444,6 +454,6 @@ describe("죽은 경로 마이그레이션", () => {
     );
     const report = await migrateRepo(repo, { exePath: EXE, env, dryRun: true });
     expect(report.before.every((h) => !h.deadPath)).toBe(true);
-    expect(report.notes.join(" ")).toContain("이미 v2");
+    expect(report.notes.join(" ")).toContain("이미 올바릅니다");
   });
 });
